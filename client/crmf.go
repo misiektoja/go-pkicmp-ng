@@ -10,25 +10,25 @@ import (
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
-// SendIR performs an Initialization Request.
-// Typically protected by a shared-secret MAC (pkicmp.NewDefaultPBMProtector).
-func (c *Client) SendIR(ctx context.Context, key crypto.Signer, protector pkicmp.Protector, opts ...RequestOption) (*EnrollResult, error) {
-	return c.sendCRMF(ctx, key, protector, pkicmp.BodyTypeIP, opts)
+// SendIR performs an Initialization Request (RFC 9810 §5.3.1).
+// Typically protected by a shared-secret MAC.
+func (c *Client) SendIR(ctx context.Context, key crypto.Signer, creds pkicmp.Credentials, opts ...RequestOption) (*EnrollResult, error) {
+	return c.sendCRMF(ctx, key, creds, pkicmp.BodyTypeIP, opts)
 }
 
-// SendCR performs a Certification Request for an additional certificate.
-// Typically protected by an existing certificate's signature (pkicmp.NewSignatureProtector).
-func (c *Client) SendCR(ctx context.Context, key crypto.Signer, protector pkicmp.Protector, opts ...RequestOption) (*EnrollResult, error) {
-	return c.sendCRMF(ctx, key, protector, pkicmp.BodyTypeCP, opts)
+// SendCR performs a Certification Request for an additional certificate (RFC 9810 §5.3.3).
+// Typically protected by an existing certificate's signature.
+func (c *Client) SendCR(ctx context.Context, key crypto.Signer, creds pkicmp.Credentials, opts ...RequestOption) (*EnrollResult, error) {
+	return c.sendCRMF(ctx, key, creds, pkicmp.BodyTypeCP, opts)
 }
 
-// SendKUR performs a Key Update Request.
-// Typically protected by an existing certificate's signature (pkicmp.NewSignatureProtector).
-func (c *Client) SendKUR(ctx context.Context, newKey crypto.Signer, protector pkicmp.Protector, opts ...RequestOption) (*EnrollResult, error) {
-	return c.sendCRMF(ctx, newKey, protector, pkicmp.BodyTypeKUP, opts)
+// SendKUR performs a Key Update Request (RFC 9810 §5.3.5).
+// Typically protected by an existing certificate's signature.
+func (c *Client) SendKUR(ctx context.Context, newKey crypto.Signer, creds pkicmp.Credentials, opts ...RequestOption) (*EnrollResult, error) {
+	return c.sendCRMF(ctx, newKey, creds, pkicmp.BodyTypeKUP, opts)
 }
 
-func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, protector pkicmp.Protector, expectedRepType pkicmp.BodyType, opts []RequestOption) (*EnrollResult, error) {
+func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.Credentials, expectedRepType pkicmp.BodyType, opts []RequestOption) (*EnrollResult, error) {
 	ropts := &requestOptions{}
 	for _, opt := range opts {
 		opt(ropts)
@@ -36,7 +36,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, protector pkic
 
 	pubDER, err := x509.MarshalPKIXPublicKey(key.Public())
 	if err != nil {
-		return nil, fmt.Errorf("cmp: marshal public key: %w", err)
+		return nil, &ClientError{Op: "marshal public key", Err: err}
 	}
 
 	tmpl := pkicmp.CertTemplate{
@@ -50,7 +50,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, protector pkic
 	if len(ropts.templateExts) > 0 {
 		extDER, err := asn1.Marshal(ropts.templateExts)
 		if err != nil {
-			return nil, fmt.Errorf("cmp: marshal extensions: %w", err)
+			return nil, &ClientError{Op: "marshal extensions", Err: err}
 		}
 		tmpl.Extensions = extDER
 	}
@@ -65,24 +65,21 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, protector pkic
 	}
 
 	if err := certReqMsg.GeneratePOP(key); err != nil {
-		return nil, fmt.Errorf("cmp: generate POP: %w", err)
+		return nil, &ClientError{Op: "generate POP", Err: err}
 	}
 
 	reqs := pkicmp.CertReqMessages{certReqMsg}
 	var body *pkicmp.PKIBody
 	switch expectedRepType {
 	case pkicmp.BodyTypeIP:
-		body, err = pkicmp.NewIRBody(&reqs)
+		body = pkicmp.NewIRBody(&reqs)
 	case pkicmp.BodyTypeCP:
-		body, err = pkicmp.NewCRBody(&reqs)
+		body = pkicmp.NewCRBody(&reqs)
 	case pkicmp.BodyTypeKUP:
-		body, err = pkicmp.NewKURBody(&reqs)
+		body = pkicmp.NewKURBody(&reqs)
 	default:
-		return nil, fmt.Errorf("cmp: unsupported CRMF expected response type %d", expectedRepType)
-	}
-	if err != nil {
-		return nil, err
+		return nil, &ClientError{Op: fmt.Sprintf("unsupported CRMF expected response type %d", expectedRepType)}
 	}
 
-	return c.enroll(ctx, body, expectedRepType, protector, ropts)
+	return c.enroll(ctx, body, expectedRepType, creds, ropts)
 }

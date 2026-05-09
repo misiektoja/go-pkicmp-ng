@@ -13,12 +13,9 @@
 //	// 2. Generate a new key for the certificate
 //	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 //
-//	// 3. Configure the Default PBM Protector for the message envelope
-//	secret := []byte("my-shared-secret")
-//	protector, _ := pkicmp.NewDefaultPBMProtector(secret)
-//
-//	// 4. Send the Initialization Request (IR)
-//	result, err := c.SendIR(context.Background(), key, protector,
+//	// 3. Send the Initialization Request (IR) with MAC credentials
+//	result, err := c.SendIR(context.Background(), key,
+//	    pkicmp.NewMACCredentials([]byte("my-shared-secret")),
 //	    client.WithTemplateSubject(pkix.Name{CommonName: "my-device"}),
 //	)
 //	if err != nil {
@@ -37,14 +34,12 @@
 //	// 2. We have an existing certificate and key, and we generated a new CSR
 //	oldCert := loadExistingCert()
 //	oldKey := loadExistingKey()
-//	newCSRDER := generateNewCSR() // Contains the new public key and is signed by the new private key
+//	newCSRDER := generateNewCSR()
 //
-//	// 3. Configure the Signature Protector using the OLD credentials to authenticate the request
-//	protector, _ := pkicmp.NewSignatureProtector(oldKey, oldCert)
-//
-//	// 4. Send the PKCS#10 Certification Request (P10CR)
-//	// We can explicitly set the sender name in the PKIHeader to match the old certificate.
-//	result, err := c.SendP10CR(context.Background(), newCSRDER, protector,
+//	// 3. Send the PKCS#10 Certification Request (P10CR) with signature credentials
+//	creds, _ := pkicmp.NewSignatureCredentials(oldKey, oldCert)
+//	result, err := c.SendP10CR(context.Background(), newCSRDER,
+//	    creds,
 //	    client.WithSender(oldCert.Subject),
 //	)
 //	if err != nil {
@@ -68,7 +63,7 @@
 //  4. Only after the entire exchange is complete does the Send* method return
 //     the final [EnrollResult] to the caller.
 //
-// Users have three ways to control this blocking behavior:
+// Users have two ways to control this blocking behavior:
 //   - Context: Pass a [context.Context] with a deadline or timeout to the Send*
 //     method. If the context expires while polling, the method returns immediately
 //     with the context error.
@@ -86,12 +81,22 @@
 //     trusted CAs are configured.
 //
 //   - PBM (shared secret) protection: The client verifies the MAC using the
-//     shared secret from the protector passed to the Send* method. No trusted
-//     CAs are needed. If the server includes caPubs in the response
+//     shared secret from the [pkicmp.Credentials] passed to the Send* method.
+//     No trusted CAs are needed. If the server includes caPubs in the response
 //     (RFC 9810 §5.3.2), they may be directly trusted as root CAs for
-//     verifying the issued certificate. The shared secret is per-request
-//     because different
-//     enrollments may use different secrets.
+//     verifying the issued certificate.
+//
+// # TLS Configuration
+//
+// The client uses [http.DefaultClient] by default, which verifies TLS certificates
+// against the system root pool. For custom TLS (e.g., internal CAs, mTLS), use
+// [WithHTTPClient] to provide a configured [*http.Client].
+//
+// # Default Limits
+//
+// [DefaultMaxResponseBytes] (10 MiB) limits response body size to prevent memory
+// exhaustion. [DefaultMaxPolls] (60) caps polling attempts. Override with
+// [WithMaxResponseBytes] and [WithMaxPolls] respectively.
 //
 // # Stateless Design
 //

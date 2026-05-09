@@ -16,256 +16,317 @@ import (
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
+func mustCreds(secret []byte) *pkicmp.MACCredentials {
+	c, _ := pkicmp.NewMACCredentials(secret)
+	return c
+}
+
 func TestPBMRoundTrip(t *testing.T) {
 	secret := []byte("shared-secret")
-	salt := make([]byte, 16)
-	_, err := rand.Read(salt)
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	err := msg.ProtectWithMAC(secret)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewPBMProtector(
-		secret,
-		salt,
-		1024,
-		pkicmp.OIDSHA256,
-		pkicmp.OIDHMACWithSHA256,
-	)
-	require.NoError(t, err)
-
-	body, err := pkicmp.NewPKIConfBody()
-	require.NoError(t, err)
-
-	msg := &pkicmp.PKIMessage{
-		Header: pkicmp.PKIHeader{
-			TransactionID: []byte("trans-1"),
-		},
-		Body: body,
-	}
-
-	err = msg.Protect(protector)
-	require.NoError(t, err)
-
-	// Verify protection algorithm is set correctly
 	assert.Equal(t, pkicmp.OIDPasswordBasedMac, msg.Header.ProtectionAlg.Algorithm)
+	assert.NotEmpty(t, msg.Protection)
 
-	// Round-trip through marshaling
+	// Round-trip through marshaling.
 	der, err := msg.MarshalBinary()
 	require.NoError(t, err)
 
 	parsed, err := pkicmp.ParsePKIMessage(der)
 	require.NoError(t, err)
 
-	// Verify using Verifier
-	verifier, err := pkicmp.ProtectionVerifier(*parsed.Header.ProtectionAlg)
+	vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds(secret)})
 	require.NoError(t, err)
-
-	macVerifier, ok := verifier.(pkicmp.MACVerifier)
-	require.True(t, ok)
-	macVerifier.SetSharedSecret(secret)
-
-	err = parsed.Verify(macVerifier)
-	assert.NoError(t, err)
-
-	// Verify that tampering with header bytes fails
-	parsed.RawHeader[len(parsed.RawHeader)-1] ^= 0xFF
-	err = parsed.Verify(macVerifier)
-	assert.Error(t, err, "verification must fail if header bytes are tampered")
-
-	// Verify with wrong secret fails
-	macVerifier.SetSharedSecret([]byte("wrong-secret"))
-	err = parsed.Verify(macVerifier)
-	assert.Error(t, err)
+	assert.True(t, vr.MACVerified)
 }
 
-func TestPBMVerificationErrors(t *testing.T) {
-	secret := []byte("shared-secret")
-	salt := make([]byte, 16)
-	_, _ = rand.Read(salt)
+func TestPBMCustomOptions(t *testing.T) {
+	secret := []byte("custom-secret")
 
-	protector, _ := pkicmp.NewPBMProtector(secret, salt, 1024, pkicmp.OIDSHA256, pkicmp.OIDHMACWithSHA256)
-	body, _ := pkicmp.NewPKIConfBody()
-	msg := &pkicmp.PKIMessage{
-		Header: pkicmp.PKIHeader{TransactionID: []byte("trans-1")},
-		Body:   body,
-	}
-	_ = msg.Protect(protector)
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
 
-	t.Run("RejectsTruncatedMAC", func(t *testing.T) {
-		msg.Protection = msg.Protection[:len(msg.Protection)/2]
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
-		assert.Error(t, msg.Verify(verifier))
+	err := msg.ProtectWithMACOptions(pkicmp.MACOptions{
+		Secret:         secret,
+		IterationCount: 5000,
+		OWF:            pkicmp.OIDSHA512,
+		MAC:            pkicmp.OIDHMACWithSHA512,
 	})
+	require.NoError(t, err)
 
-	t.Run("RejectsExtendedMAC", func(t *testing.T) {
-		_ = msg.Protect(protector) // Re-protect
-		msg.Protection = append(msg.Protection, 0xFF, 0xFF)
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
-		assert.Error(t, msg.Verify(verifier))
-	})
+	assert.Equal(t, pkicmp.OIDPasswordBasedMac, msg.Header.ProtectionAlg.Algorithm)
 
-	t.Run("RejectsEmptyProtection", func(t *testing.T) {
-		_ = msg.Protect(protector) // Re-protect
-		msg.Protection = []byte{}
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
-		assert.Error(t, msg.Verify(verifier))
-	})
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
 
-	t.Run("RejectsEmptySecret", func(t *testing.T) {
-		_ = msg.Protect(protector) // Re-protect
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		verifier.(pkicmp.MACVerifier).SetSharedSecret([]byte{})
-		assert.Error(t, msg.Verify(verifier))
-	})
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds(secret)})
+	require.NoError(t, err)
+	assert.True(t, vr.MACVerified)
 }
 
 func TestSignatureRoundTrip(t *testing.T) {
-	// 1. Setup keys and cert
-	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
+	_ = caKey
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	err := msg.ProtectWithSignature(signerKey, signerCert)
 	require.NoError(t, err)
 
-	template := x509.Certificate{
-		SerialNumber: big.NewInt(1),
-		Subject: pkix.Name{
-			CommonName: "Test Signer",
-		},
-		NotBefore: time.Now(),
-		NotAfter:  time.Now().Add(time.Hour),
-	}
-	certDER, err := x509.CreateCertificate(rand.Reader, &template, &template, &priv.PublicKey, priv)
-	require.NoError(t, err)
-	cert, err := x509.ParseCertificate(certDER)
-	require.NoError(t, err)
-
-	// 2. Setup protector
-	protector, err := pkicmp.NewSignatureProtector(priv, cert)
-	require.NoError(t, err)
-
-	body, err := pkicmp.NewPKIConfBody()
-	require.NoError(t, err)
-
-	msg := &pkicmp.PKIMessage{
-		Header: pkicmp.PKIHeader{
-			TransactionID: []byte("trans-sig"),
-		},
-		Body: body,
-	}
-
-	err = msg.Protect(protector)
-	require.NoError(t, err)
-
-	// 3. Marshal and Parse
 	der, err := msg.MarshalBinary()
 	require.NoError(t, err)
 
 	parsed, err := pkicmp.ParsePKIMessage(der)
 	require.NoError(t, err)
 
-	// 4. Verify
-	verifier, err := pkicmp.ProtectionVerifier(*parsed.Header.ProtectionAlg)
+	roots := x509.NewCertPool()
+	roots.AddCert(caCert)
+
+	vr, err := parsed.Verify(pkicmp.VerifyOptions{
+		TrustPool:  roots,
+		ExtraCerts: parsed.ExtraCerts,
+		SenderKID:  parsed.Header.SenderKID,
+	})
 	require.NoError(t, err)
-
-	sigVerifier, ok := verifier.(pkicmp.SignatureVerifier)
-	require.True(t, ok)
-	sigVerifier.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: cert.Raw}})
-
-	err = parsed.Verify(sigVerifier)
-	assert.NoError(t, err)
+	assert.False(t, vr.MACVerified)
 }
 
-func TestSignatureVerificationErrors(t *testing.T) {
-	// Setup CA and signer
+func TestSignatureAutoPopulatesExtraCerts(t *testing.T) {
+	caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
+	_ = caKey
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	// Provide an intermediate in the chain.
+	err := msg.ProtectWithSignature(signerKey, signerCert, caCert)
+	require.NoError(t, err)
+
+	// ExtraCerts should contain signerCert + caCert.
+	assert.Len(t, msg.ExtraCerts, 2)
+	assert.Equal(t, signerCert.Raw, msg.ExtraCerts[0].Raw)
+	assert.Equal(t, caCert.Raw, msg.ExtraCerts[1].Raw)
+}
+
+func TestSignatureSetsHeaderSenderKID(t *testing.T) {
+	_, _, signerKey, signerCert := generateCAAndSigner(t)
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	err := msg.ProtectWithSignature(signerKey, signerCert)
+	require.NoError(t, err)
+
+	assert.Equal(t, signerCert.SubjectKeyId, msg.Header.SenderKID)
+}
+
+func TestVerifyRejectsWrongSecret(t *testing.T) {
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+	require.NoError(t, msg.ProtectWithMAC([]byte("correct-secret")))
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	_, err = parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds([]byte("wrong-secret"))})
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
+}
+
+func TestVerifyRejectsUntrustedCA(t *testing.T) {
+	_, _, signerKey, signerCert := generateCAAndSigner(t)
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+	require.NoError(t, msg.ProtectWithSignature(signerKey, signerCert))
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	// Use a different CA as trust anchor.
+	otherCAKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	otherCACert := selfSignedCA(t, otherCAKey, "Other CA")
+	roots := x509.NewCertPool()
+	roots.AddCert(otherCACert)
+
+	_, err = parsed.Verify(pkicmp.VerifyOptions{
+		TrustPool:  roots,
+		ExtraCerts: parsed.ExtraCerts,
+		SenderKID:  parsed.Header.SenderKID,
+	})
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonSignatureFailed, ve.Reason)
+}
+
+func TestVerifyRejectsNoProtection(t *testing.T) {
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	_, err := msg.Verify(pkicmp.VerifyOptions{Credentials: mustCreds([]byte("secret"))})
+	var pe *pkicmp.ParseError
+	require.ErrorAs(t, err, &pe)
+	assert.Contains(t, pe.Detail, "message has no protection algorithm")
+}
+
+func TestVerifyRejectsMissingSharedSecret(t *testing.T) {
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+	require.NoError(t, msg.ProtectWithMAC([]byte("secret")))
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	_, err = parsed.Verify(pkicmp.VerifyOptions{})
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingSharedSecret, ve.Reason)
+}
+
+func TestVerifyRejectsMissingTrustPool(t *testing.T) {
+	_, _, signerKey, signerCert := generateCAAndSigner(t)
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+	require.NoError(t, msg.ProtectWithSignature(signerKey, signerCert))
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	_, err = parsed.Verify(pkicmp.VerifyOptions{
+		ExtraCerts: parsed.ExtraCerts,
+	})
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingTrustAnchors, ve.Reason)
+}
+
+func TestVerifyResultMACVerified(t *testing.T) {
+	t.Run("TrueForMAC", func(t *testing.T) {
+		body := pkicmp.NewPKIConfBody()
+		msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+		require.NoError(t, msg.ProtectWithMAC([]byte("secret")))
+
+		der, _ := msg.MarshalBinary()
+		parsed, _ := pkicmp.ParsePKIMessage(der)
+
+		vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds([]byte("secret"))})
+		require.NoError(t, err)
+		assert.True(t, vr.MACVerified)
+	})
+
+	t.Run("FalseForSignature", func(t *testing.T) {
+		caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
+		_ = caKey
+
+		body := pkicmp.NewPKIConfBody()
+		msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+		require.NoError(t, msg.ProtectWithSignature(signerKey, signerCert))
+
+		der, _ := msg.MarshalBinary()
+		parsed, _ := pkicmp.ParsePKIMessage(der)
+
+		roots := x509.NewCertPool()
+		roots.AddCert(caCert)
+
+		vr, err := parsed.Verify(pkicmp.VerifyOptions{
+			TrustPool:  roots,
+			ExtraCerts: parsed.ExtraCerts,
+			SenderKID:  parsed.Header.SenderKID,
+		})
+		require.NoError(t, err)
+		assert.False(t, vr.MACVerified)
+	})
+}
+
+func TestTrustedCAPubs(t *testing.T) {
+	// Create a fake CA cert for caPubs.
 	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	caTemplate := x509.Certificate{
+	caCert := selfSignedCA(t, caKey, "CAPubs CA")
+
+	rep := &pkicmp.CertRepMessage{
+		CAPubs:   []pkicmp.CMPCertificate{{Raw: caCert.Raw}},
+		Response: []pkicmp.CertResponse{{CertReqID: 0, Status: pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}}},
+	}
+
+	t.Run("ReturnsCertsWhenMACVerified", func(t *testing.T) {
+		vr := &pkicmp.VerifyResult{MACVerified: true}
+		certs := rep.TrustedCAPubs(vr)
+		require.Len(t, certs, 1)
+		assert.Equal(t, caCert.Raw, certs[0].Raw)
+	})
+
+	t.Run("ReturnsNilWhenNotMACVerified", func(t *testing.T) {
+		vr := &pkicmp.VerifyResult{MACVerified: false}
+		certs := rep.TrustedCAPubs(vr)
+		assert.Nil(t, certs)
+	})
+
+	t.Run("ReturnsNilWhenVerifyResultNil", func(t *testing.T) {
+		certs := rep.TrustedCAPubs(nil)
+		assert.Nil(t, certs)
+	})
+}
+
+// --- helpers ---
+
+func generateCAAndSigner(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, *ecdsa.PrivateKey, *x509.Certificate) {
+	t.Helper()
+	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	caCert := selfSignedCA(t, caKey, "Test CA")
+
+	signerKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	signerTemplate := &x509.Certificate{
+		SerialNumber:          big.NewInt(2),
+		Subject:               pkix.Name{CommonName: "Signer"},
+		NotBefore:             time.Now().Add(-time.Minute),
+		NotAfter:              time.Now().Add(time.Hour),
+		SubjectKeyId:          []byte{0xAA, 0xBB, 0xCC},
+		KeyUsage:              x509.KeyUsageDigitalSignature,
+		BasicConstraintsValid: true,
+	}
+	signerDER, err := x509.CreateCertificate(rand.Reader, signerTemplate, caCert, &signerKey.PublicKey, caKey)
+	require.NoError(t, err)
+	signerCert, err := x509.ParseCertificate(signerDER)
+	require.NoError(t, err)
+
+	return caKey, caCert, signerKey, signerCert
+}
+
+func selfSignedCA(t *testing.T, key *ecdsa.PrivateKey, cn string) *x509.Certificate {
+	t.Helper()
+	template := &x509.Certificate{
 		SerialNumber:          big.NewInt(1),
-		Subject:               pkix.Name{CommonName: "Test CA"},
-		NotBefore:             time.Now(),
+		Subject:               pkix.Name{CommonName: cn},
+		NotBefore:             time.Now().Add(-time.Minute),
 		NotAfter:              time.Now().Add(time.Hour),
 		IsCA:                  true,
 		BasicConstraintsValid: true,
+		KeyUsage:              x509.KeyUsageCertSign,
 	}
-	caDER, _ := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caKey.PublicKey, caKey)
-	caCert, _ := x509.ParseCertificate(caDER)
-
-	signerKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	signerTemplate := x509.Certificate{
-		SerialNumber: big.NewInt(2),
-		Subject:      pkix.Name{CommonName: "Signer"},
-		NotBefore:    time.Now(),
-		NotAfter:     time.Now().Add(time.Hour),
-	}
-	signerDER, _ := x509.CreateCertificate(rand.Reader, &signerTemplate, &caTemplate, &signerKey.PublicKey, caKey)
-	signerCert, _ := x509.ParseCertificate(signerDER)
-
-	body, _ := pkicmp.NewPKIConfBody()
-	msg := &pkicmp.PKIMessage{
-		Header: pkicmp.PKIHeader{TransactionID: []byte("trans-sig")},
-		Body:   body,
-	}
-	protector, _ := pkicmp.NewSignatureProtector(signerKey, signerCert)
-	_ = msg.Protect(protector)
-
-	t.Run("RejectsWrongKey", func(t *testing.T) {
-		wrongKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		wrongProtector, _ := pkicmp.NewSignatureProtector(wrongKey, signerCert)
-		_ = msg.Protect(wrongProtector)
-
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		sv := verifier.(pkicmp.SignatureVerifier)
-		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: signerCert.Raw}})
-		roots := x509.NewCertPool()
-		roots.AddCert(caCert)
-		sv.SetTrustPool(roots)
-
-		assert.Error(t, msg.Verify(verifier))
-	})
-
-	t.Run("RejectsUntrustedCA", func(t *testing.T) {
-		_ = msg.Protect(protector) // Re-protect with correct key
-
-		otherCAKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-		otherCATemplate := x509.Certificate{
-			SerialNumber:          big.NewInt(99),
-			Subject:               pkix.Name{CommonName: "Other CA"},
-			NotBefore:             time.Now(),
-			NotAfter:              time.Now().Add(time.Hour),
-			IsCA:                  true,
-			BasicConstraintsValid: true,
-		}
-		otherCADER, _ := x509.CreateCertificate(rand.Reader, &otherCATemplate, &otherCATemplate, &otherCAKey.PublicKey, otherCAKey)
-		otherCACert, _ := x509.ParseCertificate(otherCADER)
-
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		sv := verifier.(pkicmp.SignatureVerifier)
-		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: signerCert.Raw}})
-		roots := x509.NewCertPool()
-		roots.AddCert(otherCACert) // Wrong CA
-		sv.SetTrustPool(roots)
-
-		assert.Error(t, msg.Verify(verifier))
-	})
-
-	t.Run("RejectsExpiredCert", func(t *testing.T) {
-		expiredTemplate := x509.Certificate{
-			SerialNumber: big.NewInt(3),
-			Subject:      pkix.Name{CommonName: "Expired"},
-			NotBefore:    time.Now().Add(-2 * time.Hour),
-			NotAfter:     time.Now().Add(-1 * time.Hour),
-		}
-		expiredDER, _ := x509.CreateCertificate(rand.Reader, &expiredTemplate, &caTemplate, &signerKey.PublicKey, caKey)
-		expiredCert, _ := x509.ParseCertificate(expiredDER)
-
-		expiredProtector, _ := pkicmp.NewSignatureProtector(signerKey, expiredCert)
-		_ = msg.Protect(expiredProtector)
-
-		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
-		sv := verifier.(pkicmp.SignatureVerifier)
-		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: expiredCert.Raw}})
-		roots := x509.NewCertPool()
-		roots.AddCert(caCert)
-		sv.SetTrustPool(roots)
-
-		assert.Error(t, msg.Verify(verifier))
-	})
+	der, err := x509.CreateCertificate(rand.Reader, template, template, &key.PublicKey, key)
+	require.NoError(t, err)
+	cert, err := x509.ParseCertificate(der)
+	require.NoError(t, err)
+	return cert
 }

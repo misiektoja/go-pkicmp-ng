@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"golang.org/x/crypto/cryptobyte"
 )
 
 // RFC 9810 §5.1.2 (PKIBody getters and constructors tests)
@@ -17,8 +18,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		req := &CertReqMessages{
 			{CertReq: CertRequest{CertReqID: 1}},
 		}
-		body, err := NewIRBody(req)
-		require.NoError(t, err)
+		body := NewIRBody(req)
 		assert.Equal(t, BodyTypeIR, body.Type)
 
 		got, err := body.IR()
@@ -34,8 +34,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		req := &CertReqMessages{
 			{CertReq: CertRequest{CertReqID: 2}},
 		}
-		body, err := NewCRBody(req)
-		require.NoError(t, err)
+		body := NewCRBody(req)
 		assert.Equal(t, BodyTypeCR, body.Type)
 
 		got, err := body.CR()
@@ -47,8 +46,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		req := &CertReqMessages{
 			{CertReq: CertRequest{CertReqID: 3}},
 		}
-		body, err := NewKURBody(req)
-		require.NoError(t, err)
+		body := NewKURBody(req)
 		assert.Equal(t, BodyTypeKUR, body.Type)
 
 		got, err := body.KUR()
@@ -60,8 +58,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		rep := &CertRepMessage{
 			Response: []CertResponse{{CertReqID: 4}},
 		}
-		body, err := NewKUPBody(rep)
-		require.NoError(t, err)
+		body := NewKUPBody(rep)
 		assert.Equal(t, BodyTypeKUP, body.Type)
 
 		got, err := body.KUP()
@@ -80,8 +77,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		csr, err := x509.ParseCertificateRequest(csrDER)
 		require.NoError(t, err)
 
-		body, err := NewP10CRBody(csr)
-		require.NoError(t, err)
+		body := NewP10CRBody(csr)
 		assert.Equal(t, BodyTypeP10CR, body.Type)
 
 		got, err := body.P10CR()
@@ -94,8 +90,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		rep := &CertRepMessage{
 			Response: []CertResponse{{CertReqID: 5, Status: PKIStatusInfo{Status: StatusAccepted}}},
 		}
-		body, err := NewCPBody(rep)
-		require.NoError(t, err)
+		body := NewCPBody(rep)
 		assert.Equal(t, BodyTypeCP, body.Type)
 
 		got, err := body.CP()
@@ -107,8 +102,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		rep := &CertRepMessage{
 			Response: []CertResponse{{CertReqID: 6, Status: PKIStatusInfo{Status: StatusAccepted}}},
 		}
-		body, err := NewIPBody(rep)
-		require.NoError(t, err)
+		body := NewIPBody(rep)
 		assert.Equal(t, BodyTypeIP, body.Type)
 
 		got, err := body.IP()
@@ -117,8 +111,7 @@ func TestPKIBodyGetters(t *testing.T) {
 	})
 
 	t.Run("PKIConf", func(t *testing.T) {
-		body, err := NewPKIConfBody()
-		require.NoError(t, err)
+		body := NewPKIConfBody()
 		assert.Equal(t, BodyTypePKIConf, body.Type)
 
 		got, err := body.PKIConf()
@@ -130,8 +123,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		conf := &CertConfirmContent{
 			{CertHash: []byte{0x01, 0x02}, CertReqID: 1},
 		}
-		body, err := NewCertConfBody(conf)
-		require.NoError(t, err)
+		body := NewCertConfBody(conf)
 		assert.Equal(t, BodyTypeCertConf, body.Type)
 
 		got, err := body.CertConf()
@@ -141,8 +133,7 @@ func TestPKIBodyGetters(t *testing.T) {
 
 	t.Run("PollReq", func(t *testing.T) {
 		req := &PollReqContent{1, 2}
-		body, err := NewPollReqBody(req)
-		require.NoError(t, err)
+		body := NewPollReqBody(req)
 		assert.Equal(t, BodyTypePollReq, body.Type)
 
 		got, err := body.PollReq()
@@ -154,8 +145,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		rep := &PollRepContent{
 			{CertReqID: 1, CheckAfter: 30},
 		}
-		body, err := NewPollRepBody(rep)
-		require.NoError(t, err)
+		body := NewPollRepBody(rep)
 		assert.Equal(t, BodyTypePollRep, body.Type)
 
 		got, err := body.PollRep()
@@ -167,8 +157,7 @@ func TestPKIBodyGetters(t *testing.T) {
 		e := &ErrorMsgContent{
 			PKIStatusInfo: PKIStatusInfo{Status: StatusRejection},
 		}
-		body, err := NewErrorBody(e)
-		require.NoError(t, err)
+		body := NewErrorBody(e)
 		assert.Equal(t, BodyTypeError, body.Type)
 
 		got, err := body.Error()
@@ -178,7 +167,7 @@ func TestPKIBodyGetters(t *testing.T) {
 }
 
 func TestPKIBodyGetterMismatches(t *testing.T) {
-	body, _ := NewPKIConfBody()
+	body := NewPKIConfBody()
 
 	t.Run("IRMismatch", func(t *testing.T) { _, err := body.IR(); assert.Error(t, err) })
 	t.Run("CRMismatch", func(t *testing.T) { _, err := body.CR(); assert.Error(t, err) })
@@ -195,8 +184,6 @@ func TestPKIBodyGetterMismatches(t *testing.T) {
 
 func TestPKIBodyUnmarshalBodyContentErrors(t *testing.T) {
 	t.Run("InvalidInnerTag", func(t *testing.T) {
-		// BodyTypeIR (tag 0xa0) but content is NOT a sequence (e.g. it's a primitive context tag)
-		// 0x80 is primitive context-specific tag 0.
 		der := []byte{0x80, 0x01, 0x01}
 		body := &PKIBody{Type: BodyTypeIR, Raw: der}
 		_, err := body.IR()
@@ -204,7 +191,6 @@ func TestPKIBodyUnmarshalBodyContentErrors(t *testing.T) {
 		assert.Contains(t, err.Error(), "invalid body content")
 	})
 	t.Run("ShortData", func(t *testing.T) {
-		// Just the tag but no length/value
 		body := &PKIBody{Type: BodyTypeIR, Raw: []byte{0xa0}}
 		_, err := body.IR()
 		assert.Error(t, err)
@@ -214,12 +200,14 @@ func TestPKIBodyUnmarshalBodyContentErrors(t *testing.T) {
 func TestPKIBodyUnmarshalErrors(t *testing.T) {
 	t.Run("InvalidTag", func(t *testing.T) {
 		body := &PKIBody{}
-		err := body.unmarshal([]byte{0x30, 0x00}) // Universal Sequence instead of ContextSpecific
+		s := cryptobyte.String([]byte{0x30, 0x00})
+		err := body.unmarshal(&s)
 		assert.Error(t, err)
 	})
 	t.Run("ShortData", func(t *testing.T) {
 		body := &PKIBody{}
-		err := body.unmarshal([]byte{0x80})
+		s := cryptobyte.String([]byte{0x80})
+		err := body.unmarshal(&s)
 		assert.Error(t, err)
 	})
 }

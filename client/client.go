@@ -96,6 +96,6 @@ type EnrollResult struct {
 	Certificate *x509.Certificate
 	// CAPubs contains CA certificates from the caPubs field of the response (RFC 9810 §5.3.4).
 	CAPubs []*x509.Certificate
-	// ExtraCertificates contains certificates from the PKIMessage extraCerts field (RFC 4210 §5.1).
+	// ExtraCertificates contains certificates from the PKIMessage extraCerts field (RFC 9810 §5.1).
 	ExtraCertificates []*x509.Certificate
 }

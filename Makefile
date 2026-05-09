@@ -3,7 +3,7 @@ EJBCA_DIR := test/integration/ejbca
 .PHONY: test setup teardown integration integration-ejbca integration-openssl help
 
 test: ## Run unit tests
-	go test ./...
+	go test -v ./...
 
 # -- Integration test environment --
 

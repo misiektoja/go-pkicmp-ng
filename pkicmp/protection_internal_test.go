@@ -3,8 +3,6 @@ package pkicmp
 import (
 	"crypto"
 	"encoding/asn1"
-	"errors"
-	"io"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -12,21 +10,9 @@ import (
 	"golang.org/x/crypto/cryptobyte"
 )
 
-func TestProtectionVerifierRouter(t *testing.T) {
-	t.Run("PBM", func(t *testing.T) {
-		v, err := ProtectionVerifier(AlgorithmIdentifier{Algorithm: OIDPasswordBasedMac})
-		assert.NoError(t, err)
-		assert.IsType(t, &pbmVerifier{}, v)
-	})
-	t.Run("Signature", func(t *testing.T) {
-		v, err := ProtectionVerifier(AlgorithmIdentifier{Algorithm: OIDSHA256WithRSAEncryption})
-		assert.NoError(t, err)
-		assert.IsType(t, &signatureVerifier{}, v)
-	})
-	t.Run("Unsupported", func(t *testing.T) {
-		_, err := ProtectionVerifier(AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}})
-		assert.Error(t, err)
-	})
+func mustMACCreds(secret []byte) *MACCredentials {
+	c, _ := NewMACCredentials(secret)
+	return c
 }
 
 func TestPBMParameterASN1(t *testing.T) {
@@ -63,175 +49,90 @@ func TestPBMParameterASN1(t *testing.T) {
 		var unmarshaled PBMParameter
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "iterationCount too large")
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "iterationCount too large")
 	})
 }
 
 func TestDerivePBMKey(t *testing.T) {
-	k := derivePBMKey([]byte("secret"), []byte("salt"), 10, crypto.SHA256)
+	k, err := derivePBMKey([]byte("secret"), []byte("salt"), 10, crypto.SHA256, crypto.SHA256)
+	assert.NoError(t, err)
 	assert.NotEmpty(t, k)
 }
 
-func TestPBMVerifierErrors(t *testing.T) {
-	t.Run("SecretNotSet", func(t *testing.T) {
-		v := &pbmVerifier{}
-		err := v.Verify([]byte("data"), []byte("prot"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "shared secret not set")
+func TestValidatePBMIterationCount(t *testing.T) {
+	t.Run("TooSmall", func(t *testing.T) {
+		err := validatePBMIterationCount(0)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "iterationCount too small")
 	})
-	t.Run("InvalidParams", func(t *testing.T) {
-		v := &pbmVerifier{secret: []byte("secret")}
-		v.alg.Parameters = []byte{0x00} // Not a sequence
-		err := v.Verify([]byte("data"), []byte("prot"))
-		assert.Error(t, err)
+	t.Run("TooLarge", func(t *testing.T) {
+		err := validatePBMIterationCount(DefaultPBMMaxIterationCount + 1)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "iterationCount too large")
 	})
-}
-
-func TestSignatureVerifierErrors(t *testing.T) {
-	t.Run("UnsupportedAlg", func(t *testing.T) {
-		v := &signatureVerifier{alg: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}}}
-		err := v.Verify([]byte("data"), []byte("prot"))
-		assert.Error(t, err)
-	})
-	t.Run("NoCerts", func(t *testing.T) {
-		v := &signatureVerifier{alg: AlgorithmIdentifier{Algorithm: OIDSHA256WithRSAEncryption}}
-		err := v.Verify([]byte("data"), []byte("prot"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "signature verification failed")
+	t.Run("Valid", func(t *testing.T) {
+		assert.NoError(t, validatePBMIterationCount(1000))
 	})
 }
 
-type errorSigner struct{}
-
-func (s *errorSigner) Public() crypto.PublicKey { return nil }
-func (s *errorSigner) Sign(rand io.Reader, digest []byte, opts crypto.SignerOpts) ([]byte, error) {
-	return nil, errors.New("sign error")
-}
-
-func TestSignatureProtectorErrors(t *testing.T) {
-	t.Run("SignError", func(t *testing.T) {
-		p := &signatureProtector{
-			signer: &errorSigner{},
-			alg:    AlgorithmIdentifier{Algorithm: OIDSHA256WithRSAEncryption},
-		}
-		_, err := p.Protect([]byte("data"))
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "sign error")
+func TestProtectWithMACErrors(t *testing.T) {
+	t.Run("MissingBody", func(t *testing.T) {
+		msg := &PKIMessage{}
+		err := msg.ProtectWithMAC([]byte("secret"))
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "missing message body")
 	})
-	t.Run("UnsupportedAlg", func(t *testing.T) {
-		p := &signatureProtector{
-			alg: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}},
-		}
-		_, err := p.Protect([]byte("data"))
-		assert.Error(t, err)
+	t.Run("EmptySecret", func(t *testing.T) {
+		body := NewPKIConfBody()
+		msg := &PKIMessage{Body: body}
+		err := msg.ProtectWithMAC([]byte{})
+		var pe *ProtectionError
+		require.ErrorAs(t, err, &pe)
+		assert.Equal(t, ReasonMissingSharedSecret, pe.Reason)
 	})
-}
-
-func TestVerifyPBMErrorCases(t *testing.T) {
-	data := []byte("data")
-	prot := []byte("prot")
-	secret := []byte("secret")
-
 	t.Run("UnsupportedOWF", func(t *testing.T) {
-		p := PBMParameter{OWF: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}}}
-		err := verifyPBM(data, prot, secret, p)
+		body := NewPKIConfBody()
+		msg := &PKIMessage{Body: body}
+		err := msg.ProtectWithMACOptions(MACOptions{
+			Secret: []byte("secret"),
+			OWF:    asn1.ObjectIdentifier{1, 2, 3},
+		})
 		assert.Error(t, err)
 	})
 	t.Run("UnsupportedMAC", func(t *testing.T) {
-		p := PBMParameter{
-			OWF: AlgorithmIdentifier{Algorithm: OIDSHA256},
-			MAC: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}},
-		}
-		err := verifyPBM(data, prot, secret, p)
+		body := NewPKIConfBody()
+		msg := &PKIMessage{Body: body}
+		err := msg.ProtectWithMACOptions(MACOptions{
+			Secret: []byte("secret"),
+			MAC:    asn1.ObjectIdentifier{1, 2, 3},
+		})
 		assert.Error(t, err)
 	})
-
-	t.Run("UnavailableMAC", func(t *testing.T) {
-		// Mock a parameter with a known but unavailable MAC algorithm
-		// We'll skip this as it's hard to trigger without modifying algorithms.go
-	})
-
 	t.Run("IterationCountTooLarge", func(t *testing.T) {
-		p := PBMParameter{
-			OWF:            AlgorithmIdentifier{Algorithm: OIDSHA256},
-			MAC:            AlgorithmIdentifier{Algorithm: OIDHMACWithSHA256},
+		body := NewPKIConfBody()
+		msg := &PKIMessage{Body: body}
+		err := msg.ProtectWithMACOptions(MACOptions{
+			Secret:         []byte("secret"),
 			IterationCount: DefaultPBMMaxIterationCount + 1,
-		}
-		err := verifyPBM(data, prot, secret, p)
-		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "iterationCount too large")
+		})
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "iterationCount too large")
 	})
 }
 
-func TestNewPBMProtectorIterationBounds(t *testing.T) {
-	_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 0, OIDSHA256, OIDHMACWithSHA256)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "iterationCount too small")
-
-	_, err = NewPBMProtector([]byte("secret"), []byte("saltsalt"), DefaultPBMMaxIterationCount+1, OIDSHA256, OIDHMACWithSHA256)
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "iterationCount too large")
-}
-
-func TestNewPBMProtectorSaltValidation(t *testing.T) {
-	t.Run("RejectsEmptySalt", func(t *testing.T) {
-		_, err := NewPBMProtector([]byte("secret"), []byte{}, 1000, OIDSHA256, OIDHMACWithSHA256)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "salt too short")
-	})
-	t.Run("RejectsShortSalt", func(t *testing.T) {
-		_, err := NewPBMProtector([]byte("secret"), []byte("short"), 1000, OIDSHA256, OIDHMACWithSHA256)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "salt too short")
-	})
-	t.Run("AcceptsMinimumSalt", func(t *testing.T) {
-		_, err := NewPBMProtector([]byte("secret"), []byte("12345678"), 1000, OIDSHA256, OIDHMACWithSHA256)
-		assert.NoError(t, err)
-	})
-}
-
-func TestNewPBMProtectorAlgorithmValidation(t *testing.T) {
-	t.Run("RejectsUnknownOWF", func(t *testing.T) {
-		_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 1000, asn1.ObjectIdentifier{1, 2, 3}, OIDHMACWithSHA256)
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported hash algorithm")
-	})
-	t.Run("RejectsUnknownMAC", func(t *testing.T) {
-		_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 1000, OIDSHA256, asn1.ObjectIdentifier{1, 2, 3})
-		require.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported HMAC algorithm")
-	})
-}
-
-func TestMACProtectorErrorCases(t *testing.T) {
-	t.Run("InvalidParams", func(t *testing.T) {
-		p := &pbmProtector{alg: AlgorithmIdentifier{Parameters: []byte{0x00}}}
-		_, err := p.Protect([]byte("data"))
-		assert.Error(t, err)
-	})
-
-	t.Run("UnsupportedOWF", func(t *testing.T) {
-		params := PBMParameter{OWF: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}}}
-		var b cryptobyte.Builder
-		params.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
-		pder, _ := b.Bytes()
-		p := &pbmProtector{alg: AlgorithmIdentifier{Parameters: pder}}
-		_, err := p.Protect([]byte("data"))
-		assert.Error(t, err)
-	})
-
-	t.Run("UnsupportedMAC", func(t *testing.T) {
-		params := PBMParameter{
-			OWF: AlgorithmIdentifier{Algorithm: OIDSHA256},
-			MAC: AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}},
-		}
-		var b cryptobyte.Builder
-		params.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
-		pder, _ := b.Bytes()
-		p := &pbmProtector{alg: AlgorithmIdentifier{Parameters: pder}}
-		_, err := p.Protect([]byte("data"))
-		assert.Error(t, err)
+func TestProtectWithSignatureErrors(t *testing.T) {
+	t.Run("MissingBody", func(t *testing.T) {
+		msg := &PKIMessage{}
+		err := msg.ProtectWithSignature(nil, nil)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "missing message body")
 	})
 }
 
@@ -245,5 +146,46 @@ func TestPKIMessageProtectedPartErrors(t *testing.T) {
 		msg := &PKIMessage{RawHeader: []byte{0x01}}
 		_, err := msg.protectedPart()
 		assert.Error(t, err)
+	})
+}
+
+func TestVerifyErrors(t *testing.T) {
+	t.Run("NoProtectionAlg", func(t *testing.T) {
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		_, err := msg.Verify(VerifyOptions{})
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "message has no protection algorithm")
+	})
+	t.Run("EmptyProtection", func(t *testing.T) {
+		msg := &PKIMessage{
+			Header: PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: OIDPasswordBasedMac}},
+			Body:   NewPKIConfBody(),
+		}
+		_, err := msg.Verify(VerifyOptions{Credentials: mustMACCreds([]byte("s"))})
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "message is not protected")
+	})
+	t.Run("NilBody", func(t *testing.T) {
+		msg := &PKIMessage{
+			Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: OIDPasswordBasedMac}},
+			Protection: []byte{0x01},
+		}
+		_, err := msg.Verify(VerifyOptions{Credentials: mustMACCreds([]byte("s"))})
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "missing message body")
+	})
+	t.Run("UnsupportedAlgorithm", func(t *testing.T) {
+		msg := &PKIMessage{
+			Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{1, 2, 3}}},
+			Body:       NewPKIConfBody(),
+			Protection: []byte{0x01},
+		}
+		_, err := msg.Verify(VerifyOptions{})
+		var ve *VerificationError
+		require.ErrorAs(t, err, &ve)
+		assert.Equal(t, ReasonUnsupportedAlgorithm, ve.Reason)
 	})
 }

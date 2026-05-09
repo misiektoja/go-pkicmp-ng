@@ -2,7 +2,6 @@ package pkicmp
 
 import (
 	"crypto/x509"
-	"errors"
 	"fmt"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -49,9 +48,10 @@ import (
 // PKIBody is not thread-safe. Concurrent access must be synchronized by the caller.
 type PKIBody struct {
 	// Type identifies which CMP body variant is present.
-	Type BodyType
-	Raw  []byte // Raw DER of the CHOICE element (including context tag)
-	err  error
+	Type  BodyType
+	Raw   []byte // Raw DER of the CHOICE element (including context tag)
+	dirty bool   // true when constructed or modified; marshal re-encodes instead of using Raw
+	err   error
 
 	// Lazy parsed fields (pointers to the decoded types)
 	ir       *CertReqMessages
@@ -90,23 +90,22 @@ const (
 	BodyTypePollRep  = BodyType(26 | classContextSpecific | classConstructed)
 )
 
-func (b *PKIBody) unmarshal(data []byte) error {
-	s := cryptobyte.String(data)
+func (b *PKIBody) unmarshal(s *cryptobyte.String) error {
+	b.Raw = []byte(*s)
 	var content cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1(&content, &tag) {
-		return errors.New("pkicmp: missing PKIBody tag")
+		return &ParseError{Detail: "missing PKIBody tag"}
 	}
 	if tag.ContextSpecific() != tag {
-		return fmt.Errorf("pkicmp: invalid PKIBody tag: %d", tag)
+		return &ParseError{Detail: fmt.Sprintf("invalid PKIBody tag: %d", tag)}
 	}
 	b.Type = BodyType(tag)
-	b.Raw = data
 	return nil
 }
 
 func (b *PKIBody) marshal(mctx *MarshalContext, builder *cryptobyte.Builder) {
-	if len(b.Raw) > 0 && b.ir == nil && b.ip == nil && b.cr == nil && b.cp == nil && b.p10cr == nil && b.kur == nil && b.kup == nil && b.certConf == nil && b.pkiConf == nil && b.pollReq == nil && b.pollRep == nil && b.errorMsg == nil {
+	if len(b.Raw) > 0 && !b.dirty {
 		builder.AddBytes(b.Raw)
 		return
 	}
@@ -148,7 +147,7 @@ func (b *PKIBody) marshal(mctx *MarshalContext, builder *cryptobyte.Builder) {
 
 func (b *PKIBody) IR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeIR {
-		return nil, fmt.Errorf("pkicmp: body is not ir (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not ir (type %d)", b.Type)}
 	}
 	if b.ir == nil && b.err == nil {
 		b.ir = &CertReqMessages{}
@@ -159,7 +158,7 @@ func (b *PKIBody) IR() (*CertReqMessages, error) {
 
 func (b *PKIBody) CR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeCR {
-		return nil, fmt.Errorf("pkicmp: body is not cr (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not cr (type %d)", b.Type)}
 	}
 	if b.cr == nil && b.err == nil {
 		b.cr = &CertReqMessages{}
@@ -170,7 +169,7 @@ func (b *PKIBody) CR() (*CertReqMessages, error) {
 
 func (b *PKIBody) KUR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeKUR {
-		return nil, fmt.Errorf("pkicmp: body is not kur (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not kur (type %d)", b.Type)}
 	}
 	if b.kur == nil && b.err == nil {
 		b.kur = &CertReqMessages{}
@@ -181,7 +180,7 @@ func (b *PKIBody) KUR() (*CertReqMessages, error) {
 
 func (b *PKIBody) KUP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeKUP {
-		return nil, fmt.Errorf("pkicmp: body is not kup (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not kup (type %d)", b.Type)}
 	}
 	if b.kup == nil && b.err == nil {
 		b.kup = &CertRepMessage{}
@@ -192,7 +191,7 @@ func (b *PKIBody) KUP() (*CertRepMessage, error) {
 
 func (b *PKIBody) P10CR() (*x509.CertificateRequest, error) {
 	if b.Type != BodyTypeP10CR {
-		return nil, fmt.Errorf("pkicmp: body is not p10cr (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not p10cr (type %d)", b.Type)}
 	}
 	if b.p10cr != nil || b.err != nil {
 		return b.p10cr, b.err
@@ -213,7 +212,7 @@ func (b *PKIBody) P10CR() (*x509.CertificateRequest, error) {
 	s := cryptobyte.String(b.Raw)
 	var sub cryptobyte.String
 	if !s.ReadASN1(&sub, cbasn1.Tag(BodyTypeP10CR)) {
-		b.err = errors.New("pkicmp: invalid p10cr body")
+		b.err = &ParseError{Detail: "invalid p10cr body"}
 		return nil, b.err
 	}
 	b.p10cr, b.err = x509.ParseCertificateRequest(sub)
@@ -222,7 +221,7 @@ func (b *PKIBody) P10CR() (*x509.CertificateRequest, error) {
 
 func (b *PKIBody) CP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeCP {
-		return nil, fmt.Errorf("pkicmp: body is not cp (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not cp (type %d)", b.Type)}
 	}
 	if b.cp == nil && b.err == nil {
 		b.cp = &CertRepMessage{}
@@ -233,7 +232,7 @@ func (b *PKIBody) CP() (*CertRepMessage, error) {
 
 func (b *PKIBody) IP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeIP {
-		return nil, fmt.Errorf("pkicmp: body is not ip (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not ip (type %d)", b.Type)}
 	}
 	if b.ip == nil && b.err == nil {
 		b.ip = &CertRepMessage{}
@@ -244,7 +243,7 @@ func (b *PKIBody) IP() (*CertRepMessage, error) {
 
 func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 	if b.Type != BodyTypeCertConf {
-		return nil, fmt.Errorf("pkicmp: body is not certConf (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not certConf (type %d)", b.Type)}
 	}
 	if b.certConf == nil && b.err == nil {
 		b.certConf = &CertConfirmContent{}
@@ -255,7 +254,7 @@ func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 
 func (b *PKIBody) PKIConf() (*PKIConfirmContent, error) {
 	if b.Type != BodyTypePKIConf {
-		return nil, fmt.Errorf("pkicmp: body is not pkiconf (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pkiconf (type %d)", b.Type)}
 	}
 	if b.pkiConf == nil && b.err == nil {
 		b.pkiConf = &PKIConfirmContent{}
@@ -266,7 +265,7 @@ func (b *PKIBody) PKIConf() (*PKIConfirmContent, error) {
 
 func (b *PKIBody) PollReq() (*PollReqContent, error) {
 	if b.Type != BodyTypePollReq {
-		return nil, fmt.Errorf("pkicmp: body is not pollReq (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollReq (type %d)", b.Type)}
 	}
 	if b.pollReq == nil && b.err == nil {
 		b.pollReq = &PollReqContent{}
@@ -277,7 +276,7 @@ func (b *PKIBody) PollReq() (*PollReqContent, error) {
 
 func (b *PKIBody) PollRep() (*PollRepContent, error) {
 	if b.Type != BodyTypePollRep {
-		return nil, fmt.Errorf("pkicmp: body is not pollRep (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollRep (type %d)", b.Type)}
 	}
 	if b.pollRep == nil && b.err == nil {
 		b.pollRep = &PollRepContent{}
@@ -288,7 +287,7 @@ func (b *PKIBody) PollRep() (*PollRepContent, error) {
 
 func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 	if b.Type != BodyTypeError {
-		return nil, fmt.Errorf("pkicmp: body is not error (type %d)", b.Type)
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not error (type %d)", b.Type)}
 	}
 	if b.errorMsg == nil && b.err == nil {
 		b.errorMsg = &ErrorMsgContent{}
@@ -314,60 +313,57 @@ func (b *PKIBody) unmarshalBodyContent(p interface {
 	s := cryptobyte.String(b.Raw)
 	var sub cryptobyte.String
 	if !s.ReadASN1(&sub, cbasn1.Tag(b.Type)) {
-		return fmt.Errorf("pkicmp: invalid body content for type %d", b.Type)
+		return &ParseError{Detail: fmt.Sprintf("invalid body content for type %d", b.Type)}
 	}
 	return p.unmarshal(&sub)
 }
 
 // Constructors
 
-func NewIRBody(req *CertReqMessages) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeIR, ir: req}, nil
+func NewIRBody(req *CertReqMessages) *PKIBody {
+	return &PKIBody{Type: BodyTypeIR, ir: req, dirty: true}
 }
 
-func NewCRBody(req *CertReqMessages) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeCR, cr: req}, nil
+func NewCRBody(req *CertReqMessages) *PKIBody {
+	return &PKIBody{Type: BodyTypeCR, cr: req, dirty: true}
 }
 
-func NewKURBody(req *CertReqMessages) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeKUR, kur: req}, nil
+func NewKURBody(req *CertReqMessages) *PKIBody {
+	return &PKIBody{Type: BodyTypeKUR, kur: req, dirty: true}
 }
 
-func NewKUPBody(rep *CertRepMessage) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeKUP, kup: rep}, nil
+func NewKUPBody(rep *CertRepMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeKUP, kup: rep, dirty: true}
 }
 
-func NewP10CRBody(csr *x509.CertificateRequest) (*PKIBody, error) {
-	return &PKIBody{
-		Type:  BodyTypeP10CR,
-		p10cr: csr,
-	}, nil
+func NewP10CRBody(csr *x509.CertificateRequest) *PKIBody {
+	return &PKIBody{Type: BodyTypeP10CR, p10cr: csr, dirty: true}
 }
 
-func NewCPBody(rep *CertRepMessage) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeCP, cp: rep}, nil
+func NewCPBody(rep *CertRepMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeCP, cp: rep, dirty: true}
 }
 
-func NewIPBody(rep *CertRepMessage) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeIP, ip: rep}, nil
+func NewIPBody(rep *CertRepMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeIP, ip: rep, dirty: true}
 }
 
-func NewCertConfBody(conf *CertConfirmContent) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeCertConf, certConf: conf}, nil
+func NewCertConfBody(conf *CertConfirmContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeCertConf, certConf: conf, dirty: true}
 }
 
-func NewPKIConfBody() (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypePKIConf, pkiConf: &PKIConfirmContent{}}, nil
+func NewPKIConfBody() *PKIBody {
+	return &PKIBody{Type: BodyTypePKIConf, pkiConf: &PKIConfirmContent{}, dirty: true}
 }
 
-func NewPollReqBody(req *PollReqContent) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypePollReq, pollReq: req}, nil
+func NewPollReqBody(req *PollReqContent) *PKIBody {
+	return &PKIBody{Type: BodyTypePollReq, pollReq: req, dirty: true}
 }
 
-func NewPollRepBody(rep *PollRepContent) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypePollRep, pollRep: rep}, nil
+func NewPollRepBody(rep *PollRepContent) *PKIBody {
+	return &PKIBody{Type: BodyTypePollRep, pollRep: rep, dirty: true}
 }
 
-func NewErrorBody(err *ErrorMsgContent) (*PKIBody, error) {
-	return &PKIBody{Type: BodyTypeError, errorMsg: err}, nil
+func NewErrorBody(err *ErrorMsgContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeError, errorMsg: err, dirty: true}
 }

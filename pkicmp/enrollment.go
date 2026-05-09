@@ -1,7 +1,7 @@
 package pkicmp
 
 import (
-	"errors"
+	"crypto/x509"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -19,6 +19,30 @@ type CertRepMessage struct {
 	CAPubs []CMPCertificate
 	// Response contains one result entry per CertRequest.
 	Response []CertResponse
+}
+
+// TrustedCAPubs returns parsed CA certificates from the caPubs field.
+//
+// Per RFC 9810 §5.3.2, caPubs may be directly trusted as root CA
+// certificates when the message was protected by a shared secret.
+// RFC 9810 §8.9 allows trust anchor provisioning via signature-protected
+// messages too, but that requires local policy to authorize the sender;
+// callers needing that must handle caPubs directly.
+// The caller must pass the VerifyResult from a successful Verify call.
+// If the message was not MAC-verified, TrustedCAPubs returns nil.
+func (m *CertRepMessage) TrustedCAPubs(vr *VerifyResult) []*x509.Certificate {
+	if vr == nil || !vr.MACVerified {
+		return nil
+	}
+	var certs []*x509.Certificate
+	for _, c := range m.CAPubs {
+		parsed, err := c.Parse()
+		if err != nil {
+			continue
+		}
+		certs = append(certs, parsed)
+	}
+	return certs
 }
 
 func (m *CertRepMessage) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
@@ -42,13 +66,13 @@ func (m *CertRepMessage) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (m *CertRepMessage) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertRepMessage sequence")
+		return &ParseError{Detail: "invalid CertRepMessage sequence"}
 	}
 
 	if seq.PeekASN1Tag(cbasn1.Tag(1).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(1).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid caPubs tag")
+			return &ParseError{Detail: "invalid caPubs tag"}
 		}
 		// sub is the content of the [1] tag, which is the sequence of certs
 		for !sub.Empty() {
@@ -62,7 +86,7 @@ func (m *CertRepMessage) unmarshal(s *cryptobyte.String) error {
 
 	var respSeq cryptobyte.String
 	if !seq.ReadASN1(&respSeq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid response sequence")
+		return &ParseError{Detail: "invalid response sequence"}
 	}
 	for !respSeq.Empty() {
 		var resp CertResponse
@@ -111,10 +135,10 @@ func (r *CertResponse) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (r *CertResponse) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertResponse sequence")
+		return &ParseError{Detail: "invalid CertResponse sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {
-		return errors.New("pkicmp: invalid certReqId")
+		return &ParseError{Detail: "invalid certReqId"}
 	}
 	if err := r.Status.unmarshal(&seq); err != nil {
 		return err
@@ -123,13 +147,13 @@ func (r *CertResponse) unmarshal(s *cryptobyte.String) error {
 	if !seq.Empty() && (seq.PeekASN1Tag(cbasn1.SEQUENCE) || cbasn1.Tag(seq[0]).ContextSpecific() == cbasn1.Tag(seq[0])) {
 		r.CertifiedKeyPair = &CertifiedKeyPair{}
 		if err := r.CertifiedKeyPair.unmarshal(&seq); err != nil {
-			r.CertifiedKeyPair = nil
+			return err
 		}
 	}
 
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.OCTET_STRING) {
 		if !seq.ReadASN1Bytes(&r.RspInfo, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid rspInfo")
+			return &ParseError{Detail: "invalid rspInfo"}
 		}
 	}
 
@@ -164,7 +188,7 @@ func (ckp *CertifiedKeyPair) marshal(mctx *MarshalContext, b *cryptobyte.Builder
 func (ckp *CertifiedKeyPair) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertifiedKeyPair sequence")
+		return &ParseError{Detail: "invalid CertifiedKeyPair sequence"}
 	}
 	if err := ckp.CertOrEncCert.unmarshal(&seq); err != nil {
 		return err
@@ -172,7 +196,7 @@ func (ckp *CertifiedKeyPair) unmarshal(s *cryptobyte.String) error {
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid privateKey tag")
+			return &ParseError{Detail: "invalid privateKey tag"}
 		}
 		ckp.PrivateKey = &EncryptedKey{}
 		if err := ckp.PrivateKey.unmarshal(&sub); err != nil {
@@ -209,25 +233,25 @@ func (c *CertOrEncCert) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 
 func (c *CertOrEncCert) unmarshal(s *cryptobyte.String) error {
 	if s.Empty() {
-		return errors.New("pkicmp: missing CertOrEncCert")
+		return &ParseError{Detail: "missing CertOrEncCert"}
 	}
 	tag := cbasn1.Tag((*s)[0])
 	if tag == cbasn1.Tag(0).ContextSpecific().Constructed() {
 		var sub cryptobyte.String
 		if !s.ReadASN1(&sub, tag) {
-			return errors.New("pkicmp: invalid certificate tag")
+			return &ParseError{Detail: "invalid certificate tag"}
 		}
 		c.Certificate = &CMPCertificate{}
 		return c.Certificate.unmarshal(&sub)
 	} else if tag == cbasn1.Tag(1).ContextSpecific().Constructed() {
 		var sub cryptobyte.String
 		if !s.ReadASN1(&sub, tag) {
-			return errors.New("pkicmp: invalid encryptedCert tag")
+			return &ParseError{Detail: "invalid encryptedCert tag"}
 		}
 		c.EncryptedCert = &EncryptedKey{}
 		return c.EncryptedCert.unmarshal(&sub)
 	}
-	return errors.New("pkicmp: unsupported CertOrEncCert variant")
+	return &ParseError{Detail: "unsupported CertOrEncCert variant"}
 }
 
 // CertConfirmContent per RFC 9810 §5.3.18.
@@ -246,7 +270,7 @@ func (c *CertConfirmContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder
 func (c *CertConfirmContent) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertConfirmContent sequence")
+		return &ParseError{Detail: "invalid CertConfirmContent sequence"}
 	}
 	for !seq.Empty() {
 		var status CertStatus
@@ -305,13 +329,13 @@ func (s *CertStatus) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (s *CertStatus) unmarshal(inner *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !inner.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertStatus sequence")
+		return &ParseError{Detail: "invalid CertStatus sequence"}
 	}
 	if !seq.ReadASN1Bytes(&s.CertHash, cbasn1.OCTET_STRING) {
-		return errors.New("pkicmp: invalid certHash")
+		return &ParseError{Detail: "invalid certHash"}
 	}
 	if !seq.ReadASN1Integer(&s.CertReqID) {
-		return errors.New("pkicmp: invalid certReqId")
+		return &ParseError{Detail: "invalid certReqId"}
 	}
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.SEQUENCE) {
 		s.StatusInfo = &PKIStatusInfo{}
@@ -322,7 +346,7 @@ func (s *CertStatus) unmarshal(inner *cryptobyte.String) error {
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid hashAlg tag")
+			return &ParseError{Detail: "invalid hashAlg tag"}
 		}
 		s.HashAlg = &AlgorithmIdentifier{}
 		if err := s.HashAlg.unmarshalInner(&sub); err != nil {
@@ -361,7 +385,7 @@ func (c *PKIConfirmContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder)
 func (c *PKIConfirmContent) unmarshal(s *cryptobyte.String) error {
 	var dummy cryptobyte.String
 	if !s.ReadASN1(&dummy, cbasn1.NULL) {
-		return errors.New("pkicmp: invalid PKIConfirmContent (expected NULL)")
+		return &ParseError{Detail: "invalid PKIConfirmContent (expected NULL)"}
 	}
 	return nil
 }
@@ -386,16 +410,16 @@ func (c *PollReqContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (c *PollReqContent) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PollReqContent sequence")
+		return &ParseError{Detail: "invalid PollReqContent sequence"}
 	}
 	for !seq.Empty() {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.SEQUENCE) {
-			return errors.New("pkicmp: invalid pollReq element")
+			return &ParseError{Detail: "invalid pollReq element"}
 		}
 		var id int64
 		if !sub.ReadASN1Integer(&id) {
-			return errors.New("pkicmp: invalid certReqId in pollReq")
+			return &ParseError{Detail: "invalid certReqId in pollReq"}
 		}
 		*c = append(*c, id)
 	}
@@ -437,19 +461,19 @@ func (c *PollRepContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (c *PollRepContent) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PollRepContent sequence")
+		return &ParseError{Detail: "invalid PollRepContent sequence"}
 	}
 	for !seq.Empty() {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.SEQUENCE) {
-			return errors.New("pkicmp: invalid pollRep element")
+			return &ParseError{Detail: "invalid pollRep element"}
 		}
 		var item PollRepItem
 		if !sub.ReadASN1Integer(&item.CertReqID) {
-			return errors.New("pkicmp: invalid certReqId in pollRep")
+			return &ParseError{Detail: "invalid certReqId in pollRep"}
 		}
 		if !sub.ReadASN1Integer(&item.CheckAfter) {
-			return errors.New("pkicmp: invalid checkAfter in pollRep")
+			return &ParseError{Detail: "invalid checkAfter in pollRep"}
 		}
 		if !sub.Empty() {
 			if err := item.Reason.unmarshal(&sub); err != nil {

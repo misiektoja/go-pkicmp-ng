@@ -1,0 +1,313 @@
+package pkicmp
+
+import (
+	"crypto"
+	"crypto/hmac"
+	"crypto/rand"
+	"crypto/x509"
+	"encoding/asn1"
+	"fmt"
+
+	"golang.org/x/crypto/cryptobyte"
+	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
+)
+
+// MACOptions configures Password-Based MAC protection when defaults are not suitable.
+type MACOptions struct {
+	Secret         []byte
+	Algorithm      asn1.ObjectIdentifier // default: OIDPasswordBasedMac
+	IterationCount int                   // default: 10000
+	OWF            asn1.ObjectIdentifier // default: SHA-256
+	MAC            asn1.ObjectIdentifier // default: HMAC-SHA-256
+}
+
+// ProtectWithMAC protects the message using Password-Based MAC with default
+// parameters (SHA-256 OWF, HMAC-SHA-256, 10000 iterations, random 16-byte salt).
+// RFC 9810 §5.1.3.1, RFC 9481 §7.1 (mandatory algorithm profile).
+//
+// Note: The caller is responsible for setting Header.SenderKID when the sender
+// field is a NULL-DN (RFC 9810 §5.1.1 MUST requirement for MAC-protected messages
+// with unknown sender identity).
+func (m *PKIMessage) ProtectWithMAC(secret []byte) error {
+	return m.ProtectWithMACOptions(MACOptions{Secret: secret})
+}
+
+// ProtectWithMACOptions protects the message using Password-Based MAC with
+// explicit parameters. Use ProtectWithMAC for the common case.
+// RFC 9810 §5.1.3.1.
+//
+// TODO: RFC 9481 §7.1 RECOMMENDS preferring PBMAC1 over PasswordBasedMac.
+func (m *PKIMessage) ProtectWithMACOptions(opts MACOptions) error {
+	if m.Body == nil {
+		return &ParseError{Detail: "missing message body"}
+	}
+	if len(opts.Secret) == 0 {
+		return &ProtectionError{Reason: ReasonMissingSharedSecret}
+	}
+
+	// Apply defaults.
+	alg := opts.Algorithm
+	if alg == nil {
+		alg = OIDPasswordBasedMac
+	}
+	iterCount := opts.IterationCount
+	if iterCount == 0 {
+		iterCount = DefaultPBMIterationCount
+	}
+	owf := opts.OWF
+	if owf == nil {
+		owf = DefaultPBMOWF
+	}
+	mac := opts.MAC
+	if mac == nil {
+		mac = DefaultPBMMAC
+	}
+
+	if err := validatePBMIterationCount(iterCount); err != nil {
+		return err
+	}
+	if _, err := hashFromOID(owf); err != nil {
+		return err
+	}
+	if _, err := hmacHashFromOID(mac); err != nil {
+		return err
+	}
+
+	// Generate random salt.
+	salt := make([]byte, DefaultPBMSaltLength)
+	if _, err := rand.Read(salt); err != nil {
+		return err
+	}
+
+	// Build PBMParameter and serialize.
+	p := PBMParameter{
+		Salt:           salt,
+		IterationCount: iterCount,
+		OWF:            AlgorithmIdentifier{Algorithm: owf},
+		MAC:            AlgorithmIdentifier{Algorithm: mac},
+	}
+	var pb cryptobyte.Builder
+	p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &pb)
+	params, err := pb.Bytes()
+	if err != nil {
+		return err
+	}
+
+	m.Header.ProtectionAlg = &AlgorithmIdentifier{
+		Algorithm:  alg,
+		Parameters: params,
+	}
+
+	// Marshal header+body and compute MAC.
+	if err := m.marshalForProtection(); err != nil {
+		return err
+	}
+	data, err := m.protectedPart()
+	if err != nil {
+		return err
+	}
+
+	hash, _ := hashFromOID(owf)
+	macHash, _ := hmacHashFromOID(mac)
+	k, err := derivePBMKey(opts.Secret, salt, iterCount, hash, macHash)
+	if err != nil {
+		return err
+	}
+	h := hmac.New(macHash.New, k)
+	h.Write(data)
+	m.Protection = h.Sum(nil)
+	return nil
+}
+
+// ProtectWithSignature signs the message using the given key.
+// The signature algorithm is inferred from the key type.
+// cert is added to ExtraCerts and its SubjectKeyId is set as Header.SenderKID.
+// chain provides optional intermediate certificates to include in ExtraCerts.
+// RFC 9810 §5.1.3.3.
+func (m *PKIMessage) ProtectWithSignature(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) error {
+	if m.Body == nil {
+		return &ParseError{Detail: "missing message body"}
+	}
+
+	sigAlgOID, _, err := signatureAlgorithmFromKey(key)
+	if err != nil {
+		return &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: err}
+	}
+
+	m.Header.ProtectionAlg = &AlgorithmIdentifier{Algorithm: sigAlgOID}
+
+	// RFC 9810 §5.1.1: senderKID SHOULD be used.
+	if len(cert.SubjectKeyId) > 0 {
+		m.Header.SenderKID = cert.SubjectKeyId
+	}
+
+	// Append cert and chain to ExtraCerts.
+	m.ExtraCerts = append(m.ExtraCerts, CMPCertificate{Raw: cert.Raw})
+	for _, c := range chain {
+		m.ExtraCerts = append(m.ExtraCerts, CMPCertificate{Raw: c.Raw})
+	}
+
+	// Marshal header+body and compute signature.
+	if err := m.marshalForProtection(); err != nil {
+		return err
+	}
+	data, err := m.protectedPart()
+	if err != nil {
+		return err
+	}
+
+	sigAlg, _ := sigAlgFromOID(sigAlgOID)
+	hash := hashFromSigAlg(sigAlg)
+
+	var opts crypto.SignerOpts
+	var digest []byte
+	if hash != 0 {
+		h := hash.New()
+		h.Write(data)
+		digest = h.Sum(nil)
+		opts = hash
+	} else {
+		// e.g. Ed25519
+		digest = data
+		opts = crypto.Hash(0)
+	}
+
+	sig, err := key.Sign(rand.Reader, digest, opts)
+	if err != nil {
+		return err
+	}
+	m.Protection = sig
+	return nil
+}
+
+// marshalForProtection marshals header and body into RawHeader/RawBody for
+// protection computation. This mirrors the logic from the old Protect method.
+func (m *PKIMessage) marshalForProtection() error {
+	mctx := &MarshalContext{MinRequiredPVNO: PVNO2}
+	if m.Header.PVNO > PVNO2 {
+		mctx.MinRequiredPVNO = m.Header.PVNO
+	}
+
+	var bodyBuilder cryptobyte.Builder
+	m.Body.marshal(mctx, &bodyBuilder)
+	var err error
+	m.RawBody, err = bodyBuilder.Bytes()
+	if err != nil {
+		return err
+	}
+
+	m.Header.PVNO = mctx.MinRequiredPVNO
+
+	var headerBuilder cryptobyte.Builder
+	m.Header.marshal(mctx, &headerBuilder)
+	m.RawHeader, err = headerBuilder.Bytes()
+	if err != nil {
+		return err
+	}
+	return nil
+}
+
+// PBMParameter per RFC 9810 §5.1.3.1.
+//
+//	PBMParameter ::= SEQUENCE {
+//	   salt                OCTET STRING,
+//	   owf                 AlgorithmIdentifier,
+//	   iterationCount      INTEGER,
+//	   mac                 AlgorithmIdentifier
+//	}
+type PBMParameter struct {
+	Salt           []byte
+	OWF            AlgorithmIdentifier
+	IterationCount int
+	MAC            AlgorithmIdentifier
+}
+
+func (p *PBMParameter) unmarshal(s *cryptobyte.String) error {
+	var seq cryptobyte.String
+	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
+		return &ParseError{Detail: "invalid PBMParameter sequence"}
+	}
+	if !seq.ReadASN1Bytes(&p.Salt, cbasn1.OCTET_STRING) {
+		return &ParseError{Detail: "invalid salt"}
+	}
+	if err := p.OWF.unmarshal(&seq); err != nil {
+		return err
+	}
+	var count int64
+	if !seq.ReadASN1Integer(&count) {
+		return &ParseError{Detail: "invalid iterationCount"}
+	}
+	p.IterationCount = int(count)
+	if err := validatePBMIterationCount(p.IterationCount); err != nil {
+		return err
+	}
+	return p.MAC.unmarshal(&seq)
+}
+
+func (p *PBMParameter) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		b.AddASN1OctetString(p.Salt)
+		p.OWF.marshal(mctx, b)
+		b.AddASN1Int64(int64(p.IterationCount))
+		p.MAC.marshal(mctx, b)
+	})
+}
+
+var (
+	// DefaultPBMSaltLength is the default length of the salt for Password-Based MAC.
+	// RFC 4211 §4.4 recommends at least 8 octets; 16 provides additional security margin.
+	DefaultPBMSaltLength = 16
+
+	// DefaultPBMIterationCount is the default number of iterations for Password-Based MAC.
+	// RFC 4211 §4.4 requires a minimum of 100; 10000 is a local policy choice
+	// balancing security against computation cost.
+	DefaultPBMIterationCount = 10000
+
+	// DefaultPBMOWF is the default one-way function (OWF) algorithm OID for Password-Based MAC.
+	DefaultPBMOWF = OIDSHA256
+
+	// DefaultPBMMAC is the default MAC algorithm OID for Password-Based MAC.
+	DefaultPBMMAC = OIDHMACWithSHA256
+
+	// DefaultPBMMinIterationCount and DefaultPBMMaxIterationCount bound PBM
+	// iteration processing to reduce CPU DoS risk from untrusted inputs.
+	// These are local policy values; RFC 4211 §4.4 requires a minimum of 100
+	// but no maximum is specified by any RFC.
+	DefaultPBMMinIterationCount = 1
+	DefaultPBMMaxIterationCount = 100000
+)
+
+func validatePBMIterationCount(iterationCount int) error {
+	if iterationCount < DefaultPBMMinIterationCount {
+		return &ParseError{Detail: fmt.Sprintf("PBM iterationCount too small: %d", iterationCount)}
+	}
+	if iterationCount > DefaultPBMMaxIterationCount {
+		return &ParseError{Detail: fmt.Sprintf("PBM iterationCount too large: %d", iterationCount)}
+	}
+	return nil
+}
+
+// derivePBMKey derives the MAC key from a shared secret using the Password-Based
+// MAC key derivation algorithm per RFC 9810 §5.1.3.1.
+// The OWF is applied iterationCount times: the salted secret is input to the
+// first iteration, and each successive iteration uses the previous output.
+//
+// Returns an error if the MAC key size exceeds the OWF output size (key expansion
+// K > H case per RFC 9810 §5.1.3.1 is not implemented).
+func derivePBMKey(secret, salt []byte, iterationCount int, hash, macHash crypto.Hash) ([]byte, error) {
+	if macHash.Size() > hash.Size() {
+		return nil, fmt.Errorf("MAC key size (%d) exceeds OWF output size (%d): key expansion not supported", macHash.Size(), hash.Size())
+	}
+
+	h := hash.New()
+	h.Write(secret)
+	h.Write(salt)
+	k := h.Sum(nil)
+
+	for i := 1; i < iterationCount; i++ {
+		h.Reset()
+		h.Write(k)
+		k = h.Sum(nil)
+	}
+	return k, nil
+}

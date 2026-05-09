@@ -45,14 +45,14 @@ func main() {
 	// Generate a new private key.
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 
-	// Configure a protector using a shared secret (PBM).
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("my-shared-secret"))
+	// Configure MAC protection using a shared secret.
+	creds, _ := pkicmp.NewMACCredentials([]byte("my-shared-secret"))
 
 	// Create a client for the protocol implementation.
 	c := client.NewClient("http://ejbca:8080/ejbca/publicweb/cmp/<cmp-alias>")
 
 	// Send Initialization Request.
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "my-device"}),
 	)
 	if err != nil {
@@ -67,14 +67,14 @@ func main() {
 
 ```go
 // Protected by an existing certificate's signature.
-protector, _ := pkicmp.NewSignatureProtector(existingKey, existingCert)
+creds, _ := pkicmp.NewSignatureCredentials(existingKey, existingCert)
 
 c := client.NewClient("http://ejbca:8080/ejbca/publicweb/cmp/<cmp-alias>",
 	// Adds trusted CAs for verifying signature-protected CMP responses.
 	client.WithTrustedCAs(trustedCAs),
 )
 
-result, err := c.SendKUR(context.Background(), newKey, protector,
+result, err := c.SendKUR(context.Background(), newKey, creds,
 	client.WithSender(existingCert.Subject),
 )
 ```

@@ -30,7 +30,7 @@ func TestOpenSSLInitialize(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("enrollment-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
 	require.NoError(t, err)
 
 	// The OpenSSL mock server signs responses with its server certificate even for
@@ -39,7 +39,7 @@ func TestOpenSSLInitialize(t *testing.T) {
 		client.WithRecipient(srv.CACert.Subject),
 		client.WithTrustedCAs(srv.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test"}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -64,20 +64,22 @@ func TestOpenSSLInitializeWrongSecret(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("wrong-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"))
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
 		client.WithTrustedCAs(srv.TrustedCAs()),
 	)
-	_, err = c.SendIR(context.Background(), key, protector,
+	_, err = c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-wrong-secret"}),
 	)
 
 	// When using wrong secret, the client fails to verify the response protection.
 	require.Error(t, err, "SendIR with wrong secret should fail")
-	assert.Contains(t, err.Error(), "verify protection: pkicmp: PBM verification failed")
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
 
 	t.Logf("Expected error: %v", err)
 }
@@ -105,7 +107,7 @@ func TestOpenSSLInitializePolling(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("enrollment-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
 	require.NoError(t, err)
 
 	// The client sends the first poll immediately and follows server-provided
@@ -114,7 +116,7 @@ func TestOpenSSLInitializePolling(t *testing.T) {
 		client.WithRecipient(srv.CACert.Subject),
 		client.WithTrustedCAs(srv.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-polling"}),
 	)
 	require.NoError(t, err, "SendIR with polling")
@@ -130,7 +132,7 @@ func TestOpenSSLCertify(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -139,7 +141,7 @@ func TestOpenSSLCertify(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	result, err := c.SendCR(context.Background(), newKey, protector,
+	result, err := c.SendCR(context.Background(), newKey, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-certify"}),
 	)
@@ -163,7 +165,7 @@ func TestOpenSSLKeyUpdate(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -172,7 +174,7 @@ func TestOpenSSLKeyUpdate(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	result, err := c.SendKUR(context.Background(), newKey, protector,
+	result, err := c.SendKUR(context.Background(), newKey, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-keyupdate"}),
 	)
@@ -205,14 +207,14 @@ func TestOpenSSLInitializeP10CR(t *testing.T) {
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("enrollment-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
 		client.WithTrustedCAs(srv.TrustedCAs()),
 	)
-	result, err := c.SendP10CR(context.Background(), csrDER, protector)
+	result, err := c.SendP10CR(context.Background(), csrDER, creds)
 	require.NoError(t, err, "SendP10CR")
 	require.NotNil(t, result.Certificate, "no certificate returned")
 
@@ -239,7 +241,7 @@ func TestOpenSSLSpecificFailInfo(t *testing.T) {
 	require.NoError(t, err)
 
 	// Use signature protection (the mock server handles this without needing a secret).
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -248,7 +250,7 @@ func TestOpenSSLSpecificFailInfo(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	_, err = c.SendCR(context.Background(), newKey, protector,
+	_, err = c.SendCR(context.Background(), newKey, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-failinfo"}),
 	)
@@ -286,7 +288,7 @@ func TestOpenSSLDynamicPolling(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("enrollment-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
@@ -295,7 +297,7 @@ func TestOpenSSLDynamicPolling(t *testing.T) {
 	)
 
 	start := time.Now()
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-dynamic-polling"}),
 	)
 	elapsed := time.Since(start)
@@ -327,7 +329,7 @@ func TestOpenSSLComplexFailure(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -336,7 +338,7 @@ func TestOpenSSLComplexFailure(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	_, err = c.SendCR(context.Background(), key, protector,
+	_, err = c.SendCR(context.Background(), key, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-complex"}),
 	)
@@ -367,7 +369,7 @@ func TestOpenSSLGrantedWithMods(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -376,7 +378,7 @@ func TestOpenSSLGrantedWithMods(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	result, err := c.SendCR(context.Background(), newKey, protector,
+	result, err := c.SendCR(context.Background(), newKey, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-granted-mods"}),
 	)
@@ -399,7 +401,7 @@ func TestOpenSSLPermanentWaiting(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewSignatureProtector(srv.ClientKey, srv.ClientCert)
+	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
 	roots := srv.TrustedCAs()
@@ -408,7 +410,7 @@ func TestOpenSSLPermanentWaiting(t *testing.T) {
 		client.WithTrustedCAs(roots),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
-	_, err = c.SendCR(context.Background(), newKey, protector,
+	_, err = c.SendCR(context.Background(), newKey, creds,
 		client.WithSender(srv.ClientCert.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "openssl-test-permanent-waiting"}),
 	)
@@ -436,17 +438,19 @@ func TestOpenSSLInitializeP10CRWrongSecret(t *testing.T) {
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("wrong-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"))
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
 		client.WithTrustedCAs(srv.TrustedCAs()),
 	)
-	_, err = c.SendP10CR(context.Background(), csrDER, protector)
+	_, err = c.SendP10CR(context.Background(), csrDER, creds)
 
 	require.Error(t, err, "SendP10CR with wrong secret should fail")
-	assert.Contains(t, err.Error(), "verify protection: pkicmp: PBM verification failed")
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
 
 	t.Logf("Expected error: %v", err)
 }

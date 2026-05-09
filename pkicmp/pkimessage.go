@@ -1,7 +1,7 @@
 package pkicmp
 
 import (
-	"errors"
+	"crypto/rand"
 	"fmt"
 	"time"
 
@@ -14,6 +14,69 @@ const (
 	PVNO2 = 2 // CMP2000 CMPv2
 	PVNO3 = 3 // CMP2021 CMPv3
 )
+
+// MessageOptions configures PKIMessage header fields.
+type MessageOptions struct {
+	Sender        GeneralName
+	Recipient     GeneralName
+	TransactionID []byte // auto-generated (16 random bytes) if nil
+	SenderNonce   []byte // auto-generated (16 random bytes) if nil
+	RecipNonce    []byte // echo from previous message
+}
+
+// NewPKIMessage creates a PKIMessage with the given body and header options.
+// TransactionID and SenderNonce default to 128 bits of random data per
+// RFC 9810 §5.1.1. Sets MessageTime to time.Now(). Panics if random number
+// generation fails — this indicates a broken system.
+func NewPKIMessage(body *PKIBody, opts MessageOptions) *PKIMessage {
+	msg, err := CreatePKIMessage(body, opts)
+	if err != nil {
+		panic("pkicmp: " + err.Error())
+	}
+	return msg
+}
+
+// CreatePKIMessage is like NewPKIMessage but returns an error instead of
+// panicking if random number generation fails.
+func CreatePKIMessage(body *PKIBody, opts MessageOptions) (*PKIMessage, error) {
+	txnID := opts.TransactionID
+	if txnID == nil {
+		txnID = make([]byte, 16)
+		if _, err := rand.Read(txnID); err != nil {
+			return nil, fmt.Errorf("crypto/rand.Read failed: %w", err)
+		}
+	}
+	senderNonce := opts.SenderNonce
+	if senderNonce == nil {
+		senderNonce = make([]byte, 16)
+		if _, err := rand.Read(senderNonce); err != nil {
+			return nil, fmt.Errorf("crypto/rand.Read failed: %w", err)
+		}
+	}
+
+	return &PKIMessage{
+		Header: PKIHeader{
+			PVNO:          PVNO2,
+			Sender:        opts.Sender,
+			Recipient:     opts.Recipient,
+			MessageTime:   time.Now(),
+			TransactionID: txnID,
+			SenderNonce:   senderNonce,
+			RecipNonce:    opts.RecipNonce,
+		},
+		Body: body,
+	}, nil
+}
+
+// All types that participate in recursive DER encoding implement:
+//
+//     marshal(mctx *MarshalContext, b *cryptobyte.Builder)
+//     unmarshal(s *cryptobyte.String) error
+//
+// PKIMessage is the top-level entry point and instead exposes the standard
+// encoding.BinaryMarshaler / encoding.BinaryUnmarshaler interfaces, delegating
+// to the internal marshal/unmarshal methods of its components.
+// New types added to the encoding tree must implement both methods.
 
 // MarshalContext holds state and configuration for the marshaling process.
 type MarshalContext struct {
@@ -108,14 +171,14 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	s := cryptobyte.String(data)
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PKIMessage sequence")
+		return &ParseError{Detail: "invalid PKIMessage sequence"}
 	}
 
 	// PKIHeader
 	var rawHeader cryptobyte.String
 	var headerTag cbasn1.Tag
 	if !seq.ReadAnyASN1Element(&rawHeader, &headerTag) {
-		return errors.New("pkicmp: missing PKIHeader")
+		return &ParseError{Detail: "missing PKIHeader"}
 	}
 	m.RawHeader = rawHeader
 	if err := m.Header.unmarshal(&rawHeader); err != nil {
@@ -126,11 +189,11 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	var rawBody cryptobyte.String
 	var bodyTag cbasn1.Tag
 	if !seq.ReadAnyASN1Element(&rawBody, &bodyTag) {
-		return errors.New("pkicmp: missing PKIBody")
+		return &ParseError{Detail: "missing PKIBody"}
 	}
 	m.RawBody = rawBody
 	var body PKIBody
-	if err := body.unmarshal(rawBody); err != nil {
+	if err := body.unmarshal(&rawBody); err != nil {
 		return err
 	}
 	m.Body = &body
@@ -139,15 +202,15 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var protectionSeq cryptobyte.String
 		if !seq.ReadASN1(&protectionSeq, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid protection tag")
+			return &ParseError{Detail: "invalid protection tag"}
 		}
 		var bitString cryptobyte.String
 		if !protectionSeq.ReadASN1(&bitString, cbasn1.BIT_STRING) {
-			return errors.New("pkicmp: invalid protection BIT STRING")
+			return &ParseError{Detail: "invalid protection BIT STRING"}
 		}
 		var unused uint8
 		if !bitString.ReadUint8(&unused) {
-			return errors.New("pkicmp: invalid protection unused bits")
+			return &ParseError{Detail: "invalid protection unused bits"}
 		}
 		m.Protection = bitString
 	}
@@ -156,11 +219,11 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(1).ContextSpecific().Constructed()) {
 		var extraCertsSeq cryptobyte.String
 		if !seq.ReadASN1(&extraCertsSeq, cbasn1.Tag(1).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid extraCerts tag")
+			return &ParseError{Detail: "invalid extraCerts tag"}
 		}
 		var certsSeq cryptobyte.String
 		if !extraCertsSeq.ReadASN1(&certsSeq, cbasn1.SEQUENCE) {
-			return errors.New("pkicmp: invalid extraCerts sequence")
+			return &ParseError{Detail: "invalid extraCerts sequence"}
 		}
 		for !certsSeq.Empty() {
 			var cert CMPCertificate
@@ -172,11 +235,11 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	}
 
 	if !seq.Empty() {
-		return errors.New("pkicmp: trailing data inside PKIMessage sequence")
+		return &ParseError{Detail: "trailing data inside PKIMessage sequence"}
 	}
 
 	if !s.Empty() {
-		return errors.New("pkicmp: trailing data after PKIMessage")
+		return &ParseError{Detail: "trailing data after PKIMessage"}
 	}
 
 	return nil
@@ -185,7 +248,7 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 	if m.Body == nil {
-		return nil, errors.New("pkicmp: missing message body")
+		return nil, &ParseError{Detail: "missing message body"}
 	}
 
 	// 1. Marshal body first to discover required PVNO
@@ -235,37 +298,37 @@ func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PKIHeader sequence")
+		return &ParseError{Detail: "invalid PKIHeader sequence"}
 	}
 
 	// pvno
 	var pvno int64
 	if !seq.ReadASN1Integer(&pvno) {
-		return errors.New("pkicmp: invalid pvno")
+		return &ParseError{Detail: "invalid pvno"}
 	}
 	if pvno == PVNO1 {
-		return errors.New("pkicmp: CMPv1 is not supported")
+		return &ParseError{Detail: "CMPv1 is not supported"}
 	}
 	h.PVNO = int(pvno)
 
 	// sender
 	if err := h.Sender.unmarshal(&seq); err != nil {
-		return fmt.Errorf("pkicmp: sender: %w", err)
+		return &ParseError{Detail: "sender", Err: err}
 	}
 
 	// recipient
 	if err := h.Recipient.unmarshal(&seq); err != nil {
-		return fmt.Errorf("pkicmp: recipient: %w", err)
+		return &ParseError{Detail: "recipient", Err: err}
 	}
 
 	// messageTime [0] GeneralizedTime OPTIONAL
 	if seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid messageTime tag")
+			return &ParseError{Detail: "invalid messageTime tag"}
 		}
 		if !sub.ReadASN1GeneralizedTime(&h.MessageTime) {
-			return errors.New("pkicmp: invalid messageTime")
+			return &ParseError{Detail: "invalid messageTime"}
 		}
 	}
 
@@ -273,7 +336,7 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(1).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(1).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid protectionAlg tag")
+			return &ParseError{Detail: "invalid protectionAlg tag"}
 		}
 		h.ProtectionAlg = &AlgorithmIdentifier{}
 		if err := h.ProtectionAlg.unmarshal(&sub); err != nil {
@@ -285,10 +348,10 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(2).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(2).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid senderKID tag")
+			return &ParseError{Detail: "invalid senderKID tag"}
 		}
 		if !sub.ReadASN1Bytes(&h.SenderKID, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid senderKID")
+			return &ParseError{Detail: "invalid senderKID"}
 		}
 	}
 
@@ -296,10 +359,10 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(3).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(3).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid recipKID tag")
+			return &ParseError{Detail: "invalid recipKID tag"}
 		}
 		if !sub.ReadASN1Bytes(&h.RecipKID, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid recipKID")
+			return &ParseError{Detail: "invalid recipKID"}
 		}
 	}
 
@@ -307,10 +370,10 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(4).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(4).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid transactionID tag")
+			return &ParseError{Detail: "invalid transactionID tag"}
 		}
 		if !sub.ReadASN1Bytes(&h.TransactionID, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid transactionID")
+			return &ParseError{Detail: "invalid transactionID"}
 		}
 	}
 
@@ -318,10 +381,10 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(5).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(5).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid senderNonce tag")
+			return &ParseError{Detail: "invalid senderNonce tag"}
 		}
 		if !sub.ReadASN1Bytes(&h.SenderNonce, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid senderNonce")
+			return &ParseError{Detail: "invalid senderNonce"}
 		}
 	}
 
@@ -329,10 +392,10 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(6).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(6).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid recipNonce tag")
+			return &ParseError{Detail: "invalid recipNonce tag"}
 		}
 		if !sub.ReadASN1Bytes(&h.RecipNonce, cbasn1.OCTET_STRING) {
-			return errors.New("pkicmp: invalid recipNonce")
+			return &ParseError{Detail: "invalid recipNonce"}
 		}
 	}
 
@@ -340,7 +403,7 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(7).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(7).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid freeText tag")
+			return &ParseError{Detail: "invalid freeText tag"}
 		}
 		if err := h.FreeText.unmarshal(&sub); err != nil {
 			return err
@@ -351,11 +414,11 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(8).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(8).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid generalInfo tag")
+			return &ParseError{Detail: "invalid generalInfo tag"}
 		}
 		var giSeq cryptobyte.String
 		if !sub.ReadASN1(&giSeq, cbasn1.SEQUENCE) {
-			return errors.New("pkicmp: invalid generalInfo sequence")
+			return &ParseError{Detail: "invalid generalInfo sequence"}
 		}
 		for !giSeq.Empty() {
 			var itv InfoTypeAndValue
@@ -443,4 +506,22 @@ func (h *PKIHeader) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 			})
 		}
 	})
+}
+
+// protectedPart computes the DER-encoded ProtectedPart (SEQUENCE { header, body })
+// used as input to both protection and verification.
+// RFC 9810 §5.1.3.
+func (m *PKIMessage) protectedPart() ([]byte, error) {
+	if m.Body == nil {
+		return nil, &ParseError{Detail: "missing message body"}
+	}
+	if len(m.RawHeader) == 0 || len(m.RawBody) == 0 {
+		return nil, &ParseError{Detail: "raw header or body missing"}
+	}
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		b.AddBytes(m.RawHeader)
+		b.AddBytes(m.RawBody)
+	})
+	return b.Bytes()
 }

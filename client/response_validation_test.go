@@ -62,38 +62,35 @@ func setupMockServer(cfg mockServerConfig, mutateResp func(req, resp *pkicmp.PKI
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
 
-		ipBody, _ := pkicmp.NewIPBody(&pkicmp.CertRepMessage{
-			Response: []pkicmp.CertResponse{{
-				CertReqID: 0,
-				Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
-				CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
-					CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeCert.Raw}},
-				},
-			}},
-		})
 		resp := &pkicmp.PKIMessage{
 			Header: pkicmp.PKIHeader{
 				PVNO:          req.Header.PVNO,
 				TransactionID: req.Header.TransactionID,
 				RecipNonce:    req.Header.SenderNonce,
 			},
-			Body: ipBody,
+			Body: pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+				Response: []pkicmp.CertResponse{{
+					CertReqID: 0,
+					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
+					CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
+						CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeCert.Raw}},
+					},
+				}},
+			}),
 		}
 
 		if mutateResp != nil {
 			mutateResp(req, resp)
 		}
 
-		var respProt pkicmp.Protector
-		if cfg.respProtector == "sig" {
-			respProt, _ = pkicmp.NewSignatureProtector(cfg.serverKey, cfg.serverCert)
-		} else if cfg.respProtector == "pbm-server-secret" {
-			respProt, _ = pkicmp.NewDefaultPBMProtector([]byte("server-secret"))
-		} else {
-			respProt, _ = pkicmp.NewDefaultPBMProtector([]byte("secret"))
+		switch cfg.respProtector {
+		case "sig":
+			_ = resp.ProtectWithSignature(cfg.serverKey, cfg.serverCert)
+		case "pbm-server-secret":
+			_ = resp.ProtectWithMAC([]byte("server-secret"))
+		default:
+			_ = resp.ProtectWithMAC([]byte("secret"))
 		}
-
-		_ = resp.Protect(respProt)
 
 		if cfg.postProtect != nil {
 			cfg.postProtect(req, resp)
@@ -124,38 +121,34 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 
 		var respMsg *pkicmp.PKIMessage
 		if callCount == 1 {
-			ipBody, _ := pkicmp.NewIPBody(&pkicmp.CertRepMessage{
-				CAPubs: []pkicmp.CMPCertificate{{Raw: targetCACert.Raw}},
-				Response: []pkicmp.CertResponse{{
-					CertReqID: 0,
-					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
-					CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
-						CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeCert.Raw}},
-					},
-				}},
-			})
 			respMsg = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
 					PVNO:          req.Header.PVNO,
 					TransactionID: req.Header.TransactionID,
 					RecipNonce:    req.Header.SenderNonce,
 				},
-				Body: ipBody,
+				Body: pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+					CAPubs: []pkicmp.CMPCertificate{{Raw: targetCACert.Raw}},
+					Response: []pkicmp.CertResponse{{
+						CertReqID: 0,
+						Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
+						CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
+							CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeCert.Raw}},
+						},
+					}},
+				}),
 			}
-			protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
-			_ = respMsg.Protect(protector)
+			_ = respMsg.ProtectWithMAC([]byte("secret"))
 		} else {
-			confBody, _ := pkicmp.NewPKIConfBody()
 			respMsg = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
 					PVNO:          req.Header.PVNO,
 					TransactionID: req.Header.TransactionID,
 					RecipNonce:    req.Header.SenderNonce,
 				},
-				Body: confBody,
+				Body: pkicmp.NewPKIConfBody(),
 			}
-			protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
-			_ = respMsg.Protect(protector)
+			_ = respMsg.ProtectWithMAC([]byte("secret"))
 		}
 
 		der, _ := respMsg.MarshalBinary()
@@ -166,10 +159,11 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithRecipient(recipient))
-	result, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 
 	require.NoError(t, err)
 	assert.NotNil(t, result.Certificate)
@@ -188,12 +182,14 @@ func TestResponseValidationRejectsMismatchedIssuer(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL, client.WithRecipient(pkix.Name{CommonName: "target-ca"}))
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "verify certificate trust")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "verify certificate trust", ce.Op)
 }
 
 func TestResponseValidationRejectsMismatchedTransactionID(t *testing.T) {
@@ -204,12 +200,17 @@ func TestResponseValidationRejectsMismatchedTransactionID(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL)
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "transaction ID mismatch")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "verify response", ce.Op)
+	var inner *client.ClientError
+	require.ErrorAs(t, ce.Err, &inner)
+	assert.Equal(t, "transaction ID mismatch", inner.Op)
 }
 
 func TestResponseValidationRejectsMismatchedNonce(t *testing.T) {
@@ -220,12 +221,17 @@ func TestResponseValidationRejectsMismatchedNonce(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL)
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "recipient nonce mismatch")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "verify response", ce.Op)
+	var inner *client.ClientError
+	require.ErrorAs(t, ce.Err, &inner)
+	assert.Equal(t, "recipient nonce mismatch", inner.Op)
 }
 
 func TestResponseValidationRejectsInvalidMAC(t *testing.T) {
@@ -237,12 +243,14 @@ func TestResponseValidationRejectsInvalidMAC(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL)
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "PBM verification failed")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
 }
 
 func TestResponseValidationRejectsInvalidSignature(t *testing.T) {
@@ -251,20 +259,20 @@ func TestResponseValidationRejectsInvalidSignature(t *testing.T) {
 	cfg.postProtect = func(req, resp *pkicmp.PKIMessage) {
 		resp.Protection[0] ^= 0xFF
 	}
-	server := setupMockServer(cfg, func(req, resp *pkicmp.PKIMessage) {
-		resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: cfg.serverCert.Raw})
-	})
+	server := setupMockServer(cfg, nil)
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	roots := x509.NewCertPool()
 	roots.AddCert(cfg.caCert)
 	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature verification failed")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonSignatureFailed, ve.Reason)
 }
 
 func TestResponseValidationRejectsUntrustedCA(t *testing.T) {
@@ -276,31 +284,34 @@ func TestResponseValidationRejectsUntrustedCA(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	roots := x509.NewCertPool()
 	roots.AddCert(cfg.caCert)
 	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "verify certificate trust: x509: certificate signed by unknown authority")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Equal(t, "verify certificate trust", ce.Op)
+	assert.Contains(t, ce.Err.Error(), "certificate signed by unknown authority")
 }
 
 func TestResponseValidationRejectsSignatureWithoutTrustedCAs(t *testing.T) {
 	cfg := setupValidationCerts()
 	cfg.respProtector = "sig"
-	server := setupMockServer(cfg, func(req, resp *pkicmp.PKIMessage) {
-		resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: cfg.serverCert.Raw})
-	})
+	server := setupMockServer(cfg, nil)
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL)
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature-protected response requires trusted CAs")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingTrustAnchors, ve.Reason)
 }
 
 func TestResponseValidationRejectsPBMResponseWithoutSecret(t *testing.T) {
@@ -312,12 +323,15 @@ func TestResponseValidationRejectsPBMResponseWithoutSecret(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	roots := x509.NewCertPool()
 	roots.AddCert(cfg.caCert)
-	reqProt, _ := pkicmp.NewSignatureProtector(cfg.serverKey, cfg.serverCert)
+	// Signature protection for request, but response uses PBM with unknown secret.
+	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
+	require.NoError(t, err)
 	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
 
-	_, err := c.SendIR(context.Background(), key, reqProt, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "response uses MAC protection but request protector does not provide shared secret")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingSharedSecret, ve.Reason)
 }
 
 func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
@@ -326,12 +340,12 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 	server := setupMockServer(cfg, func(req, resp *pkicmp.PKIMessage) {
 		resp.Header.Sender = pkicmp.NewDirectoryName(pkix.Name{CommonName: "cmp-server"}.ToRDNSequence())
 		resp.Header.SenderKID = []byte("wrong-sender-kid")
-		resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: cfg.serverCert.Raw})
 	})
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	roots := x509.NewCertPool()
 	roots.AddCert(cfg.caCert)
 
@@ -341,9 +355,10 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 		client.WithRecipient(pkix.Name{CommonName: "cmp-server"}),
 	)
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "signature verification failed")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonSignatureFailed, ve.Reason)
 }
 
 func TestResponseValidationRejectsOversizedHTTPResponse(t *testing.T) {
@@ -355,12 +370,14 @@ func TestResponseValidationRejectsOversizedHTTPResponse(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL, client.WithMaxResponseBytes(128))
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "response body too large")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.ClientError
+	require.ErrorAs(t, err, &ce)
+	assert.Contains(t, ce.Op, "response body too large")
 }
 
 func TestResponseValidationCustomResponseLimitAllowsSmallResponse(t *testing.T) {
@@ -372,10 +389,12 @@ func TestResponseValidationCustomResponseLimitAllowsSmallResponse(t *testing.T) 
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	protector, _ := pkicmp.NewDefaultPBMProtector([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
 	c := client.NewClient(server.URL, client.WithMaxResponseBytes(1024))
 
-	_, err := c.SendIR(context.Background(), key, protector, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "invalid PKIMessage sequence")
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var pe *pkicmp.ParseError
+	require.ErrorAs(t, err, &pe)
+	assert.Contains(t, pe.Detail, "invalid PKIMessage sequence")
 }

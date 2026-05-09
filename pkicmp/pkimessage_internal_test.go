@@ -108,14 +108,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x01) // Not a GeneralizedTime
+						b.AddUint8(0x01)
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -124,14 +123,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x01) // Not a sequence
+						b.AddUint8(0x01)
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -140,14 +138,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(7).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x01) // Not a sequence
+						b.AddUint8(0x01)
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -156,14 +153,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(8).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x01) // Not a sequence
+						b.AddUint8(0x01)
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -172,14 +168,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(6).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddBytes([]byte{0x04, 0xff}) // tag 4 (OCTET STRING) but no data
+						b.AddBytes([]byte{0x04, 0xff})
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -188,7 +183,7 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(8).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x02) // Should have been 0x30 for SEQUENCE
+						b.AddUint8(0x02)
 						b.AddUint8(0x00)
 					})
 				})
@@ -196,7 +191,6 @@ func TestPKIHeaderASN1(t *testing.T) {
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -205,14 +199,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(5).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddBytes([]byte{0x04, 0xff}) // tag 4
+						b.AddBytes([]byte{0x04, 0xff})
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -221,7 +214,7 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(7).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddUint8(0x02) // Should have been 0x30 for SEQUENCE
+						b.AddUint8(0x02)
 						b.AddUint8(0x00)
 					})
 				})
@@ -229,7 +222,6 @@ func TestPKIHeaderASN1(t *testing.T) {
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -238,14 +230,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(3).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddBytes([]byte{0x04, 0xff}) // tag 4
+						b.AddBytes([]byte{0x04, 0xff})
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -254,14 +245,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(4).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddBytes([]byte{0x04, 0xff}) // tag 4
+						b.AddBytes([]byte{0x04, 0xff})
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -270,14 +260,13 @@ func TestPKIHeaderASN1(t *testing.T) {
 				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 					marshalBase(b)
 					b.AddASN1(cbasn1.Tag(2).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-						b.AddBytes([]byte{0x04, 0xff}) // tag 4
+						b.AddBytes([]byte{0x04, 0xff})
 					})
 				})
 				marshaled, _ := b.Bytes()
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 
@@ -288,7 +277,7 @@ func TestPKIHeaderASN1(t *testing.T) {
 					b.AddASN1(cbasn1.Tag(8).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 						b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 							b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-								b.AddUint8(0x01) // Not an OID
+								b.AddUint8(0x01)
 							})
 						})
 					})
@@ -297,7 +286,6 @@ func TestPKIHeaderASN1(t *testing.T) {
 				var unmarshaled PKIHeader
 				s := cryptobyte.String(marshaled)
 				err := unmarshaled.unmarshal(&s)
-
 				assert.Error(t, err)
 			})
 		})
@@ -306,7 +294,7 @@ func TestPKIHeaderASN1(t *testing.T) {
 
 func TestParsePKIMessage(t *testing.T) {
 	t.Run("Valid", func(t *testing.T) {
-		body, _ := NewPKIConfBody()
+		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{PVNO: PVNO2},
 			Body:   body,
@@ -322,7 +310,7 @@ func TestParsePKIMessage(t *testing.T) {
 	})
 
 	t.Run("RejectsTrailingData", func(t *testing.T) {
-		body, _ := NewPKIConfBody()
+		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{PVNO: PVNO2},
 			Body:   body,
@@ -337,7 +325,7 @@ func TestParsePKIMessage(t *testing.T) {
 
 func TestPKIMessagePVNOTigger(t *testing.T) {
 	t.Run("PVNO2", func(t *testing.T) {
-		body, _ := NewPKIConfBody()
+		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{
 				Sender:    NewDirectoryName(nil),
@@ -352,7 +340,6 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 		assert.Equal(t, PVNO2, parsed.Header.PVNO)
 	})
 	t.Run("PVNO3_EnvelopedData", func(t *testing.T) {
-		// EncryptedKey with EnvelopedData triggers PVNO3
 		resp := &CertResponse{
 			CertReqID: 1,
 			Status:    PKIStatusInfo{Status: StatusAccepted},
@@ -364,7 +351,7 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 				},
 			},
 		}
-		body, _ := NewCPBody(&CertRepMessage{
+		body := NewCPBody(&CertRepMessage{
 			Response: []CertResponse{*resp},
 		})
 		msg := &PKIMessage{
@@ -382,18 +369,10 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 	})
 }
 
-func TestPKIMessageVerifyErrors(t *testing.T) {
-	body, _ := NewPKIConfBody()
-	msg := &PKIMessage{Body: body}
-	err := msg.Verify(nil)
-	assert.Error(t, err)
-	assert.Contains(t, err.Error(), "message is not protected")
-}
-
 // RFC 9810 §5.1 (PKIMessage ASN.1 tests)
 func TestPKIMessageASN1(t *testing.T) {
 	t.Run("MarshalAndUnmarshalOptional", func(t *testing.T) {
-		body, _ := NewPKIConfBody()
+		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{
 				Sender:    NewDirectoryName(nil),
@@ -424,7 +403,6 @@ func TestPKIMessageASN1(t *testing.T) {
 		t.Run("MissingBody", func(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-				// Only Header
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
 			})
@@ -438,10 +416,10 @@ func TestPKIMessageASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				body, _ := NewPKIConfBody()
+				body := NewPKIConfBody()
 				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-					b.AddUint8(0x02) // Not a BIT STRING (0x03)
+					b.AddUint8(0x02)
 					b.AddUint8(0x00)
 				})
 			})
@@ -456,11 +434,10 @@ func TestPKIMessageASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				body, _ := NewPKIConfBody()
+				body := NewPKIConfBody()
 				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
-						// Empty BIT STRING (no unused bits byte)
 					})
 				})
 			})
@@ -474,11 +451,10 @@ func TestPKIMessageASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				body, _ := NewPKIConfBody()
+				body := NewPKIConfBody()
 				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				// Use wrong tag for extraCerts
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-					b.AddUint8(0x02) // Not a sequence
+					b.AddUint8(0x02)
 				})
 			})
 			marshaled, _ := b.Bytes()
@@ -492,10 +468,10 @@ func TestPKIMessageASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				body, _ := NewPKIConfBody()
+				body := NewPKIConfBody()
 				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-					b.AddUint8(0x02) // Should have been 0x30 for SEQUENCE
+					b.AddUint8(0x02)
 					b.AddUint8(0x00)
 				})
 			})
@@ -510,11 +486,11 @@ func TestPKIMessageASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
 				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				body, _ := NewPKIConfBody()
+				body := NewPKIConfBody()
 				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-						b.AddUint8(0x01) // Not a sequence (CMPCertificate)
+						b.AddUint8(0x01)
 					})
 				})
 			})
@@ -526,7 +502,7 @@ func TestPKIMessageASN1(t *testing.T) {
 
 		t.Run("MissingPKIMessageSequence", func(t *testing.T) {
 			var unmarshaled PKIMessage
-			err := unmarshaled.UnmarshalBinary([]byte{0x02, 0x01, 0x01}) // Just an integer
+			err := unmarshaled.UnmarshalBinary([]byte{0x02, 0x01, 0x01})
 			assert.Error(t, err)
 		})
 	})

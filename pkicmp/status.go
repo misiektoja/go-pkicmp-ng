@@ -302,11 +302,11 @@ func (si *PKIStatusInfo) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (si *PKIStatusInfo) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PKIStatusInfo sequence")
+		return &ParseError{Detail: "invalid PKIStatusInfo sequence"}
 	}
 	var status int64
 	if !seq.ReadASN1Integer(&status) {
-		return errors.New("pkicmp: invalid PKIStatus")
+		return &ParseError{Detail: "invalid PKIStatus"}
 	}
 	si.Status = PKIStatus(status)
 
@@ -319,11 +319,11 @@ func (si *PKIStatusInfo) unmarshal(s *cryptobyte.String) error {
 		if seq.PeekASN1Tag(cbasn1.BIT_STRING) {
 			var bitString cryptobyte.String
 			if !seq.ReadASN1(&bitString, cbasn1.BIT_STRING) {
-				return errors.New("pkicmp: invalid failInfo BIT STRING")
+				return &ParseError{Detail: "invalid failInfo BIT STRING"}
 			}
 			var unused uint8
 			if !bitString.ReadUint8(&unused) {
-				return errors.New("pkicmp: invalid failInfo unused bits")
+				return &ParseError{Detail: "invalid failInfo unused bits"}
 			}
 			var val uint32
 			// Read up to 4 bytes
@@ -353,7 +353,7 @@ func (e *ErrorMsgContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (e *ErrorMsgContent) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid ErrorMsgContent sequence")
+		return &ParseError{Detail: "invalid ErrorMsgContent sequence"}
 	}
 	if err := e.PKIStatusInfo.unmarshal(&seq); err != nil {
 		return err
@@ -361,7 +361,7 @@ func (e *ErrorMsgContent) unmarshal(s *cryptobyte.String) error {
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.INTEGER) {
 		var code int64
 		if !seq.ReadASN1Integer(&code) {
-			return errors.New("pkicmp: invalid errorCode")
+			return &ParseError{Detail: "invalid errorCode"}
 		}
 		e.ErrorCode = int(code)
 	}

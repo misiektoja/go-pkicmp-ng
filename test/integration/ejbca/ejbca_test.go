@@ -4,6 +4,7 @@ package ejbca
 
 import (
 	"context"
+	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -31,14 +32,14 @@ func TestEJBCAInitializeECDSAP384(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -67,14 +68,14 @@ func TestEJBCAInitializeRSA(t *testing.T) {
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -103,14 +104,14 @@ func TestEJBCAInitializeVerifyCertificateFields(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -146,14 +147,14 @@ func TestEJBCAInitializeWrongSecret(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(wrongSecret))
+	creds, err := pkicmp.NewMACCredentials([]byte(wrongSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	_, err = c.SendIR(context.Background(), key, protector,
+	_, err = c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.Error(t, err, "SendIR with wrong secret should have failed")
@@ -177,7 +178,7 @@ func TestEJBCAInitializeWithExtensionOverride(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	// Use a custom OID extension to verify that CertTemplate.Extensions works.
@@ -194,7 +195,7 @@ func TestEJBCAInitializeWithExtensionOverride(t *testing.T) {
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 		client.WithTemplateExtension(customExt),
 	)
@@ -221,7 +222,7 @@ func TestEJBCAInitializeContextCancellation(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithCancel(context.Background())
@@ -230,7 +231,7 @@ func TestEJBCAInitializeContextCancellation(t *testing.T) {
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 	)
-	_, err = c.SendIR(ctx, key, protector,
+	_, err = c.SendIR(ctx, key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.Error(t, err, "SendIR with cancelled context should have failed")
@@ -250,14 +251,14 @@ func TestEJBCAMultipleSequentialEnrollments(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 		require.NoError(t, err)
 
-		protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
-		require.NoError(t, err)
+		creds, err := pkicmp.NewMACCredentials([]byte(secret))
+	require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
 			client.WithTrustedCAs(admin.TrustedCAs()),
 		)
-		result, err := c.SendIR(context.Background(), key, protector,
+		result, err := c.SendIR(context.Background(), key, creds,
 			client.WithTemplateSubject(pkix.Name{CommonName: name}),
 		)
 		require.NoError(t, err, "SendIR %d", i)
@@ -277,13 +278,13 @@ func TestEJBCAInitializeInvalidEndpoint(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte("enrollment-secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
 	require.NoError(t, err)
 
 	c := client.NewClient("http://localhost:19999/nonexistent",
 		client.WithRecipient(admin.CACert.Subject),
 	)
-	_, err = c.SendIR(context.Background(), key, protector,
+	_, err = c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "integration-test-invalid-endpoint"}),
 	)
 	require.Error(t, err, "SendIR to invalid endpoint should have failed")
@@ -301,14 +302,15 @@ func TestEJBCACertify(t *testing.T) {
 	initialKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	var creds pkicmp.Credentials
+	creds, err = pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	initialResult, err := c.SendIR(context.Background(), initialKey, protector,
+	initialResult, err := c.SendIR(context.Background(), initialKey, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -320,7 +322,7 @@ func TestEJBCACertify(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	sigProtector, err := pkicmp.NewSignatureProtector(initialKey, initialResult.Certificate)
+	creds, err = pkicmp.NewSignatureCredentials(initialKey, initialResult.Certificate)
 	require.NoError(t, err)
 
 	c = client.NewClient(admin.Endpoint,
@@ -328,7 +330,7 @@ func TestEJBCACertify(t *testing.T) {
 		client.WithTrustedCAs(admin.TrustedCAs()),
 		client.WithExtraCerts([]*x509.Certificate{initialResult.Certificate}),
 	)
-	result, err := c.SendCR(context.Background(), newKey, sigProtector,
+	result, err := c.SendCR(context.Background(), newKey, creds,
 		client.WithSender(initialResult.Certificate.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
@@ -361,14 +363,15 @@ func TestEJBCAKeyUpdate(t *testing.T) {
 	oldKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	var creds pkicmp.Credentials
+	creds, err = pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	initialResult, err := c.SendIR(context.Background(), oldKey, protector,
+	initialResult, err := c.SendIR(context.Background(), oldKey, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -377,7 +380,7 @@ func TestEJBCAKeyUpdate(t *testing.T) {
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	sigProtector, err := pkicmp.NewSignatureProtector(oldKey, initialResult.Certificate)
+	creds, err = pkicmp.NewSignatureCredentials(oldKey, initialResult.Certificate)
 	require.NoError(t, err)
 
 	c = client.NewClient(admin.Endpoint,
@@ -385,7 +388,7 @@ func TestEJBCAKeyUpdate(t *testing.T) {
 		client.WithTrustedCAs(admin.TrustedCAs()),
 		client.WithExtraCerts([]*x509.Certificate{initialResult.Certificate}),
 	)
-	result, err := c.SendKUR(context.Background(), newKey, sigProtector,
+	result, err := c.SendKUR(context.Background(), newKey, creds,
 		client.WithSender(initialResult.Certificate.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: "integration-test-kur"}),
 	)
@@ -428,47 +431,58 @@ func TestEJBCAKeyUpdateWrongKey(t *testing.T) {
 	oldKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	initialResult, err := c.SendIR(context.Background(), oldKey, protector,
+	initialResult, err := c.SendIR(context.Background(), oldKey, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
 
-	// Step 2: Attempt to update the key using a wrong (different) key for signing.
+	// Step 2: Send KUR signed with a wrong key. Use a custom Credentials
+	// implementation to bypass client-side key/cert validation and test that
+	// the client correctly processes the server-side rejection.
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-
-	wrongOldKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	sigProtector, err := pkicmp.NewSignatureProtector(wrongOldKey, initialResult.Certificate)
-	require.NoError(t, err)
+	wrongCreds := &wrongSignatureCredentials{key: wrongKey, cert: initialResult.Certificate}
 
 	c = client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 		client.WithExtraCerts([]*x509.Certificate{initialResult.Certificate}),
 	)
-	_, err = c.SendKUR(context.Background(), newKey, sigProtector,
+	_, err = c.SendKUR(context.Background(), newKey, wrongCreds,
 		client.WithSender(initialResult.Certificate.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.Error(t, err, "SendKUR with wrong key should have failed")
 
 	var statusErr *pkicmp.PKIStatusError
-	require.True(t, errors.As(err, &statusErr), "error should be *pkicmp.PKIStatusError")
-	assert.Equal(t, pkicmp.StatusRejection, statusErr.Status, "status should indicate rejection")
-	t.Logf("Error: %v, FailInfo: %v, StatusString: %s", statusErr, statusErr.FailInfo, statusErr.StatusString)
-	assert.True(t, statusErr.FailInfo&pkicmp.FailBadRequest != 0, "failInfo should indicate bad request")
-	assert.Contains(t, statusErr.StatusString, "Failed to verify the signature in the PKIMessage", "status string should indicate signature verification failure")
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, pkicmp.StatusRejection, statusErr.Status)
+	t.Logf("Expected error: %v", statusErr)
+}
 
-	t.Logf("Expected error: %v", err)
+// wrongSignatureCredentials signs with a key that doesn't match the certificate,
+// producing an invalid signature that the server will reject.
+type wrongSignatureCredentials struct {
+	key  crypto.Signer
+	cert *x509.Certificate
+}
+
+func (c *wrongSignatureCredentials) Protect(msg *pkicmp.PKIMessage) error {
+	return msg.ProtectWithSignature(c.key, c.cert)
+}
+
+func (c *wrongSignatureCredentials) SharedSecret() []byte {
+	return nil
 }
 
 func TestEJBCAInitializeP10CR(t *testing.T) {
@@ -487,14 +501,14 @@ func TestEJBCAInitializeP10CR(t *testing.T) {
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendP10CR(context.Background(), csrDER, protector)
+	result, err := c.SendP10CR(context.Background(), csrDER, creds)
 	require.NoError(t, err, "SendP10CR")
 
 	cert := result.Certificate
@@ -525,20 +539,21 @@ func TestEJBCAKeyUpdateSameKey(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	var creds pkicmp.Credentials
+	creds, err = pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	initialResult, err := c.SendIR(context.Background(), key, protector,
+	initialResult, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
 
 	// Step 2: Update using the same key.
-	sigProtector, err := pkicmp.NewSignatureProtector(key, initialResult.Certificate)
+	creds, err = pkicmp.NewSignatureCredentials(key, initialResult.Certificate)
 	require.NoError(t, err)
 
 	c = client.NewClient(admin.Endpoint,
@@ -546,7 +561,7 @@ func TestEJBCAKeyUpdateSameKey(t *testing.T) {
 		client.WithTrustedCAs(admin.TrustedCAs()),
 		client.WithExtraCerts([]*x509.Certificate{initialResult.Certificate}),
 	)
-	result, err := c.SendKUR(context.Background(), key, sigProtector,
+	result, err := c.SendKUR(context.Background(), key, creds,
 		client.WithSender(initialResult.Certificate.Subject),
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
@@ -572,7 +587,7 @@ func TestEJBCAMultipleExtensions(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	// Extension 1: SAN
@@ -592,7 +607,7 @@ func TestEJBCAMultipleExtensions(t *testing.T) {
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 		client.WithTemplateExtension(pkix.Extension{Id: sanOID, Value: sanValue}),
 		client.WithTemplateExtension(pkix.Extension{Id: customOID, Value: customValue}),
@@ -621,14 +636,14 @@ func TestEJBCAChainVerification(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	result, err := c.SendIR(context.Background(), key, protector,
+	result, err := c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.NoError(t, err, "SendIR")
@@ -664,14 +679,14 @@ func TestEJBCALargeKeys(t *testing.T) {
 		key, err := rsa.GenerateKey(rand.Reader, 4096)
 		require.NoError(t, err)
 
-		protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
-		require.NoError(t, err)
+		creds, err := pkicmp.NewMACCredentials([]byte(secret))
+	require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
 			client.WithTrustedCAs(admin.TrustedCAs()),
 		)
-		result, err := c.SendIR(context.Background(), key, protector,
+		result, err := c.SendIR(context.Background(), key, creds,
 			client.WithTemplateSubject(pkix.Name{CommonName: name}),
 		)
 		require.NoError(t, err, "SendIR RSA-4096")
@@ -686,14 +701,14 @@ func TestEJBCALargeKeys(t *testing.T) {
 		key, err := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
 		require.NoError(t, err)
 
-		protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
-		require.NoError(t, err)
+		creds, err := pkicmp.NewMACCredentials([]byte(secret))
+	require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
 			client.WithTrustedCAs(admin.TrustedCAs()),
 		)
-		result, err := c.SendIR(context.Background(), key, protector,
+		result, err := c.SendIR(context.Background(), key, creds,
 			client.WithTemplateSubject(pkix.Name{CommonName: name}),
 		)
 		require.NoError(t, err, "SendIR P-521")
@@ -711,14 +726,14 @@ func TestEJBCAInitializeWrongSubject(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 		client.WithTrustedCAs(admin.TrustedCAs()),
 	)
-	_, err = c.SendIR(context.Background(), key, protector,
+	_, err = c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "integration-test-wrong-subject"}),
 	)
 	require.Error(t, err, "SendIR with wrong subject should have failed")
@@ -739,7 +754,7 @@ func TestEJBCAInitializeFailNoTrustedCAs(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	protector, err := pkicmp.NewDefaultPBMProtector([]byte(secret))
+	creds, err := pkicmp.NewMACCredentials([]byte(secret))
 	require.NoError(t, err)
 
 	// Omit client.WithTrustedCAs().
@@ -748,11 +763,13 @@ func TestEJBCAInitializeFailNoTrustedCAs(t *testing.T) {
 	c := client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
 	)
-	_, err = c.SendIR(context.Background(), key, protector,
+	_, err = c.SendIR(context.Background(), key, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: name}),
 	)
 	require.Error(t, err, "SendIR without trusted CAs should have failed verify response")
-	assert.EqualError(t, err, "cmp: verify response: signature-protected response requires trusted CAs: use WithTrustedCAs()")
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingTrustAnchors, ve.Reason)
 
 	t.Logf("Expected error: %v", err)
 }

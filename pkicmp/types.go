@@ -53,6 +53,9 @@ type AlgorithmIdentifier struct {
 
 // GeneralName per RFC 9810 §5.1.1 and RFC 5280 §4.2.1.6.
 //
+// Only directoryName [4] is supported. Other variants (rfc822Name, dNSName,
+// URI, iPAddress, registeredID) will return [ErrUnsupportedGeneralName].
+//
 //	GeneralName ::= CHOICE {
 //	    otherName                 [0]  OtherName,
 //	    rfc822Name                [1]  IA5String,
@@ -64,7 +67,6 @@ type AlgorithmIdentifier struct {
 //	    iPAddress                 [7]  OCTET STRING,
 //	    registeredID              [8]  OBJECT IDENTIFIER }
 type GeneralName struct {
-	// For Phase 1, we only support directoryName [4].
 	DirectoryName pkix.RDNSequence
 }
 
@@ -95,14 +97,14 @@ func (a *AlgorithmIdentifier) marshalInner(mctx *MarshalContext, b *cryptobyte.B
 func (a *AlgorithmIdentifier) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid AlgorithmIdentifier sequence")
+		return &ParseError{Detail: "invalid AlgorithmIdentifier sequence"}
 	}
 	return a.unmarshalInner(&seq)
 }
 
 func (a *AlgorithmIdentifier) unmarshalInner(seq *cryptobyte.String) error {
 	if !seq.ReadASN1ObjectIdentifier(&a.Algorithm) {
-		return errors.New("pkicmp: invalid AlgorithmIdentifier OID")
+		return &ParseError{Detail: "invalid AlgorithmIdentifier OID"}
 	}
 	if !seq.Empty() {
 		// We need to capture the next full ASN.1 element if it's there
@@ -132,10 +134,10 @@ func (itv *InfoTypeAndValue) marshal(mctx *MarshalContext, b *cryptobyte.Builder
 func (itv *InfoTypeAndValue) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid InfoTypeAndValue sequence")
+		return &ParseError{Detail: "invalid InfoTypeAndValue sequence"}
 	}
 	if !seq.ReadASN1ObjectIdentifier(&itv.InfoType) {
-		return errors.New("pkicmp: invalid InfoTypeAndValue OID")
+		return &ParseError{Detail: "invalid InfoTypeAndValue OID"}
 	}
 	if !seq.Empty() {
 		itv.InfoValue = seq
@@ -159,12 +161,12 @@ func (ft *PKIFreeText) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (ft *PKIFreeText) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid PKIFreeText sequence")
+		return &ParseError{Detail: "invalid PKIFreeText sequence"}
 	}
 	for !seq.Empty() {
 		var utf8 cryptobyte.String
 		if !seq.ReadASN1(&utf8, cbasn1.UTF8String) {
-			return errors.New("pkicmp: invalid PKIFreeText element")
+			return &ParseError{Detail: "invalid PKIFreeText element"}
 		}
 		*ft = append(*ft, string(utf8))
 	}
@@ -186,7 +188,7 @@ func (gn *GeneralName) unmarshal(s *cryptobyte.String) error {
 	var content cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1(&content, &tag) {
-		return errors.New("pkicmp: missing GeneralName")
+		return &ParseError{Detail: "missing GeneralName"}
 	}
 	if tag != cbasn1.Tag(4).ContextSpecific().Constructed() {
 		return fmt.Errorf("%w: tag %d", ErrUnsupportedGeneralName, tag)
@@ -230,7 +232,7 @@ func parseRDNSequence(s *cryptobyte.String, rdn *pkix.RDNSequence) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return errors.New("pkicmp: invalid Name element")
+		return &ParseError{Detail: "invalid Name element"}
 	}
 	_, err := asn1.Unmarshal(der, rdn)
 	return err
@@ -247,7 +249,7 @@ func (c *CMPCertificate) unmarshal(s *cryptobyte.String) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return errors.New("pkicmp: invalid CMPCertificate element")
+		return &ParseError{Detail: "invalid CMPCertificate element"}
 	}
 	c.Raw = der
 	return nil
@@ -280,7 +282,7 @@ func (e *EnvelopedData) unmarshal(s *cryptobyte.String) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return errors.New("pkicmp: invalid EnvelopedData element")
+		return &ParseError{Detail: "invalid EnvelopedData element"}
 	}
 	e.Raw = der
 	return nil
@@ -308,7 +310,7 @@ func (e *EncryptedValue) unmarshal(s *cryptobyte.String) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return errors.New("pkicmp: invalid EncryptedValue element")
+		return &ParseError{Detail: "invalid EncryptedValue element"}
 	}
 	e.Raw = der
 	return nil
@@ -340,13 +342,13 @@ func (k *EncryptedKey) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 
 func (k *EncryptedKey) unmarshal(s *cryptobyte.String) error {
 	if s.Empty() {
-		return errors.New("pkicmp: missing EncryptedKey")
+		return &ParseError{Detail: "missing EncryptedKey"}
 	}
 	tag := cbasn1.Tag((*s)[0])
 	if tag == cbasn1.Tag(0).ContextSpecific().Constructed() {
 		var sub cryptobyte.String
 		if !s.ReadASN1(&sub, tag) {
-			return errors.New("pkicmp: invalid EnvelopedData tag")
+			return &ParseError{Detail: "invalid EnvelopedData tag"}
 		}
 		k.EnvelopedData = &EnvelopedData{}
 		return k.EnvelopedData.unmarshalInner(&sub)
@@ -360,7 +362,7 @@ func stripSequence(der []byte) ([]byte, error) {
 	s := cryptobyte.String(der)
 	var content cryptobyte.String
 	if !s.ReadASN1(&content, cbasn1.SEQUENCE) {
-		return nil, errors.New("pkicmp: not a sequence")
+		return nil, &ParseError{Detail: "not a sequence"}
 	}
 	return content, nil
 }
@@ -397,7 +399,7 @@ func unmarshalImplicitInt64(content []byte) (int64, error) {
 	s := cryptobyte.String(der)
 	var val int64
 	if !s.ReadASN1Integer(&val) {
-		return 0, errors.New("pkicmp: invalid integer")
+		return 0, &ParseError{Detail: "invalid integer"}
 	}
 	return val, nil
 }

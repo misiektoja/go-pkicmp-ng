@@ -3,7 +3,6 @@ package pkicmp
 import (
 	"crypto"
 	"crypto/rand"
-	"errors"
 	"fmt"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -26,7 +25,7 @@ func (m *CertReqMessages) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (m *CertReqMessages) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertReqMessages sequence")
+		return &ParseError{Detail: "invalid CertReqMessages sequence"}
 	}
 	for !seq.Empty() {
 		var req CertReqMsg
@@ -70,7 +69,7 @@ func (m *CertReqMsg) GeneratePOP(key crypto.Signer) error {
 	m.CertReq.marshal(mctx, &b)
 	certReqDER, err := b.Bytes()
 	if err != nil {
-		return fmt.Errorf("pkicmp: marshal CertRequest for POP: %w", err)
+		return &ParseError{Detail: "marshal CertRequest for POP", Err: err}
 	}
 
 	sigAlgOID, hashFunc, err := signatureAlgorithmFromKey(key)
@@ -89,7 +88,7 @@ func (m *CertReqMsg) GeneratePOP(key crypto.Signer) error {
 
 	sig, err := key.Sign(rand.Reader, digest, hashFunc)
 	if err != nil {
-		return fmt.Errorf("pkicmp: sign POP: %w", err)
+		return &ParseError{Detail: "sign POP", Err: err}
 	}
 
 	m.Popo = &ProofOfPossession{
@@ -105,7 +104,7 @@ func (m *CertReqMsg) GeneratePOP(key crypto.Signer) error {
 func (m *CertReqMsg) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertReqMsg sequence")
+		return &ParseError{Detail: "invalid CertReqMsg sequence"}
 	}
 	if err := m.CertReq.unmarshal(&seq); err != nil {
 		return err
@@ -147,15 +146,19 @@ func (r *CertRequest) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (r *CertRequest) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertRequest sequence")
+		return &ParseError{Detail: "invalid CertRequest sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {
-		return errors.New("pkicmp: invalid certReqId")
+		return &ParseError{Detail: "invalid certReqId"}
 	}
 	return r.CertTemplate.unmarshal(&seq)
 }
 
 // CertTemplate per RFC 4211 §2.
+//
+// Only subject [5], publicKey [6], and extensions [9] are supported.
+// Other fields (version, serialNumber, issuer, validity, issuerUID, subjectUID)
+// are silently skipped during parsing.
 type CertTemplate struct {
 	// Subject is the requested certificate subject DN.
 	Subject    GeneralName
@@ -205,21 +208,21 @@ func (t *CertTemplate) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (t *CertTemplate) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid CertTemplate sequence")
+		return &ParseError{Detail: "invalid CertTemplate sequence"}
 	}
 
 	for !seq.Empty() {
 		var sub cryptobyte.String
 		var tag cbasn1.Tag
 		if !seq.ReadAnyASN1Element(&sub, &tag) {
-			return errors.New("pkicmp: invalid CertTemplate element")
+			return &ParseError{Detail: "invalid CertTemplate element"}
 		}
 
 		switch tag {
 		case cbasn1.Tag(5).ContextSpecific().Constructed():
 			var content cryptobyte.String
 			if !sub.ReadASN1(&content, tag) {
-				return errors.New("pkicmp: invalid subject tag")
+				return &ParseError{Detail: "invalid subject tag"}
 			}
 			if err := parseRDNSequence(&content, &t.Subject.DirectoryName); err != nil {
 				return err
@@ -227,13 +230,13 @@ func (t *CertTemplate) unmarshal(s *cryptobyte.String) error {
 		case cbasn1.Tag(6).ContextSpecific().Constructed():
 			var content cryptobyte.String
 			if !sub.ReadASN1(&content, tag) {
-				return errors.New("pkicmp: invalid publicKey tag")
+				return &ParseError{Detail: "invalid publicKey tag"}
 			}
 			t.PublicKey = wrapSequence(content)
 		case cbasn1.Tag(9).ContextSpecific().Constructed():
 			var content cryptobyte.String
 			if !sub.ReadASN1(&content, tag) {
-				return errors.New("pkicmp: invalid extensions tag")
+				return &ParseError{Detail: "invalid extensions tag"}
 			}
 			t.Extensions = wrapSequence(content)
 		default:
@@ -289,7 +292,7 @@ func (p *ProofOfPossession) unmarshal(s *cryptobyte.String) error {
 	var sub cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1(&sub, &tag) {
-		return errors.New("pkicmp: missing ProofOfPossession")
+		return &ParseError{Detail: "missing ProofOfPossession"}
 	}
 
 	switch tag {
@@ -308,7 +311,7 @@ func (p *ProofOfPossession) unmarshal(s *cryptobyte.String) error {
 		p.KeyAgreement = &POPOPrivKey{}
 		return p.KeyAgreement.unmarshal(&sub)
 	default:
-		return fmt.Errorf("pkicmp: unsupported ProofOfPossession variant: %d", tag)
+		return &ParseError{Detail: fmt.Sprintf("unsupported ProofOfPossession variant: %d", tag)}
 	}
 	return nil
 }
@@ -350,7 +353,7 @@ func (p *POPOPrivKey) unmarshal(s *cryptobyte.String) error {
 	var sub cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1(&sub, &tag) {
-		return errors.New("pkicmp: missing POPOPrivKey")
+		return &ParseError{Detail: "missing POPOPrivKey"}
 	}
 
 	switch tag {
@@ -366,7 +369,7 @@ func (p *POPOPrivKey) unmarshal(s *cryptobyte.String) error {
 		p.EncryptedKey = &EnvelopedData{}
 		return p.EncryptedKey.unmarshalInner(&sub)
 	default:
-		return fmt.Errorf("pkicmp: unsupported POPOPrivKey variant: %d", tag)
+		return &ParseError{Detail: fmt.Sprintf("unsupported POPOPrivKey variant: %d", tag)}
 	}
 	return nil
 }
@@ -408,7 +411,7 @@ func (c *Challenge) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 func (c *Challenge) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid Challenge sequence")
+		return &ParseError{Detail: "invalid Challenge sequence"}
 	}
 
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.SEQUENCE) {
@@ -419,18 +422,18 @@ func (c *Challenge) unmarshal(s *cryptobyte.String) error {
 	}
 
 	if !seq.ReadASN1Bytes(&c.Witness, cbasn1.OCTET_STRING) {
-		return errors.New("pkicmp: invalid witness")
+		return &ParseError{Detail: "invalid witness"}
 	}
 
 	var deprecatedChallenge []byte
 	if !seq.ReadASN1Bytes(&deprecatedChallenge, cbasn1.OCTET_STRING) {
-		return errors.New("pkicmp: missing deprecated challenge")
+		return &ParseError{Detail: "missing deprecated challenge"}
 	}
 
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid encryptedRand tag")
+			return &ParseError{Detail: "invalid encryptedRand tag"}
 		}
 		c.EncryptedRand = &EnvelopedData{}
 		if err := c.EncryptedRand.unmarshalInner(&sub); err != nil {
@@ -480,7 +483,7 @@ func (p *POPOSigningKey) marshalInner(mctx *MarshalContext, b *cryptobyte.Builde
 func (p *POPOSigningKey) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid POPOSigningKey sequence")
+		return &ParseError{Detail: "invalid POPOSigningKey sequence"}
 	}
 	return p.unmarshalInner(&seq)
 }
@@ -489,7 +492,7 @@ func (p *POPOSigningKey) unmarshalInner(seq *cryptobyte.String) error {
 	if seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var sub cryptobyte.String
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
-			return errors.New("pkicmp: invalid poposkInput tag")
+			return &ParseError{Detail: "invalid poposkInput tag"}
 		}
 		p.PoposkInput = &POPOSigningKeyInput{}
 		if err := p.PoposkInput.unmarshalInner(&sub); err != nil {
@@ -503,11 +506,11 @@ func (p *POPOSigningKey) unmarshalInner(seq *cryptobyte.String) error {
 
 	var bitString cryptobyte.String
 	if !seq.ReadASN1(&bitString, cbasn1.BIT_STRING) {
-		return errors.New("pkicmp: invalid signature BIT STRING")
+		return &ParseError{Detail: "invalid signature BIT STRING"}
 	}
 	var unused uint8
 	if !bitString.ReadUint8(&unused) {
-		return errors.New("pkicmp: invalid signature unused bits")
+		return &ParseError{Detail: "invalid signature unused bits"}
 	}
 	p.Signature = bitString
 	return nil
@@ -548,7 +551,7 @@ func (p *POPOSigningKeyInput) marshalInner(mctx *MarshalContext, b *cryptobyte.B
 func (p *POPOSigningKeyInput) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
-		return errors.New("pkicmp: invalid POPOSigningKeyInput sequence")
+		return &ParseError{Detail: "invalid POPOSigningKeyInput sequence"}
 	}
 	return p.unmarshalInner(&seq)
 }
@@ -559,7 +562,7 @@ func (p *POPOSigningKeyInput) unmarshalInner(seq *cryptobyte.String) error {
 		if tag == cbasn1.Tag(0).ContextSpecific().Constructed() {
 			var sub cryptobyte.String
 			if !seq.ReadASN1(&sub, tag) {
-				return errors.New("pkicmp: invalid sender tag")
+				return &ParseError{Detail: "invalid sender tag"}
 			}
 			p.Sender = &GeneralName{}
 			if err := p.Sender.unmarshal(&sub); err != nil {
@@ -571,7 +574,7 @@ func (p *POPOSigningKeyInput) unmarshalInner(seq *cryptobyte.String) error {
 	var pub cryptobyte.String
 	var pubTag cbasn1.Tag
 	if !seq.ReadAnyASN1Element(&pub, &pubTag) {
-		return errors.New("pkicmp: missing publicKey")
+		return &ParseError{Detail: "missing publicKey"}
 	}
 	p.PublicKey = pub
 	return nil

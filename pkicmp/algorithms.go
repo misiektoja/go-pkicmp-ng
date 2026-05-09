@@ -50,7 +50,7 @@ func hashFromOID(oid asn1.ObjectIdentifier) (crypto.Hash, error) {
 	case oid.Equal(OIDSHA512):
 		return crypto.SHA512, nil
 	}
-	return 0, fmt.Errorf("pkicmp: unsupported hash algorithm: %v", oid)
+	return 0, &ParseError{Detail: fmt.Sprintf("unsupported hash algorithm: %v", oid)}
 }
 
 func hmacHashFromOID(oid asn1.ObjectIdentifier) (crypto.Hash, error) {
@@ -64,7 +64,7 @@ func hmacHashFromOID(oid asn1.ObjectIdentifier) (crypto.Hash, error) {
 	case oid.Equal(OIDHMACWithSHA512):
 		return crypto.SHA512, nil
 	}
-	return 0, fmt.Errorf("pkicmp: unsupported HMAC algorithm: %v", oid)
+	return 0, &ParseError{Detail: fmt.Sprintf("unsupported HMAC algorithm: %v", oid)}
 }
 
 func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
@@ -84,7 +84,7 @@ func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
 	case oid.Equal(OIDEd25519):
 		return x509.PureEd25519, nil
 	}
-	return x509.UnknownSignatureAlgorithm, fmt.Errorf("pkicmp: unsupported signature algorithm: %v", oid)
+	return x509.UnknownSignatureAlgorithm, &ParseError{Detail: fmt.Sprintf("unsupported signature algorithm: %v", oid)}
 }
 
 func hashFromSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
@@ -114,11 +114,11 @@ func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto
 		case 521:
 			return OIDECDSAWithSHA512, crypto.SHA512, nil
 		default:
-			return nil, 0, fmt.Errorf("pkicmp: unsupported ECDSA curve size: %d", pub.Curve.Params().BitSize)
+			return nil, 0, &ParseError{Detail: fmt.Sprintf("unsupported ECDSA curve size: %d", pub.Curve.Params().BitSize)}
 		}
 	case ed25519.PublicKey:
 		return OIDEd25519, crypto.Hash(0), nil
 	default:
-		return nil, 0, fmt.Errorf("pkicmp: unsupported public key type: %T", pub)
+		return nil, 0, &ParseError{Detail: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}
 }
