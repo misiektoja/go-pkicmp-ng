@@ -76,6 +76,50 @@ func TestPBMRoundTrip(t *testing.T) {
 	assert.Error(t, err)
 }
 
+func TestPBMVerificationErrors(t *testing.T) {
+	secret := []byte("shared-secret")
+	salt := make([]byte, 16)
+	_, _ = rand.Read(salt)
+
+	protector, _ := pkicmp.NewPBMProtector(secret, salt, 1024, pkicmp.OIDSHA256, pkicmp.OIDHMACWithSHA256)
+	body, _ := pkicmp.NewPKIConfBody()
+	msg := &pkicmp.PKIMessage{
+		Header: pkicmp.PKIHeader{TransactionID: []byte("trans-1")},
+		Body:   body,
+	}
+	_ = msg.Protect(protector)
+
+	t.Run("RejectsTruncatedMAC", func(t *testing.T) {
+		msg.Protection = msg.Protection[:len(msg.Protection)/2]
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
+		assert.Error(t, msg.Verify(verifier))
+	})
+
+	t.Run("RejectsExtendedMAC", func(t *testing.T) {
+		_ = msg.Protect(protector) // Re-protect
+		msg.Protection = append(msg.Protection, 0xFF, 0xFF)
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
+		assert.Error(t, msg.Verify(verifier))
+	})
+
+	t.Run("RejectsEmptyProtection", func(t *testing.T) {
+		_ = msg.Protect(protector) // Re-protect
+		msg.Protection = []byte{}
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		verifier.(pkicmp.MACVerifier).SetSharedSecret(secret)
+		assert.Error(t, msg.Verify(verifier))
+	})
+
+	t.Run("RejectsEmptySecret", func(t *testing.T) {
+		_ = msg.Protect(protector) // Re-protect
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		verifier.(pkicmp.MACVerifier).SetSharedSecret([]byte{})
+		assert.Error(t, msg.Verify(verifier))
+	})
+}
+
 func TestSignatureRoundTrip(t *testing.T) {
 	// 1. Setup keys and cert
 	priv, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -128,4 +172,100 @@ func TestSignatureRoundTrip(t *testing.T) {
 
 	err = parsed.Verify(sigVerifier)
 	assert.NoError(t, err)
+}
+
+func TestSignatureVerificationErrors(t *testing.T) {
+	// Setup CA and signer
+	caKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	caTemplate := x509.Certificate{
+		SerialNumber:          big.NewInt(1),
+		Subject:               pkix.Name{CommonName: "Test CA"},
+		NotBefore:             time.Now(),
+		NotAfter:              time.Now().Add(time.Hour),
+		IsCA:                  true,
+		BasicConstraintsValid: true,
+	}
+	caDER, _ := x509.CreateCertificate(rand.Reader, &caTemplate, &caTemplate, &caKey.PublicKey, caKey)
+	caCert, _ := x509.ParseCertificate(caDER)
+
+	signerKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	signerTemplate := x509.Certificate{
+		SerialNumber: big.NewInt(2),
+		Subject:      pkix.Name{CommonName: "Signer"},
+		NotBefore:    time.Now(),
+		NotAfter:     time.Now().Add(time.Hour),
+	}
+	signerDER, _ := x509.CreateCertificate(rand.Reader, &signerTemplate, &caTemplate, &signerKey.PublicKey, caKey)
+	signerCert, _ := x509.ParseCertificate(signerDER)
+
+	body, _ := pkicmp.NewPKIConfBody()
+	msg := &pkicmp.PKIMessage{
+		Header: pkicmp.PKIHeader{TransactionID: []byte("trans-sig")},
+		Body:   body,
+	}
+	protector, _ := pkicmp.NewSignatureProtector(signerKey, signerCert)
+	_ = msg.Protect(protector)
+
+	t.Run("RejectsWrongKey", func(t *testing.T) {
+		wrongKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		wrongProtector, _ := pkicmp.NewSignatureProtector(wrongKey, signerCert)
+		_ = msg.Protect(wrongProtector)
+
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		sv := verifier.(pkicmp.SignatureVerifier)
+		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: signerCert.Raw}})
+		roots := x509.NewCertPool()
+		roots.AddCert(caCert)
+		sv.SetTrustPool(roots)
+
+		assert.Error(t, msg.Verify(verifier))
+	})
+
+	t.Run("RejectsUntrustedCA", func(t *testing.T) {
+		_ = msg.Protect(protector) // Re-protect with correct key
+
+		otherCAKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		otherCATemplate := x509.Certificate{
+			SerialNumber:          big.NewInt(99),
+			Subject:               pkix.Name{CommonName: "Other CA"},
+			NotBefore:             time.Now(),
+			NotAfter:              time.Now().Add(time.Hour),
+			IsCA:                  true,
+			BasicConstraintsValid: true,
+		}
+		otherCADER, _ := x509.CreateCertificate(rand.Reader, &otherCATemplate, &otherCATemplate, &otherCAKey.PublicKey, otherCAKey)
+		otherCACert, _ := x509.ParseCertificate(otherCADER)
+
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		sv := verifier.(pkicmp.SignatureVerifier)
+		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: signerCert.Raw}})
+		roots := x509.NewCertPool()
+		roots.AddCert(otherCACert) // Wrong CA
+		sv.SetTrustPool(roots)
+
+		assert.Error(t, msg.Verify(verifier))
+	})
+
+	t.Run("RejectsExpiredCert", func(t *testing.T) {
+		expiredTemplate := x509.Certificate{
+			SerialNumber: big.NewInt(3),
+			Subject:      pkix.Name{CommonName: "Expired"},
+			NotBefore:    time.Now().Add(-2 * time.Hour),
+			NotAfter:     time.Now().Add(-1 * time.Hour),
+		}
+		expiredDER, _ := x509.CreateCertificate(rand.Reader, &expiredTemplate, &caTemplate, &signerKey.PublicKey, caKey)
+		expiredCert, _ := x509.ParseCertificate(expiredDER)
+
+		expiredProtector, _ := pkicmp.NewSignatureProtector(signerKey, expiredCert)
+		_ = msg.Protect(expiredProtector)
+
+		verifier, _ := pkicmp.ProtectionVerifier(*msg.Header.ProtectionAlg)
+		sv := verifier.(pkicmp.SignatureVerifier)
+		sv.SetTrustedCerts([]pkicmp.CMPCertificate{{Raw: expiredCert.Raw}})
+		roots := x509.NewCertPool()
+		roots.AddCert(caCert)
+		sv.SetTrustPool(roots)
+
+		assert.Error(t, msg.Verify(verifier))
+	})
 }

@@ -336,6 +336,17 @@ func NewPBMProtector(secret, salt []byte, iterationCount int, owfOID, macOID asn
 	if err := validatePBMIterationCount(iterationCount); err != nil {
 		return nil, err
 	}
+	// RFC 9481 §6.1: Salt should provide sufficient entropy for key derivation.
+	if len(salt) < 8 {
+		return nil, fmt.Errorf("pkicmp: PBM salt too short: %d bytes (minimum 8)", len(salt))
+	}
+	// Validate algorithm OIDs early to fail fast.
+	if _, err := hashFromOID(owfOID); err != nil {
+		return nil, err
+	}
+	if _, err := hmacHashFromOID(macOID); err != nil {
+		return nil, err
+	}
 
 	p := PBMParameter{
 		Salt:           salt,

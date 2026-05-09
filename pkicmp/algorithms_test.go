@@ -11,6 +11,13 @@ import (
 
 // RFC 9481 §2.1 & §3 (Algorithm mapping tests)
 func TestHashFromOID(t *testing.T) {
+	// SHA1 is deprecated per RFC 9481 §7.1 but accepted for compatibility.
+	t.Run("SHA1-Deprecated", func(t *testing.T) {
+		got, err := hashFromOID(OIDSHA1)
+		assert.NoError(t, err)
+		assert.Equal(t, crypto.SHA1, got)
+	})
+
 	t.Run("SHA256", func(t *testing.T) {
 		got, err := hashFromOID(OIDSHA256)
 		assert.NoError(t, err)
@@ -38,6 +45,13 @@ func TestHashFromOID(t *testing.T) {
 
 // RFC 9481 §6.2.1 (HMAC Mapping tests)
 func TestHMACHashFromOID(t *testing.T) {
+	// SHA1 is deprecated per RFC 9481 §7.1 but accepted for compatibility.
+	t.Run("HMAC-SHA1-Deprecated", func(t *testing.T) {
+		got, err := hmacHashFromOID(OIDHMACWithSHA1)
+		assert.NoError(t, err)
+		assert.Equal(t, crypto.SHA1, got)
+	})
+
 	t.Run("HMAC-SHA256", func(t *testing.T) {
 		got, err := hmacHashFromOID(OIDHMACWithSHA256)
 		assert.NoError(t, err)

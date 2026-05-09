@@ -165,13 +165,43 @@ func TestVerifyPBMErrorCases(t *testing.T) {
 }
 
 func TestNewPBMProtectorIterationBounds(t *testing.T) {
-	_, err := NewPBMProtector([]byte("secret"), []byte("salt"), 0, OIDSHA256, OIDHMACWithSHA256)
+	_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 0, OIDSHA256, OIDHMACWithSHA256)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "iterationCount too small")
 
-	_, err = NewPBMProtector([]byte("secret"), []byte("salt"), DefaultPBMMaxIterationCount+1, OIDSHA256, OIDHMACWithSHA256)
+	_, err = NewPBMProtector([]byte("secret"), []byte("saltsalt"), DefaultPBMMaxIterationCount+1, OIDSHA256, OIDHMACWithSHA256)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "iterationCount too large")
+}
+
+func TestNewPBMProtectorSaltValidation(t *testing.T) {
+	t.Run("RejectsEmptySalt", func(t *testing.T) {
+		_, err := NewPBMProtector([]byte("secret"), []byte{}, 1000, OIDSHA256, OIDHMACWithSHA256)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "salt too short")
+	})
+	t.Run("RejectsShortSalt", func(t *testing.T) {
+		_, err := NewPBMProtector([]byte("secret"), []byte("short"), 1000, OIDSHA256, OIDHMACWithSHA256)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "salt too short")
+	})
+	t.Run("AcceptsMinimumSalt", func(t *testing.T) {
+		_, err := NewPBMProtector([]byte("secret"), []byte("12345678"), 1000, OIDSHA256, OIDHMACWithSHA256)
+		assert.NoError(t, err)
+	})
+}
+
+func TestNewPBMProtectorAlgorithmValidation(t *testing.T) {
+	t.Run("RejectsUnknownOWF", func(t *testing.T) {
+		_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 1000, asn1.ObjectIdentifier{1, 2, 3}, OIDHMACWithSHA256)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported hash algorithm")
+	})
+	t.Run("RejectsUnknownMAC", func(t *testing.T) {
+		_, err := NewPBMProtector([]byte("secret"), []byte("saltsalt"), 1000, OIDSHA256, asn1.ObjectIdentifier{1, 2, 3})
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "unsupported HMAC algorithm")
+	})
 }
 
 func TestMACProtectorErrorCases(t *testing.T) {
