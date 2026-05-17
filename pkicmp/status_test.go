@@ -188,3 +188,66 @@ func TestErrorMsgContentASN1(t *testing.T) {
 	assert.Equal(t, e.ErrorCode, unmarshaled.ErrorCode)
 	assert.Equal(t, e.ErrorDetails, unmarshaled.ErrorDetails)
 }
+
+// RFC 9810 §5.2.3 (DER BIT STRING encoding of PKIFailureInfo)
+func TestPKIStatusInfoFailInfoDEREncoding(t *testing.T) {
+	tests := []struct {
+		name     string
+		failInfo PKIFailureInfo
+		// Expected BIT STRING content bytes (unused byte + value bytes).
+		expected []byte
+	}{
+		{
+			name:     "FailBadAlg (bit 0)",
+			failInfo: FailBadAlg, // 0x80000000 -> [80], unused=7
+			expected: []byte{7, 0x80},
+		},
+		{
+			name:     "FailBadMessageCheck (bit 1)",
+			failInfo: FailBadMessageCheck, // 0x40000000 -> [40], unused=6
+			expected: []byte{6, 0x40},
+		},
+		{
+			name:     "FailUnsupportedVersion (bit 22)",
+			failInfo: FailUnsupportedVersion, // 0x00000200 -> [00 00 02], unused=1
+			expected: []byte{1, 0x00, 0x00, 0x02},
+		},
+		{
+			name:     "FailBadAlg | FailBadMessageCheck",
+			failInfo: FailBadAlg | FailBadMessageCheck, // 0xC0000000 -> [C0], unused=6
+			expected: []byte{6, 0xC0},
+		},
+		{
+			name:     "FailBadRequest (bit 2)",
+			failInfo: FailBadRequest, // 0x20000000 -> [20], unused=5
+			expected: []byte{5, 0x20},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			si := PKIStatusInfo{
+				Status:   StatusRejection,
+				FailInfo: tc.failInfo,
+			}
+
+			var b cryptobyte.Builder
+			si.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+			marshaled, err := b.Bytes()
+			require.NoError(t, err)
+
+			// Parse the SEQUENCE to find the BIT STRING.
+			s := cryptobyte.String(marshaled)
+			var seq cryptobyte.String
+			require.True(t, s.ReadASN1(&seq, 0x30)) // SEQUENCE
+			// Skip the INTEGER (status).
+			var status cryptobyte.String
+			require.True(t, seq.ReadASN1(&status, 0x02))
+			// Read the BIT STRING content.
+			var bitString cryptobyte.String
+			require.True(t, seq.ReadASN1(&bitString, 0x03))
+
+			assert.Equal(t, tc.expected, []byte(bitString))
+		})
+	}
+}

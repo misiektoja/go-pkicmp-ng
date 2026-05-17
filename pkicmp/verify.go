@@ -5,9 +5,11 @@ import (
 	"crypto/hmac"
 	"crypto/subtle"
 	"crypto/x509"
+	"encoding/asn1"
 	"fmt"
 
 	"golang.org/x/crypto/cryptobyte"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 // VerifyOptions provides trust material for message protection verification.
@@ -33,6 +35,13 @@ type VerifyOptions struct {
 	// messages. For MAC-protected messages this field is ignored. May be nil
 	// if only MAC verification is needed.
 	TrustPool *x509.CertPool
+
+	// TrustedCert is a pre-trusted certificate for verifying signature-protected
+	// messages. When set, the signature is verified directly against this
+	// certificate without chain validation. This is used when the verifier has
+	// already resolved the sender's certificate from its own database.
+	// Takes precedence over TrustPool/ExtraCerts.
+	TrustedCert *x509.Certificate
 
 	// ExtraCerts provides candidate signer certificates (typically from
 	// msg.ExtraCerts) for signature chain building.
@@ -73,7 +82,10 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 	if alg.Equal(OIDPasswordBasedMac) {
 		return m.verifyPBM(opts)
 	}
-	if _, err := sigAlgFromOID(alg); err == nil {
+	if alg.Equal(OIDPBMAC1) {
+		return m.verifyPBMAC1(opts)
+	}
+	if _, err := SigAlgFromOID(alg); err == nil {
 		return m.verifySignature(opts)
 	}
 
@@ -137,17 +149,50 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 	return &VerifyResult{MACVerified: true}, nil
 }
 
-// verifySignature verifies signature-based protection.
-// RFC 9810 §5.1.3.3: Verify using certificates from extraCerts, validated
-// against a trust pool.
-// RFC 9810 §8.9: The message sender MUST be authenticated with existing
-// trust anchors.
-func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
-	if opts.TrustPool == nil {
-		return nil, &VerificationError{Reason: ReasonMissingTrustAnchors}
+// verifyPBMAC1 verifies PBMAC1 protection.
+// RFC 8018 §7.1, RFC 9481 §6.1.2.
+func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
+	var secret []byte
+	if opts.Credentials != nil {
+		secret = opts.Credentials.SharedSecret()
+	}
+	if len(secret) == 0 {
+		return nil, &VerificationError{Reason: ReasonMissingSharedSecret}
 	}
 
-	sigAlg, err := sigAlgFromOID(m.Header.ProtectionAlg.Algorithm)
+	// Parse PBMAC1-params (RFC 8018 §A.5).
+	var pbmac1Params struct {
+		KeyDerivationFunc algorithmIdentifierASN1
+		MessageAuthScheme algorithmIdentifierASN1
+	}
+	if _, err := asn1.Unmarshal(m.Header.ProtectionAlg.Parameters, &pbmac1Params); err != nil {
+		return nil, &ParseError{Detail: "invalid PBMAC1-params: " + err.Error()}
+	}
+
+	if !pbmac1Params.KeyDerivationFunc.Algorithm.Equal(OIDPBKDF2) {
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("KDF OID %v", pbmac1Params.KeyDerivationFunc.Algorithm)}
+	}
+
+	// Parse PBKDF2-params from keyDerivationFunc.Parameters.
+	var pbkdf2Params struct {
+		Salt           []byte
+		IterationCount int
+		KeyLength      int
+		PRF            algorithmIdentifierASN1
+	}
+	if _, err := asn1.Unmarshal(pbmac1Params.KeyDerivationFunc.Parameters.FullBytes, &pbkdf2Params); err != nil {
+		return nil, &ParseError{Detail: "invalid PBKDF2-params: " + err.Error()}
+	}
+
+	if err := validatePBMIterationCount(pbkdf2Params.IterationCount); err != nil {
+		return nil, err
+	}
+
+	prfHash, err := hmacHashFromOID(pbkdf2Params.PRF.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	macHash, err := hmacHashFromOID(pbmac1Params.MessageAuthScheme.Algorithm)
 	if err != nil {
 		return nil, err
 	}
@@ -155,6 +200,48 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 	data, err := m.protectedPart()
 	if err != nil {
 		return nil, err
+	}
+
+	// Derive key using PBKDF2 (RFC 8018 §5.2).
+	k := pbkdf2.Key(secret, pbkdf2Params.Salt, pbkdf2Params.IterationCount, pbkdf2Params.KeyLength, prfHash.New)
+	h := hmac.New(macHash.New, k)
+	h.Write(data)
+	expected := h.Sum(nil)
+
+	if subtle.ConstantTimeCompare(expected, m.Protection) != 1 {
+		return nil, &VerificationError{Reason: ReasonBadMAC}
+	}
+
+	return &VerifyResult{MACVerified: true}, nil
+}
+
+// verifySignature verifies signature-based protection.
+// RFC 9810 §5.1.3.3: Verify using certificates from extraCerts, validated
+// against a trust pool.
+// RFC 9810 §8.9: The message sender MUST be authenticated with existing
+// trust anchors.
+func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
+	sigAlg, err := SigAlgFromOID(m.Header.ProtectionAlg.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+
+	data, err := m.protectedPart()
+	if err != nil {
+		return nil, err
+	}
+
+	// Direct verification against a pre-trusted certificate (server-side lookup).
+	if opts.TrustedCert != nil {
+		if err := opts.TrustedCert.CheckSignature(sigAlg, data, m.Protection); err != nil {
+			return nil, &VerificationError{Reason: ReasonSignatureFailed}
+		}
+		return &VerifyResult{MACVerified: false}, nil
+	}
+
+	// Chain-based verification using TrustPool and ExtraCerts.
+	if opts.TrustPool == nil {
+		return nil, &VerificationError{Reason: ReasonMissingTrustAnchors}
 	}
 
 	// Build intermediates pool from ExtraCerts for chain verification.

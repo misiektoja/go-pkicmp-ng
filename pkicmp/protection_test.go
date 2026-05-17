@@ -53,6 +53,7 @@ func TestPBMCustomOptions(t *testing.T) {
 
 	err := msg.ProtectWithMACOptions(pkicmp.MACOptions{
 		Secret:         secret,
+		Algorithm:      pkicmp.OIDPasswordBasedMac,
 		IterationCount: 5000,
 		OWF:            pkicmp.OIDSHA512,
 		MAC:            pkicmp.OIDHMACWithSHA512,
@@ -70,6 +71,72 @@ func TestPBMCustomOptions(t *testing.T) {
 	vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds(secret)})
 	require.NoError(t, err)
 	assert.True(t, vr.MACVerified)
+}
+
+func TestPBMAC1RoundTrip(t *testing.T) {
+	secret := []byte("shared-secret")
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	err := msg.ProtectWithPBMAC1(secret)
+	require.NoError(t, err)
+
+	assert.Equal(t, pkicmp.OIDPBMAC1, msg.Header.ProtectionAlg.Algorithm)
+	assert.NotEmpty(t, msg.Protection)
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds(secret)})
+	require.NoError(t, err)
+	assert.True(t, vr.MACVerified)
+}
+
+func TestPBMAC1CustomOptions(t *testing.T) {
+	secret := []byte("custom-secret")
+
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+
+	err := msg.ProtectWithPBMAC1Options(pkicmp.PBMAC1Options{
+		Secret:         secret,
+		IterationCount: 5000,
+		PRF:            pkicmp.OIDHMACWithSHA512,
+		MAC:            pkicmp.OIDHMACWithSHA512,
+	})
+	require.NoError(t, err)
+
+	assert.Equal(t, pkicmp.OIDPBMAC1, msg.Header.ProtectionAlg.Algorithm)
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	vr, err := parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds(secret)})
+	require.NoError(t, err)
+	assert.True(t, vr.MACVerified)
+}
+
+func TestPBMAC1WrongSecret(t *testing.T) {
+	body := pkicmp.NewPKIConfBody()
+	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
+	require.NoError(t, msg.ProtectWithPBMAC1([]byte("correct-secret")))
+
+	der, err := msg.MarshalBinary()
+	require.NoError(t, err)
+	parsed, err := pkicmp.ParsePKIMessage(der)
+	require.NoError(t, err)
+
+	_, err = parsed.Verify(pkicmp.VerifyOptions{Credentials: mustCreds([]byte("wrong-secret"))})
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
 }
 
 func TestSignatureRoundTrip(t *testing.T) {

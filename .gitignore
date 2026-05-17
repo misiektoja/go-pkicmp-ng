@@ -27,3 +27,6 @@ Thumbs.db
 coverage.out
 test/integration/ejbca/testdata/*.pem
 test/integration/ejbca/testdata/*.p12
+test/integration/cmp-test-suite/reports/
+test/integration/cmp-test-suite/config/custom.robot
+test/integration/cmp-test-suite/testdata/cmp-test-suite/

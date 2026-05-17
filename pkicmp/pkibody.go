@@ -66,6 +66,7 @@ type PKIBody struct {
 	pollReq  *PollReqContent
 	pollRep  *PollRepContent
 	errorMsg *ErrorMsgContent
+	nested   *PKIMessage
 }
 
 type BodyType cbasn1.Tag
@@ -84,6 +85,7 @@ const (
 	BodyTypeKUR      = BodyType(7 | classContextSpecific | classConstructed)
 	BodyTypeKUP      = BodyType(8 | classContextSpecific | classConstructed)
 	BodyTypePKIConf  = BodyType(19 | classContextSpecific | classConstructed)
+	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: nested [20] NestedMessageContent
 	BodyTypeError    = BodyType(23 | classContextSpecific | classConstructed)
 	BodyTypeCertConf = BodyType(24 | classContextSpecific | classConstructed)
 	BodyTypePollReq  = BodyType(25 | classContextSpecific | classConstructed)
@@ -136,6 +138,15 @@ func (b *PKIBody) marshal(mctx *MarshalContext, builder *cryptobyte.Builder) {
 			b.pollRep.marshal(mctx, builder)
 		case BodyTypeError:
 			b.errorMsg.marshal(mctx, builder)
+		case BodyTypeNested:
+			// NestedMessageContent ::= PKIMessage (RFC 9810 §5.1.3.5)
+			// The inner PKIMessage is encoded as a full DER SEQUENCE inside the [20] tag.
+			der, err := b.nested.MarshalBinary()
+			if err != nil {
+				builder.SetError(err)
+				return
+			}
+			builder.AddBytes(der)
 		default:
 			// Should not happen if correctly constructed
 			builder.AddBytes(b.Raw)
@@ -176,6 +187,21 @@ func (b *PKIBody) KUR() (*CertReqMessages, error) {
 		b.err = b.unmarshalBodyContent(b.kur)
 	}
 	return b.kur, b.err
+}
+
+// CertReqMessages returns the CertReqMessages for IR, CR, or KUR body types.
+// This is a convenience method that dispatches to the appropriate getter.
+func (b *PKIBody) CertReqMessages() (*CertReqMessages, error) {
+	switch b.Type {
+	case BodyTypeIR:
+		return b.IR()
+	case BodyTypeCR:
+		return b.CR()
+	case BodyTypeKUR:
+		return b.KUR()
+	default:
+		return nil, &ParseError{Detail: fmt.Sprintf("body type %d is not a cert request", b.Type)}
+	}
 }
 
 func (b *PKIBody) KUP() (*CertRepMessage, error) {
@@ -296,6 +322,25 @@ func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 	return b.errorMsg, b.err
 }
 
+// Nested returns the inner PKIMessage from a nested [20] body.
+// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
+func (b *PKIBody) Nested() (*PKIMessage, error) {
+	if b.Type != BodyTypeNested {
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not nested (type %d)", b.Type)}
+	}
+	if b.nested == nil && b.err == nil {
+		// Parse the inner PKIMessage from the body content bytes.
+		s := cryptobyte.String(b.Raw)
+		var content cryptobyte.String
+		if !s.ReadASN1(&content, cbasn1.Tag(b.Type)) {
+			b.err = &ParseError{Detail: "invalid nested body content"}
+			return nil, b.err
+		}
+		b.nested, b.err = ParsePKIMessage([]byte(content))
+	}
+	return b.nested, b.err
+}
+
 func (b *PKIBody) unmarshalBodyContent(p interface {
 	unmarshal(s *cryptobyte.String) error
 	marshal(mctx *MarshalContext, b *cryptobyte.Builder)
@@ -366,4 +411,10 @@ func NewPollRepBody(rep *PollRepContent) *PKIBody {
 
 func NewErrorBody(err *ErrorMsgContent) *PKIBody {
 	return &PKIBody{Type: BodyTypeError, errorMsg: err, dirty: true}
+}
+
+// NewNestedBody creates a nested [20] body wrapping a single inner PKIMessage.
+// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
+func NewNestedBody(msg *PKIMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeNested, nested: msg, dirty: true}
 }

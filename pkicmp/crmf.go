@@ -3,6 +3,9 @@ package pkicmp
 import (
 	"crypto"
 	"crypto/rand"
+	"crypto/x509"
+	"crypto/x509/pkix"
+	"encoding/asn1"
 	"fmt"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -122,6 +125,35 @@ func (m *CertReqMsg) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
+// Subject returns the requested certificate subject from the CertTemplate.
+func (m *CertReqMsg) Subject() pkix.Name {
+	var name pkix.Name
+	if len(m.CertReq.CertTemplate.Subject.DirectoryName) > 0 {
+		name.FillFromRDNSequence(&m.CertReq.CertTemplate.Subject.DirectoryName)
+	}
+	return name
+}
+
+// PublicKey parses and returns the public key from the CertTemplate.
+func (m *CertReqMsg) PublicKey() (any, error) {
+	if len(m.CertReq.CertTemplate.PublicKey) == 0 {
+		return nil, nil
+	}
+	return x509.ParsePKIXPublicKey(m.CertReq.CertTemplate.PublicKey)
+}
+
+// Extensions parses and returns the extensions from the CertTemplate.
+func (m *CertReqMsg) Extensions() ([]pkix.Extension, error) {
+	if len(m.CertReq.CertTemplate.Extensions) == 0 {
+		return nil, nil
+	}
+	var exts []pkix.Extension
+	if _, err := asn1.Unmarshal(m.CertReq.CertTemplate.Extensions, &exts); err != nil {
+		return nil, err
+	}
+	return exts, nil
+}
+
 // CertRequest per RFC 4211 §3.
 //
 //	CertRequest ::= SEQUENCE {
@@ -134,6 +166,9 @@ type CertRequest struct {
 	CertReqID int64
 	// CertTemplate describes subject, key, and extension preferences.
 	CertTemplate CertTemplate
+	// Raw contains the DER encoding of this CertRequest, preserved during parsing
+	// for use in POP verification. Set automatically by unmarshal; ignored during marshal.
+	Raw []byte
 }
 
 func (r *CertRequest) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
@@ -144,8 +179,16 @@ func (r *CertRequest) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 }
 
 func (r *CertRequest) unmarshal(s *cryptobyte.String) error {
+	// Capture the raw DER of the entire CertRequest SEQUENCE for POP verification.
+	var raw cryptobyte.String
+	if !s.ReadASN1Element(&raw, cbasn1.SEQUENCE) {
+		return &ParseError{Detail: "invalid CertRequest sequence"}
+	}
+	r.Raw = []byte(raw)
+
 	var seq cryptobyte.String
-	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
+	inner := cryptobyte.String(r.Raw)
+	if !inner.ReadASN1(&seq, cbasn1.SEQUENCE) {
 		return &ParseError{Detail: "invalid CertRequest sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {

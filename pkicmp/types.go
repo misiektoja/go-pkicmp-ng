@@ -5,7 +5,6 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
-	"fmt"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -67,16 +66,45 @@ type AlgorithmIdentifier struct {
 //	    iPAddress                 [7]  OCTET STRING,
 //	    registeredID              [8]  OBJECT IDENTIFIER }
 type GeneralName struct {
+	// DirectoryName holds the parsed RDNSequence when the variant is directoryName [4].
 	DirectoryName pkix.RDNSequence
+	// RFC822Name holds the email address when the variant is rfc822Name [1].
+	RFC822Name string
+	// Raw holds the full DER-encoded GeneralName element (tag + length + value)
+	// for round-tripping variants that are not parsed into dedicated fields.
+	Raw []byte
 }
 
 var (
 	ErrUnsupportedGeneralName = errors.New("pkicmp: unsupported GeneralName variant")
 )
 
+// GeneralName context-specific tag constants per RFC 5280 §4.2.1.6.
+const (
+	tagRFC822Name     = 1
+	tagDirectoryName  = 4
+)
+
 // NewDirectoryName creates a GeneralName of type directoryName.
 func NewDirectoryName(name pkix.RDNSequence) GeneralName {
 	return GeneralName{DirectoryName: name}
+}
+
+// NewDirectoryNameFromRawDER creates a GeneralName of type directoryName from
+// pre-encoded DER bytes (e.g., x509.Certificate.RawSubject). This preserves
+// the original encoding (PrintableString vs UTF8String) without re-encoding.
+func NewDirectoryNameFromRawDER(rawName []byte) GeneralName {
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.Tag(tagDirectoryName).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+		b.AddBytes(rawName)
+	})
+	raw, _ := b.Bytes()
+	return GeneralName{Raw: raw}
+}
+
+// NewRFC822Name creates a GeneralName of type rfc822Name.
+func NewRFC822Name(email string) GeneralName {
+	return GeneralName{RFC822Name: email}
 }
 
 // Internal cryptobyte helpers
@@ -174,26 +202,59 @@ func (ft *PKIFreeText) unmarshal(s *cryptobyte.String) error {
 }
 
 func (gn *GeneralName) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
-	// Phase 1: only directoryName [4] EXPLICIT
-	// Actually GeneralName is a CHOICE, so it's [4] IMPLICIT Name
-	// Name ::= CHOICE { rdnSequence  RDNSequence }
-	// RDNSequence ::= SEQUENCE OF RelativeDistinguishedName
-	// So directoryName [4] is a SEQUENCE OF ...
-	b.AddASN1(cbasn1.Tag(4).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+	// If parsed from wire (Raw is set), write back verbatim to preserve encoding.
+	if len(gn.Raw) > 0 {
+		b.AddBytes(gn.Raw)
+		return
+	}
+	// rfc822Name [1] IMPLICIT IA5String — RFC 5280 §4.2.1.6.
+	if gn.RFC822Name != "" {
+		b.AddASN1(cbasn1.Tag(tagRFC822Name).ContextSpecific(), func(b *cryptobyte.Builder) {
+			b.AddBytes([]byte(gn.RFC822Name))
+		})
+		return
+	}
+	// directoryName [4] EXPLICIT Name — the [4] tag is explicit because Name is
+	// a CHOICE (ASN.1 rule: implicit tagging of a CHOICE becomes explicit).
+	// RFC 5280 §4.2.1.6.
+	b.AddASN1(cbasn1.Tag(tagDirectoryName).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 		marshalRDNSequence(b, gn.DirectoryName)
 	})
 }
 
 func (gn *GeneralName) unmarshal(s *cryptobyte.String) error {
-	var content cryptobyte.String
+	// Capture the full element (tag+length+value) for round-tripping.
+	var raw cryptobyte.String
 	var tag cbasn1.Tag
-	if !s.ReadAnyASN1(&content, &tag) {
+	if !s.ReadAnyASN1Element(&raw, &tag) {
 		return &ParseError{Detail: "missing GeneralName"}
 	}
-	if tag != cbasn1.Tag(4).ContextSpecific().Constructed() {
-		return fmt.Errorf("%w: tag %d", ErrUnsupportedGeneralName, tag)
+	gn.Raw = raw
+
+	switch {
+	case tag == cbasn1.Tag(tagDirectoryName).ContextSpecific().Constructed():
+		// directoryName [4] EXPLICIT Name — parse the RDNSequence.
+		inner := cryptobyte.String(gn.Raw)
+		var content cryptobyte.String
+		if !inner.ReadAnyASN1(&content, &tag) {
+			return &ParseError{Detail: "invalid directoryName"}
+		}
+		return parseRDNSequence(&content, &gn.DirectoryName)
+
+	case tag == cbasn1.Tag(tagRFC822Name).ContextSpecific():
+		// rfc822Name [1] IMPLICIT IA5String — read the content bytes as string.
+		inner := cryptobyte.String(gn.Raw)
+		var content cryptobyte.String
+		if !inner.ReadAnyASN1(&content, &tag) {
+			return &ParseError{Detail: "invalid rfc822Name"}
+		}
+		gn.RFC822Name = string(content)
+		return nil
+
+	default:
+		// Other GeneralName variants are preserved in Raw for round-tripping.
+		return nil
 	}
-	return parseRDNSequence(&content, &gn.DirectoryName)
 }
 
 func marshalRDNSequence(b *cryptobyte.Builder, rdn pkix.RDNSequence) {

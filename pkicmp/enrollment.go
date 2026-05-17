@@ -379,10 +379,17 @@ func NewCertStatusWithHashAlg(certHash []byte, certReqID int64, hashAlg *Algorit
 type PKIConfirmContent struct{}
 
 func (c *PKIConfirmContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+	// PKIConfirmContent ::= NULL — encoded as ASN.1 NULL inside the constructed body tag.
 	b.AddASN1(cbasn1.NULL, func(b *cryptobyte.Builder) {})
 }
 
 func (c *PKIConfirmContent) unmarshal(s *cryptobyte.String) error {
+	// Accept both empty content and explicit NULL encoding for interoperability.
+	// Strict DER requires NULL (05 00), but some implementations send empty content
+	// when the outer constructed tag has zero-length body.
+	if s.Empty() {
+		return nil
+	}
 	var dummy cryptobyte.String
 	if !s.ReadASN1(&dummy, cbasn1.NULL) {
 		return &ParseError{Detail: "invalid PKIConfirmContent (expected NULL)"}

@@ -19,6 +19,9 @@ type Credentials interface {
 
 // MACCredentials holds a shared secret for Password-Based MAC protection.
 // Create with [NewMACCredentials].
+//
+// Callers should set Header.SenderKID before calling Protect to identify the
+// shared secret to the recipient (RFC 9810 §5.1.1).
 type MACCredentials struct {
 	secret []byte
 }

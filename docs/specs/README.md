@@ -10,17 +10,25 @@ This directory contains the essential RFC specifications for **CMP v2** and **CM
    - Defines protocol versions: **CMPv2** (cmp2000) and **CMPv3** (cmp2021)
    - Adds support for management of certificates containing a Key Encapsulation Mechanism (KEM) public key and uses EnvelopedData instead of EncryptedValue.
 
-2. **[RFC 9481](https://datatracker.ietf.org/doc/html/rfc9481)** - CMP Algorithms
+2. **[RFC 9483](https://datatracker.ietf.org/doc/html/rfc9483)** - Lightweight CMP Profile
+   - Simplified CMP profile for industrial and IoT scenarios (Nov 2023)
+   - Defines mandatory header fields, message validation, and security requirements
+
+3. **[RFC 9481](https://datatracker.ietf.org/doc/html/rfc9481)** - CMP Algorithms
    - Cryptographic algorithm conventions for CMP (Nov 2023)
    - Algorithm profiles and recommendations
 
-3. **[RFC 6712](https://datatracker.ietf.org/doc/html/rfc6712)** - HTTP Transfer for CMP
+4. **[RFC 6712](https://datatracker.ietf.org/doc/html/rfc6712)** - HTTP Transfer for CMP
    - CMP over HTTP transport layer (Sep 2012)
    - HTTP mechanics for CMP message transport
 
-4. **[RFC 4211](https://datatracker.ietf.org/doc/html/rfc4211)** - Internet X.509 PKI - Certificate Request Message Format (CRMF)
+5. **[RFC 4211](https://datatracker.ietf.org/doc/html/rfc4211)** - Internet X.509 PKI - Certificate Request Message Format (CRMF)
    - CRMF message format for certificate requests (Oct 2005)
    - Used in CMP for certificate enrollment
 
-5. **[RFC 4210](https://datatracker.ietf.org/doc/html/rfc4210)** - Internet X.509 PKI - Certificate Management Protocol (CMP)
+6. **[RFC 4210](https://datatracker.ietf.org/doc/html/rfc4210)** - Internet X.509 PKI - Certificate Management Protocol (CMP)
    - Original CMP v2 specification (Oct 2005)
+
+7. **[RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)** - Internet X.509 PKI - Certificate and CRL Profile
+   - X.509 certificate structure and PKI components (May 2008)
+   - Specifies `GeneralName` type used in CMP headers for sender/recipient fields

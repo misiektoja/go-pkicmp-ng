@@ -99,8 +99,9 @@ func TestProtectWithMACErrors(t *testing.T) {
 		body := NewPKIConfBody()
 		msg := &PKIMessage{Body: body}
 		err := msg.ProtectWithMACOptions(MACOptions{
-			Secret: []byte("secret"),
-			OWF:    asn1.ObjectIdentifier{1, 2, 3},
+			Secret:    []byte("secret"),
+			Algorithm: OIDPasswordBasedMac,
+			OWF:       asn1.ObjectIdentifier{1, 2, 3},
 		})
 		assert.Error(t, err)
 	})
@@ -108,8 +109,9 @@ func TestProtectWithMACErrors(t *testing.T) {
 		body := NewPKIConfBody()
 		msg := &PKIMessage{Body: body}
 		err := msg.ProtectWithMACOptions(MACOptions{
-			Secret: []byte("secret"),
-			MAC:    asn1.ObjectIdentifier{1, 2, 3},
+			Secret:    []byte("secret"),
+			Algorithm: OIDPasswordBasedMac,
+			MAC:       asn1.ObjectIdentifier{1, 2, 3},
 		})
 		assert.Error(t, err)
 	})
@@ -117,6 +119,81 @@ func TestProtectWithMACErrors(t *testing.T) {
 		body := NewPKIConfBody()
 		msg := &PKIMessage{Body: body}
 		err := msg.ProtectWithMACOptions(MACOptions{
+			Secret:         []byte("secret"),
+			Algorithm:      OIDPasswordBasedMac,
+			IterationCount: DefaultPBMMaxIterationCount + 1,
+		})
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "iterationCount too large")
+	})
+}
+
+func TestPBMAC1ParameterASN1(t *testing.T) {
+	t.Run("MarshalAndUnmarshal", func(t *testing.T) {
+		salt := []byte{0x01, 0x02, 0x03, 0x04}
+		params, err := marshalPBMAC1Params(salt, 5000, 32, OIDHMACWithSHA256, OIDHMACWithSHA256)
+		require.NoError(t, err)
+
+		// Unmarshal and verify round-trip.
+		var pbmac1Params struct {
+			KeyDerivationFunc algorithmIdentifierASN1
+			MessageAuthScheme algorithmIdentifierASN1
+		}
+		_, err = asn1.Unmarshal(params, &pbmac1Params)
+		require.NoError(t, err)
+		assert.True(t, pbmac1Params.KeyDerivationFunc.Algorithm.Equal(OIDPBKDF2))
+		assert.True(t, pbmac1Params.MessageAuthScheme.Algorithm.Equal(OIDHMACWithSHA256))
+
+		var pbkdf2Params struct {
+			Salt           []byte
+			IterationCount int
+			KeyLength      int
+			PRF            algorithmIdentifierASN1
+		}
+		_, err = asn1.Unmarshal(pbmac1Params.KeyDerivationFunc.Parameters.FullBytes, &pbkdf2Params)
+		require.NoError(t, err)
+		assert.Equal(t, salt, pbkdf2Params.Salt)
+		assert.Equal(t, 5000, pbkdf2Params.IterationCount)
+		assert.Equal(t, 32, pbkdf2Params.KeyLength)
+		assert.True(t, pbkdf2Params.PRF.Algorithm.Equal(OIDHMACWithSHA256))
+	})
+}
+
+func TestProtectWithPBMAC1Errors(t *testing.T) {
+	t.Run("MissingBody", func(t *testing.T) {
+		msg := &PKIMessage{}
+		err := msg.ProtectWithPBMAC1([]byte("secret"))
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "missing message body")
+	})
+	t.Run("EmptySecret", func(t *testing.T) {
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		err := msg.ProtectWithPBMAC1([]byte{})
+		var pe *ProtectionError
+		require.ErrorAs(t, err, &pe)
+		assert.Equal(t, ReasonMissingSharedSecret, pe.Reason)
+	})
+	t.Run("UnsupportedPRF", func(t *testing.T) {
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		err := msg.ProtectWithPBMAC1Options(PBMAC1Options{
+			Secret: []byte("secret"),
+			PRF:    asn1.ObjectIdentifier{1, 2, 3},
+		})
+		assert.Error(t, err)
+	})
+	t.Run("UnsupportedMAC", func(t *testing.T) {
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		err := msg.ProtectWithPBMAC1Options(PBMAC1Options{
+			Secret: []byte("secret"),
+			MAC:    asn1.ObjectIdentifier{1, 2, 3},
+		})
+		assert.Error(t, err)
+	})
+	t.Run("IterationCountTooLarge", func(t *testing.T) {
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		err := msg.ProtectWithPBMAC1Options(PBMAC1Options{
 			Secret:         []byte("secret"),
 			IterationCount: DefaultPBMMaxIterationCount + 1,
 		})

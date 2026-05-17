@@ -1,0 +1,93 @@
+*** Settings ***
+Documentation    Configuration for go-pkicmp mockserver
+
+*** Variables ***
+${CA_CMP_URL}              http://localhost:{{.Port}}/cmp
+${CA_BASE_URL}             http://localhost:{{.Port}}/cmp
+${APPEND_PKIBODY_URL_SUFFIX}    ${False}
+${INIT_SUFFIX}             ${EMPTY}
+${PRESHARED_SECRET}        test-shared-secret
+${SENDER}                  CN=CMP Client
+${RECIPIENT}               CN=Test CA
+${DEFAULT_X509NAME}        CN=Test End Entity
+${DEFAULT_PROTECTION}      signature
+
+${LWCMP}                   ${True}
+${ENFORCE_RFC9481}         ${False}
+${FAILINFO_MUST_BE_CORRECT}    ${True}
+${GATHER_NONCES_FROM_MSG_BODIES}    ip,cp,kup,rp,error
+${STRICT}                  ${False}
+${STRICT_MAC_VALIDATION}   ${False}
+${SUPPORT_DIRECTORY_CHOICE_FOR_MAC_PROTECTION}    ${True}
+
+##### Algorithms
+${DEFAULT_KEY_LENGTH}      2048
+${DEFAULT_ALGORITHM}       ecc
+${DEFAULT_ECC_CURVE}       secp256r1
+${DEFAULT_MAC_ALGORITHM}   password_based_mac
+
+##### Disabled features
+${ALLOW_KGA}               ${False}
+${ALLOW_SUPPORT_MESSAGES}  ${False}
+${ALLOW_IMPLICIT_CONFIRM}  ${True}
+${ALLOW_KUR_SAME_KEY}      ${False}
+${ALLOW_ONLY_ONE_SENDER}   ${False}
+${ALLOW_MAC_PROTECTION}    ${True}
+${ALLOW_P10CR_MAC_BASED}   ${True}
+${ALLOW_CR_MAC_BASED}      ${True}
+${ALLOW_IR_MAC_BASED}      ${True}
+${ALLOW_IR_SAME_KEY}       ${True}
+${ALLOW_CERT_CONF}         ${False}
+${ALLOW_ISSUING_OF_CA_CERTS}    ${False}
+${ALLOW_CMP_EKU_EXTENSION}     ${False}
+
+##### Pre-issued credentials (None = suite performs initial IR)
+${ISSUED_KEY}              ${None}
+${ISSUED_CERT}             ${None}
+${UPDATED_CERT}            ${None}
+${UPDATED_KEY}             ${None}
+${INITIAL_KEY_PATH}        ${None}
+${INITIAL_CERT_PATH}       ${None}
+${INITIAL_KEY_PASSWORD}    ${None}
+
+${DSA_KEY}                 ${None}
+${DSA_CERT}                ${None}
+${DSA_KEY_PASSWORD}        ${None}
+${DEVICE_CERT_CHAIN}       ${None}
+${DEVICE_KEY}              ${None}
+${DEVICE_KEY_PASSWORD}     ${None}
+${DEVICE_CERT}             ${None}
+${OTHER_TRUSTED_PKI_KEY}   ${None}
+${OTHER_TRUSTED_PKI_CERT}  ${None}
+${RA_CERT_CHAIN_DIR}       ${None}
+${RA_CERT_CHAIN_PATH}      ${None}
+${TRUSTED_CA_CERT}         ${None}
+${TRUSTED_CA_KEY}          ${None}
+${TRUSTED_CA_KEY_PASSWORD}    ${None}
+${TRUSTED_CA_DIR}          ${None}
+${RR_CERT_FOR_TRUSTED}     ${None}
+${OLD_ROOT_CERT}           ${None}
+${CERT_PROFILE}            ${EMPTY}
+
+${PQ_ISSUING_SUFFIX}       ${None}
+${ISSUING_SUFFIX}          ${None}
+${COMPOSITE_URL_PREFIX}    ${None}
+${CATALYST_SIGNATURE}      ${None}
+${SUN_HYBRID_SUFFIX}       ${None}
+${CHAMELEON_SUFFIX}        ${None}
+${RELATED_CERT_SUFFIX}     ${None}
+${MULTI_AUTH_SUFFIX}       ${None}
+${CERT_DISCOVERY_SUFFIX}   ${None}
+
+##### Extra Issuing Logic
+${CA_RSA_ENCR_CERT}        ${None}
+${CA_X25519_CERT}          ${None}
+${CA_X448_CERT}            ${None}
+${CA_ECC_CERT}             ${None}
+${CA_HYBRID_KEM_CERT}      ${None}
+${CA_KEM_CERT}             ${None}
+
+##### Timing
+${ALLOWED_TIME_INTERVAL}   ${300}
+${MAX_ALLOW_TIME_INTERVAL_RECEIVED}    ${-501}
+${UPDATE_WAIT_TIME}        3s

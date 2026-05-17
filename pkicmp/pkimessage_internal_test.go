@@ -58,7 +58,7 @@ func TestPKIHeaderASN1(t *testing.T) {
 		assert.Equal(t, h.GeneralInfo[0].InfoType, unmarshaled.GeneralInfo[0].InfoType)
 	})
 
-	t.Run("UnmarshalCMPv1Error", func(t *testing.T) {
+	t.Run("UnmarshalCMPv1", func(t *testing.T) {
 		var b cryptobyte.Builder
 		b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 			b.AddASN1Int64(1) // PVNO1
@@ -70,9 +70,8 @@ func TestPKIHeaderASN1(t *testing.T) {
 		var unmarshaled PKIHeader
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
-		if assert.Error(t, err) {
-			assert.Contains(t, err.Error(), "CMPv1 is not supported")
-		}
+		assert.NoError(t, err)
+		assert.Equal(t, PVNO1, unmarshaled.PVNO)
 	})
 
 	t.Run("UnmarshalErrors", func(t *testing.T) {

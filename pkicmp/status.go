@@ -3,6 +3,7 @@ package pkicmp
 import (
 	"errors"
 	"fmt"
+	"math/bits"
 	"strings"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -283,17 +284,14 @@ func (si *PKIStatusInfo) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 			si.StatusString.marshal(mctx, b)
 		}
 		if si.FailInfo != 0 {
-			// PKIFailureInfo is BIT STRING.
-			// We store it as uint32 where top bit is bit 0.
-			// BIT STRING encoding: 1 byte for number of unused bits, then the bits.
+			// PKIFailureInfo is a named bit list (RFC 9810 §5.2.3).
+			// DER requires minimum encoding with trailing zero bits/bytes trimmed.
 			b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
-				// Find how many bytes we need and how many unused bits in the last byte.
-				// For now, let's keep it simple: always 4 bytes (32 bits), but CMP failure info is up to 26.
-				// Actually RFC says "since we can fail in more than one way!".
-				// Let's just encode the first 4 bytes.
-				unused := uint8(0)
+				trailing := bits.TrailingZeros32(uint32(si.FailInfo))
+				n := 4 - trailing/8         // number of bytes needed
+				unused := uint8(trailing % 8) // unused bits in last byte
 				b.AddUint8(unused)
-				b.AddUint32(uint32(si.FailInfo))
+				b.AddBytes([]byte{byte(si.FailInfo >> 24), byte(si.FailInfo >> 16), byte(si.FailInfo >> 8), byte(si.FailInfo)}[:n])
 			})
 		}
 	})

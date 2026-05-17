@@ -105,10 +105,10 @@ func TestCertReqMsgGeneratePOP(t *testing.T) {
 func mustPOPSignatureDigest(t *testing.T, certReq CertRequest, popSig *POPOSigningKey) []byte {
 	t.Helper()
 
-	sigAlg, err := sigAlgFromOID(popSig.Algorithm.Algorithm)
+	sigAlg, err := SigAlgFromOID(popSig.Algorithm.Algorithm)
 	require.NoError(t, err)
 
-	hash := hashFromSigAlg(sigAlg)
+	hash := HashFromSigAlg(sigAlg)
 	require.NotEqual(t, crypto.Hash(0), hash)
 
 	mctx := &MarshalContext{MinRequiredPVNO: PVNO2}

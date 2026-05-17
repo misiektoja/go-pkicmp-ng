@@ -2,6 +2,7 @@ package pkicmp
 
 import (
 	"crypto/rand"
+	"encoding/asn1"
 	"fmt"
 	"time"
 
@@ -306,9 +307,6 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	if !seq.ReadASN1Integer(&pvno) {
 		return &ParseError{Detail: "invalid pvno"}
 	}
-	if pvno == PVNO1 {
-		return &ParseError{Detail: "CMPv1 is not supported"}
-	}
 	h.PVNO = int(pvno)
 
 	// sender
@@ -440,7 +438,8 @@ func (h *PKIHeader) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 
 		if !h.MessageTime.IsZero() {
 			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				b.AddASN1GeneralizedTime(h.MessageTime)
+				// X.690 §11.7: DER GeneralizedTime MUST be UTC.
+				b.AddASN1GeneralizedTime(h.MessageTime.UTC())
 			})
 		}
 
@@ -506,6 +505,21 @@ func (h *PKIHeader) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 			})
 		}
 	})
+}
+
+// CertProfile extracts the first certProfile name from the generalInfo header field.
+// RFC 9810 §5.1.1.4: id-it-certProfile carries a SEQUENCE OF UTF8String.
+// Returns empty string if not present.
+func (h *PKIHeader) CertProfile() string {
+	for _, itv := range h.GeneralInfo {
+		if itv.InfoType.Equal(OIDCertProfile) {
+			var profiles []string
+			if _, err := asn1.Unmarshal(itv.InfoValue, &profiles); err == nil && len(profiles) > 0 {
+				return profiles[0]
+			}
+		}
+	}
+	return ""
 }
 
 // protectedPart computes the DER-encoded ProtectedPart (SEQUENCE { header, body })

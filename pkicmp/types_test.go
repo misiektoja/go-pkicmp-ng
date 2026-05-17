@@ -111,13 +111,35 @@ func TestGeneralNameASN1(t *testing.T) {
 		assert.Equal(t, len(name), len(unmarshaled.DirectoryName))
 	})
 
-	t.Run("UnsupportedTag", func(t *testing.T) {
-		// GeneralName [1] IA5String
+	t.Run("RFC822Name", func(t *testing.T) {
+		// rfc822Name [1] IMPLICIT IA5String
 		data := []byte{0x81, 0x03, 'f', 'o', 'o'}
 		s := cryptobyte.String(data)
 		var unmarshaled GeneralName
 		err := unmarshaled.unmarshal(&s)
-		assert.ErrorIs(t, err, ErrUnsupportedGeneralName)
+		require.NoError(t, err)
+		assert.Equal(t, "foo", unmarshaled.RFC822Name)
+
+		// Round-trip via marshal.
+		gn := NewRFC822Name("foo")
+		var b cryptobyte.Builder
+		gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		marshaled, err := b.Bytes()
+		require.NoError(t, err)
+		assert.Equal(t, data, marshaled)
+	})
+
+	t.Run("UnsupportedTag", func(t *testing.T) {
+		// dNSName [2] IMPLICIT IA5String — not parsed into a dedicated field,
+		// but accepted and preserved in Raw for round-tripping.
+		data := []byte{0x82, 0x07, 'f', 'o', 'o', '.', 'c', 'o', 'm'}
+		s := cryptobyte.String(data)
+		var unmarshaled GeneralName
+		err := unmarshaled.unmarshal(&s)
+		assert.NoError(t, err)
+		assert.Equal(t, data, unmarshaled.Raw)
+		assert.Empty(t, unmarshaled.RFC822Name)
+		assert.Nil(t, unmarshaled.DirectoryName)
 	})
 }
 

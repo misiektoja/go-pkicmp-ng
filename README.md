@@ -87,11 +87,15 @@ The project includes tests against both EJBCA and OpenSSL to verify protocol com
 
 ### EJBCA Integration
 
-The [EJBCA integration tests](./test/integration/ejbca/) run against a real EJBCA instance in Docker. They cover the full enrollment lifecycle, including IR with various key types, and certificate-based authentication for CR and KUR. The tests also verify the handling of CA chains and extra certificates returned by the server.
+The [EJBCA integration tests](./test/integration/ejbca/) test the client implementation against a real EJBCA instance in Docker. They cover the full enrollment lifecycle, including IR with various key types, and certificate-based authentication for CR and KUR. The tests also verify the handling of CA chains and extra certificates returned by the server.
 
 ### OpenSSL Integration
 
-The [OpenSSL integration tests](./test/integration/openssl/) focus on protocol-level behavior using the OpenSSL mock server. This includes testing the polling mechanism and ensuring the implementation respects `checkAfter` suggestions, as well as verifying PBM protection and error handling.
+The [OpenSSL integration tests](./test/integration/openssl/) test the client implementation using the OpenSSL mock server. This includes testing the polling mechanism and ensuring the implementation respects `checkAfter` suggestions, as well as verifying PBM protection and error handling.
+
+### CMP Test Suite
+
+The [CMP test suite integration](./test/integration/cmp-test-suite/) tests the server implementation by running the [Siemens CMP test suite](https://github.com/siemens/cmp-test-suite) against a Go mock server.
 
 ## Running Tests
 
@@ -101,13 +105,9 @@ make test
 ```
 
 ### Integration Tests
-Running these tests requires Docker and OpenSSL 3.2+.
+Running these tests requires Docker, OpenSSL 3.2+, and uv.
 ```bash
-make setup       # Start EJBCA docker environment
-make integration # Run all integration tests
-make teardown    # Stop EJBCA
+make setup            # Start EJBCA and setup cmp-test-suite
+make test-integration # Run all integration tests
+make teardown         # Stop EJBCA
 ```
-
-## TODO
-
-- Implementation of CMP server-side logic and message handling.
