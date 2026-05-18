@@ -112,6 +112,44 @@
 // cert.SerialNumber or any other field to identify which certificate was
 // confirmed.
 //
+// # Authentication
+//
+// This package does not provide a credential store; it only defines the
+// [SecretLookup] and [CertificateLookup] read interfaces. The caller provides
+// the backing store and must enforce uniqueness of credentials at provisioning time.
+//
+// For MAC-protected messages, the senderKID is analogous to a username and the
+// shared secret to a password. The server identifies clients solely by senderKID
+// — if two clients share one, they become indistinguishable (shared transactions,
+// shared rate limits, possible certificate hijacking). Uniqueness must be enforced
+// by the provisioning system:
+//
+//	func Register(senderKID, secret []byte) error {
+//	    if exists(senderKID) {
+//	        return errors.New("senderKID already registered")
+//	    }
+//	    store[senderKID] = secret
+//	}
+//
+//	func LookupSecret(senderKID []byte) ([]byte, error) {
+//	    return store[senderKID]
+//	}
+//
+// For signature-protected messages (e.g., KUR), the client's identity is its
+// certificate, not the senderKID. The sender DN in the header is used only as a
+// search key — the server does not trust it. The flow is:
+//
+//  1. Server uses the sender DN to look up a candidate certificate from its own store.
+//  2. Server verifies the message signature against that certificate's public key.
+//  3. If the client lied about the DN, the lookup fails or the signature won't verify.
+//
+// Trust comes from the certificate being in the server's store (previously issued)
+// and the signature proving the client holds the corresponding private key.
+//
+//	func LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+//	    return certStore[sender]
+//	}
+//
 // # Authorization Middleware
 //
 // [NewCAServer] requires a middleware slice that implements authorization and
@@ -169,28 +207,6 @@
 //	    []server.Middleware{server.LightweightPolicy()},
 //	))
 //	http.ListenAndServe(":8080", mux)
-//
-// # Credential Provisioning
-//
-// For MAC-protected messages, the senderKID is analogous to a username and the
-// shared secret to a password. The server identifies clients solely by senderKID
-// — if two clients share one, they become indistinguishable (shared transactions,
-// shared rate limits, possible certificate hijacking).
-//
-// This package does not provide a credential store; it only defines the
-// [SecretLookup] read interface. Uniqueness must
-// be enforced by the provisioning system that populates the store:
-//
-//	func Register(senderKID, secret []byte) error {
-//	    if exists(senderKID) {
-//	        return errors.New("senderKID already registered")
-//	    }
-//	    store[senderKID] = secret
-//	}
-//
-//	func LookupSecret(senderKID []byte) ([]byte, error) {
-//	    return store[senderKID]
-//	}
 //
 // # Transaction Management
 //
