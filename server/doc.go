@@ -124,6 +124,21 @@
 // [LightweightPolicy] enforces RFC 9483 Lightweight CMP Profile requirements.
 // Custom middleware can add additional policy checks.
 //
+// # Multiple CAs
+//
+// Each [Server] instance serves a single CA. To support multiple CAs, create
+// separate Server instances and route by URL path using standard HTTP
+// multiplexing. RFC 9483 §6.1 defines the well-known URI structure:
+//
+//	/.well-known/cmp/p/<name>
+//
+// Example:
+//
+//	mux := http.NewServeMux()
+//	mux.Handle("/.well-known/cmp/p/ca1", server.NewCAServer(ca1, ca1Key, ca1Cert))
+//	mux.Handle("/.well-known/cmp/p/ca2", server.NewCAServer(ca2, ca2Key, ca2Cert))
+//	http.ListenAndServe(":8080", mux)
+//
 // # Transaction Management
 //
 // The server tracks transactions across multi-message exchanges (IR→IP→CertConf→PKIConf
