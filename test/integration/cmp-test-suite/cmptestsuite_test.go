@@ -36,8 +36,6 @@ func TestCMPTestSuite(t *testing.T) {
 	runErr := runCMPTestSuite(t, runOpts{
 		ConfigDir:  configDir,
 		ReportsDir: reportsDir,
-		Tags:       []string{"minimal", "pbmac1"},
-		Excludes:   []string{"revocation", "kga", "genm", "nested", "pq", "sha3", "deprecated"},
 	})
 
 	t.Log("--- cmp-test-suite results ---")
@@ -62,10 +60,12 @@ func startMockServer(t *testing.T) int {
 	mux := http.NewServeMux()
 	mux.Handle("/cmp", srv)
 
-	ln, err := net.Listen("tcp", ":0")
+	ln, err := net.Listen("tcp", "127.0.0.1:0")
 	require.NoError(t, err)
 
 	port := ln.Addr().(*net.TCPAddr).Port
+
+	logger.Info("listening", "addr", ln.Addr().String())
 
 	httpSrv := &http.Server{Handler: mux}
 	go httpSrv.Serve(ln)

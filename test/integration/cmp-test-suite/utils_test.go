@@ -50,6 +50,7 @@ func renderConfig(t *testing.T, data configData) string {
 	defer f.Close()
 
 	require.NoError(t, tmpl.Execute(f, data))
+	t.Logf("rendered %s from %s", outPath, tmplPath)
 	return configDir
 }
 
@@ -57,8 +58,6 @@ func renderConfig(t *testing.T, data configData) string {
 type runOpts struct {
 	ConfigDir  string
 	ReportsDir string
-	Tags       []string
-	Excludes   []string
 	Timeout    time.Duration
 }
 
@@ -77,28 +76,22 @@ func runCMPTestSuite(t *testing.T, opts runOpts) error {
 	require.NoError(t, err, "cmp-test-suite not found at %s (set CMP_TEST_SUITE_DIR)", cmpTestSuiteDir)
 
 	// Link our config into the cmp-test-suite's config directory.
-	customRobotSrc := filepath.Join(opts.ConfigDir, "custom.robot")
-	customRobotDst := filepath.Join(cmpTestSuiteDir, "config", "custom.robot")
-	data, err := os.ReadFile(customRobotSrc)
-	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(customRobotDst, data, 0644))
-	t.Cleanup(func() { os.Remove(customRobotDst) })
+	for _, name := range []string{"custom.robot", "skip_tests.py"} {
+		src := filepath.Join(opts.ConfigDir, name)
+		dst := filepath.Join(cmpTestSuiteDir, "config", name)
+		data, err := os.ReadFile(src)
+		require.NoError(t, err)
+		require.NoError(t, os.WriteFile(dst, data, 0644))
+		t.Cleanup(func() { os.Remove(dst) })
+	}
 
 	// Build robot command arguments.
 	args := []string{
 		"run", "robot",
-		"--pythonpath", "./",
+		"--argumentfile", filepath.Join(opts.ConfigDir, "args.robot"),
 		"--outputdir", opts.ReportsDir,
-		"--variable", "environment:custom",
+		"tests/",
 	}
-	for _, tag := range opts.Tags {
-		args = append(args, "--include", tag)
-	}
-	for _, exc := range opts.Excludes {
-		args = append(args, "--exclude", exc)
-	}
-	args = append(args, "--prerunmodifier", filepath.Join(opts.ConfigDir, "skip_tests.py"))
-	args = append(args, "tests/")
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
 	defer cancel()
@@ -107,6 +100,8 @@ func runCMPTestSuite(t *testing.T, opts runOpts) error {
 	cmd.Dir = cmpTestSuiteDir
 	cmd.Stdout = newPrefixWriter(os.Stdout, "[robot] ")
 	cmd.Stderr = newPrefixWriter(os.Stdout, "[robot] ")
+
+	t.Logf("exec: uv %s", strings.Join(args, " "))
 
 	return cmd.Run()
 }
