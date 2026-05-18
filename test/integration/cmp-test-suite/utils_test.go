@@ -59,7 +59,6 @@ type runOpts struct {
 	ReportsDir string
 	Tags       []string
 	Excludes   []string
-	SkipTests  []string
 	Timeout    time.Duration
 }
 
@@ -98,14 +97,7 @@ func runCMPTestSuite(t *testing.T, opts runOpts) error {
 	for _, exc := range opts.Excludes {
 		args = append(args, "--exclude", exc)
 	}
-	if len(opts.SkipTests) > 0 {
-		skipModifier := filepath.Join(opts.ConfigDir, "skip_tests.py")
-		arg := skipModifier
-		for _, name := range opts.SkipTests {
-			arg += ":" + name
-		}
-		args = append(args, "--prerunmodifier", arg)
-	}
+	args = append(args, "--prerunmodifier", filepath.Join(opts.ConfigDir, "skip_tests.py"))
 	args = append(args, "tests/")
 
 	ctx, cancel := context.WithTimeout(context.Background(), opts.Timeout)
