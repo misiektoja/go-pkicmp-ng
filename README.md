@@ -105,7 +105,7 @@ make test
 ```
 
 ### Integration Tests
-Running these tests requires Docker, OpenSSL 3.2+, and uv.
+Running these tests requires Docker, OpenSSL 3.2+, Git and uv.
 ```bash
 make setup            # Start EJBCA and setup cmp-test-suite
 make test-integration # Run all integration tests
