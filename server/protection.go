@@ -49,9 +49,15 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		senderName.FillFromRDNSequence(&msg.Header.Sender.DirectoryName)
 	}
 
+	// Resolve issuer from recipient header field.
+	var issuerName pkix.Name
+	if len(msg.Header.Recipient.DirectoryName) > 0 {
+		issuerName.FillFromRDNSequence(&msg.Header.Recipient.DirectoryName)
+	}
+
 	// Look up the sender's certificate from the server's database.
 	// RFC 9810 §5.1.1: senderKID SHOULD be used but is not mandatory.
-	signerCert, err := s.cfg.certificateLookup.LookupCertificate(senderName, msg.Header.SenderKID)
+	signerCert, err := s.cfg.certificateLookup.LookupCertificate(issuerName, senderName, msg.Header.SenderKID)
 	if err != nil {
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSignerNotTrusted, StatusText: "unknown sender"}
 	}

@@ -23,17 +23,17 @@ type SecretLookupFunc func(senderKID []byte) ([]byte, error)
 func (f SecretLookupFunc) LookupSecret(senderKID []byte) ([]byte, error) { return f(senderKID) }
 
 // CertificateLookup resolves sender certificates for verifying signature-protected messages.
-// The implementation decides whether to require senderKID by returning an error
-// when empty (RFC 9810 §5.1.1).
+// The issuer is derived from the recipient header field. The senderKID is optional and may
+// be nil if the client did not include it (RFC 9810 §5.1.1).
 type CertificateLookup interface {
-	LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error)
+	LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error)
 }
 
 // CertificateLookupFunc adapts a function to the CertificateLookup interface.
-type CertificateLookupFunc func(sender pkix.Name, senderKID []byte) (*x509.Certificate, error)
+type CertificateLookupFunc func(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error)
 
-func (f CertificateLookupFunc) LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
-	return f(sender, senderKID)
+func (f CertificateLookupFunc) LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+	return f(issuer, subject, senderKID)
 }
 
 type serverConfig struct {

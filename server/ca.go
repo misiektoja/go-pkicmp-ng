@@ -28,8 +28,9 @@ type CA interface {
 	LookupSecret(senderKID []byte) ([]byte, error)
 
 	// LookupCertificate returns the certificate for verifying signature-protected requests.
-	// Return error if the certificate is unknown.
-	LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error)
+	// The issuer is derived from the recipient header field. The senderKID is optional
+	// and may be nil. Return error if the certificate is unknown.
+	LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error)
 }
 
 // PendingChecker is an optional interface for CAs that support async issuance.

@@ -19,7 +19,7 @@
 //	type CA interface {
 //	    IssueCertificate(ctx, reqType, template, sender) (*Response, error)
 //	    LookupSecret(senderKID) ([]byte, error)
-//	    LookupCertificate(sender, senderKID) (*x509.Certificate, error)
+//	    LookupCertificate(issuer, subject, senderKID) (*x509.Certificate, error)
 //	}
 //
 // [CA.IssueCertificate] receives a certificate template with subject, public key,
@@ -56,7 +56,7 @@
 //	    return []byte("shared-secret"), nil
 //	}
 //
-//	func (c *myCA) LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+//	func (c *myCA) LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 //	    return nil, errors.New("not found")
 //	}
 //
@@ -146,8 +146,8 @@
 // Trust comes from the certificate being in the server's store (previously issued)
 // and the signature proving the client holds the corresponding private key.
 //
-//	func LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
-//	    return certStore[sender]
+//	func LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+//	    return certStore[issuer, subject]
 //	}
 //
 // # Authorization Middleware

@@ -117,7 +117,7 @@ func (c *CA) LookupSecret(senderKID []byte) ([]byte, error) {
 }
 
 // LookupCertificate implements server.CA.
-func (c *CA) LookupCertificate(_ pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+func (c *CA) LookupCertificate(_ pkix.Name, _ pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 

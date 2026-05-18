@@ -259,14 +259,14 @@ type staticCertLookup struct {
 	cert *x509.Certificate
 }
 
-func (l *staticCertLookup) LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+func (l *staticCertLookup) LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 	return l.cert, nil
 }
 
 // failingCertLookup returns an error.
 type failingCertLookup struct{}
 
-func (l *failingCertLookup) LookupCertificate(sender pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+func (l *failingCertLookup) LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 	return nil, assert.AnError
 }
 
