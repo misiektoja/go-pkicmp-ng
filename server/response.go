@@ -17,12 +17,6 @@ func (s *Server) buildResponse(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sen
 	return s.buildResponseInternal(req, body, sender, nil, nil)
 }
 
-// buildResponseWithInfo creates a protected response with optional generalInfo
-// included before protection is applied.
-func (s *Server) buildResponseWithInfo(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, generalInfo []pkicmp.InfoTypeAndValue) *pkicmp.PKIMessage {
-	return s.buildResponseInternal(req, body, sender, generalInfo, nil)
-}
-
 // buildResponseWithMACOptions creates a protected response using stored MAC options.
 func (s *Server) buildResponseWithMACOptions(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, macOpts *pkicmp.MACOptions) *pkicmp.PKIMessage {
 	return s.buildResponseInternal(req, body, sender, nil, macOpts)
@@ -80,12 +74,6 @@ func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIB
 // buildErrorResponse creates an error response message.
 func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, si pkicmp.PKIStatusInfo) *pkicmp.PKIMessage {
 	return s.buildResponse(req, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: si}), nil)
-}
-
-// buildCertRepResponse creates a CertRepMessage response matching the request type.
-func (s *Server) buildCertRepResponse(req *pkicmp.PKIMessage, certReqID int64, si pkicmp.PKIStatusInfo, cert *x509.Certificate, caCerts []*x509.Certificate, sender *SenderIdentity) *pkicmp.PKIMessage {
-	reqType := RequestType(req.Body.Type & 0x1f)
-	return s.buildCertRepResponseForType(req, certReqID, si, cert, caCerts, sender, reqType)
 }
 
 // buildCertRepResponseForType creates a CertRepMessage with the specified response type.
@@ -146,7 +134,6 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 		return nil
 	}())
 }
-
 
 // handleCertRequestNew processes cert requests via the new Handler interface.
 func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
@@ -287,10 +274,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 
 	// Still waiting → update pollRef and respond with PollRep.
 	if resp.Waiting != nil {
-		checkAfter := int64(resp.Waiting.CheckAfter / time.Second)
-		if checkAfter < 1 {
-			checkAfter = 1
-		}
+		checkAfter := max(int64(resp.Waiting.CheckAfter/time.Second), 1)
 		item := pkicmp.PollRepItem{CertReqID: certReqID, CheckAfter: checkAfter}
 		if resp.Waiting.Reason != "" {
 			item.Reason = pkicmp.PKIFreeText{resp.Waiting.Reason}

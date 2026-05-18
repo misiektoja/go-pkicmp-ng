@@ -85,7 +85,7 @@ func (s PKIStatus) String() string {
 //	   systemFailure          (25),
 //	   duplicateCertReq       (26)
 //	}
-//
+
 // HasFailure returns true if the error is a *PKIStatusError (or wraps one)
 // and the specified failure bit is set in its FailInfo field.
 //
@@ -230,17 +230,17 @@ var ErrWaiting = errors.New("pkicmp: waiting")
 //   - nil: if the status is StatusAccepted or StatusGrantedWithMods.
 //   - ErrWaiting: if the status is StatusWaiting.
 //   - *PKIStatusError: for any other status (failures or warnings).
-func (s PKIStatusInfo) AsError() error {
-	switch s.Status {
+func (si PKIStatusInfo) AsError() error {
+	switch si.Status {
 	case StatusAccepted, StatusGrantedWithMods:
 		return nil
 	case StatusWaiting:
 		return ErrWaiting
 	default:
 		return &PKIStatusError{
-			Status:       s.Status,
-			StatusString: strings.Join(s.StatusString, "; "),
-			FailInfo:     s.FailInfo,
+			Status:       si.Status,
+			StatusString: strings.Join(si.StatusString, "; "),
+			FailInfo:     si.FailInfo,
 		}
 	}
 }
@@ -288,10 +288,10 @@ func (si *PKIStatusInfo) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 			// DER requires minimum encoding with trailing zero bits/bytes trimmed.
 			b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
 				trailing := bits.TrailingZeros32(uint32(si.FailInfo))
-				n := 4 - trailing/8         // number of bytes needed
-				unused := uint8(trailing % 8) // unused bits in last byte
+				n := 4 - trailing/8           // number of bytes needed
+				unused := uint8(trailing % 8) // #nosec G115 -- trailing%8 is always 0-7
 				b.AddUint8(unused)
-				b.AddBytes([]byte{byte(si.FailInfo >> 24), byte(si.FailInfo >> 16), byte(si.FailInfo >> 8), byte(si.FailInfo)}[:n])
+				b.AddBytes([]byte{byte(si.FailInfo >> 24), byte(si.FailInfo >> 16), byte(si.FailInfo >> 8), byte(si.FailInfo)}[:n]) // #nosec G115 -- intentional byte extraction from uint32
 			})
 		}
 	})

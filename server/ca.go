@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- used for SKI computation (opaque identifier)
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -122,7 +122,7 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	if err != nil {
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: err.Error()}
 	}
-	ski := sha1.Sum(pubDER)
+	ski := sha1.Sum(pubDER) // #nosec G401 -- SHA-1 hash of SPKI for SKI (opaque identifier, collision resistance not required)
 
 	// Build template with data from the request only. CA sets serial, validity, key usage, etc.
 	template := &x509.Certificate{

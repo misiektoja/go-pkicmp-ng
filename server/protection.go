@@ -67,11 +67,6 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 	return &SenderIdentity{Certificate: signerCert}, nil
 }
 
-// protectResponse applies protection to the response message.
-func (s *Server) protectResponse(resp *pkicmp.PKIMessage, sender *SenderIdentity) error {
-	return s.protectResponseWithOptions(resp, sender, nil)
-}
-
 // protectResponseWithOptions applies protection using stored MAC options when available.
 func (s *Server) protectResponseWithOptions(resp *pkicmp.PKIMessage, sender *SenderIdentity, macOpts *pkicmp.MACOptions) error {
 	// MAC-protected request → MAC-protect response with same secret.

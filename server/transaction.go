@@ -44,10 +44,10 @@ type credentialKey [sha256.Size]byte
 func makeKey(credentialID, transactionID []byte) transactionKey {
 	h := sha256.New()
 	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], uint32(len(credentialID)))
+	binary.BigEndian.PutUint32(buf[:], uint32(len(credentialID))) // #nosec G115 -- length prefix for domain separation; CMP IDs are bounded by message size
 	h.Write(buf[:])
 	h.Write(credentialID)
-	binary.BigEndian.PutUint32(buf[:], uint32(len(transactionID)))
+	binary.BigEndian.PutUint32(buf[:], uint32(len(transactionID))) // #nosec G115 -- length prefix for domain separation; CMP IDs are bounded by message size
 	h.Write(buf[:])
 	h.Write(transactionID)
 	var key transactionKey

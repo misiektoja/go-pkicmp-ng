@@ -141,7 +141,6 @@ func TestSendCRHappyPath(t *testing.T) {
 
 	roots := x509.NewCertPool()
 	roots.AddCert(pki.caCert)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
 
 	// Signature creds won't have a secret for MAC verification of response.
 	// The mock uses MAC protection. We need to adjust: use MAC creds or make mock use sig.
@@ -187,7 +186,7 @@ func TestSendCRHappyPath(t *testing.T) {
 	}))
 	defer server2.Close()
 
-	c = client.NewClient(server2.URL, client.WithTrustedCAs(roots))
+	c := client.NewClient(server2.URL, client.WithTrustedCAs(roots))
 	result, err := c.SendCR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)
 	assert.Equal(t, pki.eeCert.SerialNumber, result.Certificate.SerialNumber)

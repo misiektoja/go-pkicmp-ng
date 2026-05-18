@@ -5,6 +5,7 @@ import (
 	"flag"
 	"log"
 	"net/http"
+	"time"
 
 	"github.com/tsaarni/go-pkicmp/internal/mockserver"
 )
@@ -24,5 +25,12 @@ func main() {
 	mux.Handle("/cmp", ca.NewServer())
 
 	log.Printf("mockserver listening on %s", *addr)
-	log.Fatal(http.ListenAndServe(*addr, mux))
+	srv := &http.Server{
+		Addr:         *addr,
+		Handler:      mux,
+		ReadTimeout:  30 * time.Second,
+		WriteTimeout: 30 * time.Second,
+		IdleTimeout:  120 * time.Second,
+	}
+	log.Fatal(srv.ListenAndServe())
 }

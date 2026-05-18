@@ -1,0 +1,28 @@
+version: "2"
+
+linters:
+  default: none
+  enable:
+    - errcheck
+    - govet
+    - gosec
+    - ineffassign
+    - staticcheck
+    - unused
+
+  settings:
+    staticcheck:
+      checks:
+        - "all"
+        - "-QF*"
+
+  exclusions:
+    rules:
+      # Exported names match ASN.1 protocol spec terminology (e.g., CertId, TransactionId).
+      - linters: [staticcheck]
+        text: "ST1003"
+        path: "pkicmp/"
+      # Unhandled errors in test code (e.g., resp.Body.Close()).
+      - linters: [errcheck, gosec]
+        text: "G104|Error return value"
+        path: "_test\\.go"

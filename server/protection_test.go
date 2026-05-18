@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -79,7 +78,7 @@ func TestSignatureNotConfigured(t *testing.T) {
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{
 		{CertReq: pkicmp.CertRequest{CertReqID: 0}},
 	}), macMessageOpts())
-	_ = msg.ProtectWithSignature(clientKey.(crypto.Signer), &clientX509)
+	_ = msg.ProtectWithSignature(clientKey, &clientX509)
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, err := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -127,7 +126,7 @@ func TestSignatureVerificationWithBadSigner(t *testing.T) {
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{
 		{CertReq: pkicmp.CertRequest{CertReqID: 0}},
 	}), macMessageOpts())
-	_ = msg.ProtectWithSignature(clientKey.(crypto.Signer), &clientX509)
+	_ = msg.ProtectWithSignature(clientKey, &clientX509)
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, err := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))

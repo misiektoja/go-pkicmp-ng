@@ -2,7 +2,6 @@ package server_test
 
 import (
 	"context"
-	"crypto"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -81,14 +80,14 @@ func TestIRWithSignature(t *testing.T) {
 	}
 
 	srv := server.New(handler,
-		server.WithSigner(signerKey.(crypto.Signer), &signerX509),
+		server.WithSigner(signerKey, &signerX509),
 		server.WithCertificateLookup(&staticCertLookup{cert: &clientX509}),
 	)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
 	newKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewSignatureCredentials(clientKey.(crypto.Signer), &clientX509, &caCert)
+	creds, err := pkicmp.NewSignatureCredentials(clientKey, &clientX509, &caCert)
 	require.NoError(t, err)
 
 	c := client.NewClient(ts.URL, client.WithTrustedCAs(roots), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
@@ -333,14 +332,14 @@ func TestIRWithSignatureAndSenderKID(t *testing.T) {
 	}
 
 	srv := server.New(handler,
-		server.WithSigner(signerKey.(crypto.Signer), &signerX509),
+		server.WithSigner(signerKey, &signerX509),
 		server.WithCertificateLookup(&staticCertLookup{cert: &clientX509}),
 	)
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
 	newKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, _ := pkicmp.NewSignatureCredentials(clientKey.(crypto.Signer), &clientX509, &caCert)
+	creds, _ := pkicmp.NewSignatureCredentials(clientKey, &clientX509, &caCert)
 
 	c := client.NewClient(ts.URL, client.WithTrustedCAs(roots), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
 	result, err := c.SendIR(context.Background(), newKey, creds,
@@ -458,7 +457,7 @@ func TestIRWithRSA384Key(t *testing.T) {
 	creds, _ := pkicmp.NewMACCredentials(secret)
 	c := client.NewClient(ts.URL)
 
-	result, err := c.SendIR(context.Background(), enrollPriv.(crypto.Signer), creds,
+	result, err := c.SendIR(context.Background(), enrollPriv, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "rsa384-test"}),
 		client.WithSender(pkix.Name{CommonName: "rsa384-test"}),
 	)
@@ -488,7 +487,7 @@ func TestIRWithRSA4096Key(t *testing.T) {
 	creds, _ := pkicmp.NewMACCredentials(secret)
 	c := client.NewClient(ts.URL)
 
-	result, err := c.SendIR(context.Background(), enrollPriv.(crypto.Signer), creds,
+	result, err := c.SendIR(context.Background(), enrollPriv, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "rsa512-test"}),
 		client.WithSender(pkix.Name{CommonName: "rsa512-test"}),
 	)
@@ -518,7 +517,7 @@ func TestIRWithEd25519Key(t *testing.T) {
 	creds, _ := pkicmp.NewMACCredentials(secret)
 	c := client.NewClient(ts.URL)
 
-	result, err := c.SendIR(context.Background(), enrollPriv.(crypto.Signer), creds,
+	result, err := c.SendIR(context.Background(), enrollPriv, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "ed25519-test"}),
 		client.WithSender(pkix.Name{CommonName: "ed25519-test"}),
 	)

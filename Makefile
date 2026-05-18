@@ -1,13 +1,19 @@
 CMP_TEST_SUITE_DIR := test/integration/cmp-test-suite/testdata/cmp-test-suite
 CMP_TEST_SUITE_COMMIT := d35c9de4516924b0a9a96176b3c8692660e57a8c
 
-.PHONY: test test-integration test-integration-ejbca test-integration-openssl test-integration-cmp-test-suite \
+.PHONY: test lint fix test-integration test-integration-ejbca test-integration-openssl test-integration-cmp-test-suite \
         setup setup-ejbca setup-cmp-test-suite teardown teardown-ejbca clean help
 
 # Testing
 
 test: ## Run unit tests
 	go test -v ./...
+
+lint: ## Run linters (govet, staticcheck, gosec)
+	go tool -modfile=tools/go.mod golangci-lint run
+
+fix: ## Modernize code to use newer Go APIs
+	go fix ./...
 
 test-integration: test-integration-ejbca test-integration-openssl test-integration-cmp-test-suite ## Run all integration tests
 

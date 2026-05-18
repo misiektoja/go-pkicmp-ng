@@ -7,7 +7,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
-	"crypto/sha1"
+	"crypto/sha1" // #nosec G505 -- used for SKI computation (opaque identifier)
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"fmt"
@@ -146,7 +146,7 @@ func generateCA() (*ecdsa.PrivateKey, *x509.Certificate, error) {
 
 	serial, _ := rand.Int(rand.Reader, new(big.Int).Lsh(big.NewInt(1), 128))
 	pubDER, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
-	ski := sha1.Sum(pubDER)
+	ski := sha1.Sum(pubDER) // #nosec G401 -- SHA-1 hash of SPKI for SKI (opaque identifier, collision resistance not required)
 
 	tmpl := &x509.Certificate{
 		SerialNumber:          serial,
