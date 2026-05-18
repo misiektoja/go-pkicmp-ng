@@ -10,7 +10,7 @@
 //   - [Handler] interface: Low-level, full control over CMP message handling.
 //   - [CA] interface: High-level, just implement certificate issuance.
 //
-// Most users should use the [CA] interface via [NewCAHandler] or [NewCAServer].
+// Most users should use the [CA] interface via [NewCAServer].
 //
 // # CA Interface
 //
@@ -61,7 +61,9 @@
 //	}
 //
 //	// Create server
-//	srv := server.NewCAServer(ca, caKey, caCert)
+//	srv := server.NewCAServer(ca, caKey, caCert,
+//	    []server.Middleware{server.LightweightPolicy()},
+//	)
 //	http.ListenAndServe(":8080", srv)
 //
 // # Optional Interfaces
@@ -110,19 +112,44 @@
 // cert.SerialNumber or any other field to identify which certificate was
 // confirmed.
 //
-// # Middleware
+// # Authorization Middleware
 //
-// The [Handler] interface supports middleware for policy enforcement:
+// [NewCAServer] requires a middleware slice that implements authorization and
+// request validation. The server handles authentication (verifying MAC or
+// signature protection) but delegates authorization decisions to middleware.
+// Without middleware, any authenticated client could request any certificate.
 //
-//	srv := server.New(
-//	    server.Chain(server.NewCAHandler(ca), server.LightweightPolicy(), myPolicy()),
-//	    server.WithSigner(caKey, caCert),
-//	    server.WithSecretLookup(ca),
-//	    server.WithCertificateLookup(ca),
+// [LightweightPolicy] implements the RFC 9483 Lightweight CMP Profile checks:
+//
+//   - Verifies Proof-of-Possession (POP) on certificate requests
+//   - Requires KUR to use signature protection (not MAC)
+//   - Validates that extraCerts contains a complete chain for signature-protected requests
+//   - Enforces subject presence in certificate templates
+//   - Rejects requests for CA certificates
+//   - Validates BasicConstraints path-length
+//
+// Example with additional custom policy:
+//
+//	srv := server.NewCAServer(ca, caKey, caCert,
+//	    []server.Middleware{server.LightweightPolicy(), myPolicy()},
 //	)
 //
-// [LightweightPolicy] enforces RFC 9483 Lightweight CMP Profile requirements.
-// Custom middleware can add additional policy checks.
+// A custom middleware follows the same pattern — reject or pass through:
+//
+//	func myPolicy() server.Middleware {
+//	    return func(next server.Handler) server.Handler {
+//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	            if !isAllowed(sender) {
+//	                return nil, &server.Error{
+//	                    Status:      pkicmp.StatusRejection,
+//	                    FailureInfo: pkicmp.FailNotAuthorized,
+//	                    StatusText:  "not authorized",
+//	                }
+//	            }
+//	            return next.HandleCMP(ctx, msg, sender)
+//	        })
+//	    }
+//	}
 //
 // # Multiple CAs
 //
@@ -135,8 +162,12 @@
 // Example:
 //
 //	mux := http.NewServeMux()
-//	mux.Handle("/.well-known/cmp/p/ca1", server.NewCAServer(ca1, ca1Key, ca1Cert))
-//	mux.Handle("/.well-known/cmp/p/ca2", server.NewCAServer(ca2, ca2Key, ca2Cert))
+//	mux.Handle("/.well-known/cmp/p/ca1", server.NewCAServer(ca1, ca1Key, ca1Cert,
+//	    []server.Middleware{server.LightweightPolicy()},
+//	))
+//	mux.Handle("/.well-known/cmp/p/ca2", server.NewCAServer(ca2, ca2Key, ca2Cert,
+//	    []server.Middleware{server.LightweightPolicy()},
+//	))
 //	http.ListenAndServe(":8080", mux)
 //
 // # Transaction Management

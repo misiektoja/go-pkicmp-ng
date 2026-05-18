@@ -192,10 +192,8 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 }
 
 // NewCAServer creates a complete CMP server from a CA implementation.
-// It wires up the CA handler with LightweightPolicy middleware and standard options.
-//
-// For custom middleware or options, use NewCAHandler with server.New directly.
-func NewCAServer(ca CA, caKey crypto.Signer, caCert *x509.Certificate, opts ...Option) *Server {
+// Use [WithMiddleware] to add policy middleware (e.g., [LightweightPolicy]).
+func NewCAServer(ca CA, caKey crypto.Signer, caCert *x509.Certificate, mw []Middleware, opts ...Option) *Server {
 	defaultOpts := []Option{
 		WithSigner(caKey, caCert),
 		WithSecretLookup(SecretLookupFunc(ca.LookupSecret)),
@@ -203,7 +201,7 @@ func NewCAServer(ca CA, caKey crypto.Signer, caCert *x509.Certificate, opts ...O
 		WithExtraCerts([]*x509.Certificate{caCert}),
 	}
 	return New(
-		Chain(NewCAHandler(ca), LightweightPolicy()),
+		Chain(NewCAHandler(ca), mw...),
 		append(defaultOpts, opts...)...,
 	)
 }
