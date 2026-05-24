@@ -135,10 +135,10 @@ func TestOpenSSLCertify(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	result, err := c.SendCR(context.Background(), newKey, creds,
@@ -152,7 +152,7 @@ func TestOpenSSLCertify(t *testing.T) {
 	assert.Equal(t, srv.RspCert.SerialNumber, result.Certificate.SerialNumber, "returned cert serial should match rsp_cert")
 
 	// Verify the certificate is issued by the test CA.
-	_, err = result.Certificate.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+	_, err = result.Certificate.Verify(x509.VerifyOptions{Roots: trustedCAs, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
 	assert.NoError(t, err, "certificate chain verification")
 
 	t.Logf("Certified: %s (serial: %s)", result.Certificate.Subject, result.Certificate.SerialNumber)
@@ -168,10 +168,10 @@ func TestOpenSSLKeyUpdate(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	result, err := c.SendKUR(context.Background(), newKey, creds,
@@ -185,7 +185,7 @@ func TestOpenSSLKeyUpdate(t *testing.T) {
 	assert.Equal(t, srv.RspCert.SerialNumber, result.Certificate.SerialNumber, "returned cert serial should match rsp_cert")
 
 	// Verify the certificate is issued by the test CA.
-	_, err = result.Certificate.Verify(x509.VerifyOptions{Roots: roots, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
+	_, err = result.Certificate.Verify(x509.VerifyOptions{Roots: trustedCAs, KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny}})
 	assert.NoError(t, err, "certificate chain verification")
 
 	t.Logf("Updated key: %s (serial: %s)", result.Certificate.Subject, result.Certificate.SerialNumber)
@@ -244,10 +244,10 @@ func TestOpenSSLSpecificFailInfo(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	_, err = c.SendCR(context.Background(), newKey, creds,
@@ -332,10 +332,10 @@ func TestOpenSSLComplexFailure(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	_, err = c.SendCR(context.Background(), key, creds,
@@ -372,10 +372,10 @@ func TestOpenSSLGrantedWithMods(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	result, err := c.SendCR(context.Background(), newKey, creds,
@@ -404,10 +404,10 @@ func TestOpenSSLPermanentWaiting(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
 
-	roots := srv.TrustedCAs()
+	trustedCAs := srv.TrustedCAs()
 	c := client.NewClient(srv.Endpoint,
 		client.WithRecipient(srv.CACert.Subject),
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithExtraCerts([]*x509.Certificate{srv.ClientCert}),
 	)
 	_, err = c.SendCR(context.Background(), newKey, creds,

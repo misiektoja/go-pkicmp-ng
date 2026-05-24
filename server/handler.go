@@ -4,7 +4,9 @@ import (
 	"context"
 	"crypto/sha256"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"errors"
+	"fmt"
 	"time"
 
 	"github.com/tsaarni/go-pkicmp/pkicmp"
@@ -44,10 +46,17 @@ type Response struct {
 type SenderIdentity struct {
 	// Certificate is set when the request was signature-protected.
 	Certificate *x509.Certificate
+	// Sender is the DN from the PKIHeader sender field. May be empty (NULL-DN)
+	// for initial enrollment with MAC protection.
+	Sender pkix.Name
 	// SenderKID is the reference number from MAC-protected requests.
 	SenderKID []byte
 	// MACVerified is true when protection was verified via shared secret.
 	MACVerified bool
+
+	// secret is the verified shared secret, cached to avoid redundant lookups
+	// when protecting the response.
+	secret []byte
 }
 
 // CredentialID returns a hash identifying the credentials used for protection.
@@ -80,3 +89,19 @@ const (
 	RequestP10CR RequestType = 4 // PKCS#10 Certification Request
 	RequestKUR   RequestType = 7 // Key Update Request
 )
+
+// String returns a human-readable name for the request type.
+func (r RequestType) String() string {
+	switch r {
+	case RequestIR:
+		return "IR"
+	case RequestCR:
+		return "CR"
+	case RequestP10CR:
+		return "P10CR"
+	case RequestKUR:
+		return "KUR"
+	default:
+		return fmt.Sprintf("RequestType(%d)", int(r))
+	}
+}

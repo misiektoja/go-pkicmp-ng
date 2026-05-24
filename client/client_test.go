@@ -139,8 +139,8 @@ func TestSendCRHappyPath(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
 	require.NoError(t, err)
 
-	roots := x509.NewCertPool()
-	roots.AddCert(pki.caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(pki.caCert)
 
 	// Signature creds won't have a secret for MAC verification of response.
 	// The mock uses MAC protection. We need to adjust: use MAC creds or make mock use sig.
@@ -186,7 +186,7 @@ func TestSendCRHappyPath(t *testing.T) {
 	}))
 	defer server2.Close()
 
-	c := client.NewClient(server2.URL, client.WithTrustedCAs(roots))
+	c := client.NewClient(server2.URL, client.WithTrustedCAs(trustedCAs))
 	result, err := c.SendCR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)
 	assert.Equal(t, pki.eeCert.SerialNumber, result.Certificate.SerialNumber)
@@ -198,8 +198,8 @@ func TestSendKURHappyPath(t *testing.T) {
 	sigKey, _ := sigCert.PrivateKey()
 	sigX509, _ := sigCert.X509Certificate()
 
-	roots := x509.NewCertPool()
-	roots.AddCert(pki.caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(pki.caCert)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -243,7 +243,7 @@ func TestSendKURHappyPath(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, err := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
 	require.NoError(t, err)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	result, err := c.SendKUR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)
@@ -735,9 +735,9 @@ func TestServerReturnsMissingCertifiedKeyPair(t *testing.T) {
 			},
 			Body: pkicmp.NewIPBody(&pkicmp.CertRepMessage{
 				Response: []pkicmp.CertResponse{{
-					CertReqID:         0,
-					Status:            pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
-					CertifiedKeyPair:  nil,
+					CertReqID:        0,
+					Status:           pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
+					CertifiedKeyPair: nil,
 				}},
 			}),
 		}
@@ -1147,7 +1147,7 @@ func TestServerReturnsUnsupportedPVNO(t *testing.T) {
 }
 
 func TestCAPubsWithExistingTrustedCAs(t *testing.T) {
-	// Tests the path where effectiveRoots != nil and caPubs are present (Clone path).
+	// Tests the path where effectiveTrustPool != nil and caPubs are present (Clone path).
 	pki := newTestPKI()
 	server := mockCMPServer(pki, func(req *pkicmp.PKIMessage) *pkicmp.PKIBody {
 		return pkicmp.NewIPBody(&pkicmp.CertRepMessage{
@@ -1166,9 +1166,9 @@ func TestCAPubsWithExistingTrustedCAs(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
-	roots := x509.NewCertPool()
-	roots.AddCert(pki.caCert)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(pki.caCert)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)

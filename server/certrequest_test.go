@@ -68,8 +68,8 @@ func TestIRWithSignature(t *testing.T) {
 	clientX509, _ := clientCert.X509Certificate()
 	clientKey, _ := clientCert.PrivateKey()
 
-	roots := x509.NewCertPool()
-	roots.AddCert(&caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(&caCert)
 
 	handler := &mockHandler{
 		handleCertRequest: func(ctx context.Context, req *certRequest) (*certResponse, error) {
@@ -90,7 +90,7 @@ func TestIRWithSignature(t *testing.T) {
 	creds, err := pkicmp.NewSignatureCredentials(clientKey, &clientX509, &caCert)
 	require.NoError(t, err)
 
-	c := client.NewClient(ts.URL, client.WithTrustedCAs(roots), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
+	c := client.NewClient(ts.URL, client.WithTrustedCAs(trustedCAs), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
 	result, err := c.SendIR(context.Background(), newKey, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "sig-test"}),
 		client.WithSender(clientX509.Subject),
@@ -319,8 +319,8 @@ func TestIRWithSignatureAndSenderKID(t *testing.T) {
 	clientX509, _ := clientCert.X509Certificate()
 	clientKey, _ := clientCert.PrivateKey()
 
-	roots := x509.NewCertPool()
-	roots.AddCert(&caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(&caCert)
 
 	handler := &mockHandler{
 		handleCertRequest: func(ctx context.Context, req *certRequest) (*certResponse, error) {
@@ -341,7 +341,7 @@ func TestIRWithSignatureAndSenderKID(t *testing.T) {
 	newKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, _ := pkicmp.NewSignatureCredentials(clientKey, &clientX509, &caCert)
 
-	c := client.NewClient(ts.URL, client.WithTrustedCAs(roots), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
+	c := client.NewClient(ts.URL, client.WithTrustedCAs(trustedCAs), client.WithExtraCerts([]*x509.Certificate{&clientX509}))
 	result, err := c.SendIR(context.Background(), newKey, creds,
 		client.WithTemplateSubject(pkix.Name{CommonName: "sig-kid-test"}),
 		client.WithSender(clientX509.Subject),

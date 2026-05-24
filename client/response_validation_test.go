@@ -265,9 +265,9 @@ func TestResponseValidationRejectsInvalidSignature(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
-	roots := x509.NewCertPool()
-	roots.AddCert(cfg.caCert)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ve *pkicmp.VerificationError
@@ -286,9 +286,9 @@ func TestResponseValidationRejectsUntrustedCA(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
-	roots := x509.NewCertPool()
-	roots.AddCert(cfg.caCert)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ce *client.ClientError
@@ -321,12 +321,12 @@ func TestResponseValidationRejectsPBMResponseWithoutSecret(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	roots := x509.NewCertPool()
-	roots.AddCert(cfg.caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
 	// Signature protection for request, but response uses PBM with unknown secret.
 	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
 	require.NoError(t, err)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(roots))
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ve *pkicmp.VerificationError
@@ -346,12 +346,12 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
-	roots := x509.NewCertPool()
-	roots.AddCert(cfg.caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
 
 	c := client.NewClient(
 		server.URL,
-		client.WithTrustedCAs(roots),
+		client.WithTrustedCAs(trustedCAs),
 		client.WithRecipient(pkix.Name{CommonName: "cmp-server"}),
 	)
 

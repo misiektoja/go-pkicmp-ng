@@ -48,11 +48,13 @@ func (m *CertRepMessage) TrustedCAPubs(vr *VerifyResult) []*x509.Certificate {
 func (m *CertRepMessage) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		if len(m.CAPubs) > 0 {
-			// caPubs [1] SEQUENCE SIZE (1..MAX) OF CMPCertificate OPTIONAL (IMPLICIT)
+			// caPubs [1] SEQUENCE SIZE (1..MAX) OF CMPCertificate OPTIONAL
 			b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				for _, cert := range m.CAPubs {
-					cert.marshal(mctx, b)
-				}
+				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+					for _, cert := range m.CAPubs {
+						cert.marshal(mctx, b)
+					}
+				})
 			})
 		}
 		b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
@@ -74,10 +76,13 @@ func (m *CertRepMessage) unmarshal(s *cryptobyte.String) error {
 		if !seq.ReadASN1(&sub, cbasn1.Tag(1).ContextSpecific().Constructed()) {
 			return &ParseError{Detail: "invalid caPubs tag"}
 		}
-		// sub is the content of the [1] tag, which is the sequence of certs
-		for !sub.Empty() {
+		var certsSeq cryptobyte.String
+		if !sub.ReadASN1(&certsSeq, cbasn1.SEQUENCE) {
+			return &ParseError{Detail: "invalid caPubs sequence"}
+		}
+		for !certsSeq.Empty() {
 			var cert CMPCertificate
-			if err := cert.unmarshal(&sub); err != nil {
+			if err := cert.unmarshal(&certsSeq); err != nil {
 				return err
 			}
 			m.CAPubs = append(m.CAPubs, cert)

@@ -88,9 +88,9 @@ func newEJBCAAdminClient(t testing.TB) *ejbcaAdmin {
 
 // TrustedCAs returns a CertPool containing the CA certificate for trust verification.
 func (a *ejbcaAdmin) TrustedCAs() *x509.CertPool {
-	roots := x509.NewCertPool()
-	roots.AddCert(a.CACert)
-	return roots
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(a.CACert)
+	return trustedCAs
 }
 
 // soapCall sends a SOAP request to EJBCA and returns the response body.

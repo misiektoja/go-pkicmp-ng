@@ -236,21 +236,21 @@ type staticMACLookup struct {
 	secret []byte
 }
 
-func (l *staticMACLookup) LookupSecret(senderKID []byte) ([]byte, error) {
+func (l *staticMACLookup) LookupSecret(_ pkix.Name, senderKID []byte) ([]byte, error) {
 	return l.secret, nil
 }
 
 // emptySecretLookup returns an empty secret.
 type emptySecretLookup struct{}
 
-func (l *emptySecretLookup) LookupSecret(senderKID []byte) ([]byte, error) {
+func (l *emptySecretLookup) LookupSecret(_ pkix.Name, senderKID []byte) ([]byte, error) {
 	return []byte{}, nil
 }
 
 // failingLookup returns an error from LookupSecret.
 type failingLookup struct{}
 
-func (l *failingLookup) LookupSecret(senderKID []byte) ([]byte, error) {
+func (l *failingLookup) LookupSecret(_ pkix.Name, senderKID []byte) ([]byte, error) {
 	return nil, assert.AnError
 }
 

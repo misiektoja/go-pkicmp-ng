@@ -14,20 +14,15 @@
 //
 // # CA Interface
 //
-// The [CA] interface requires three methods:
+// The [CA] interface requires one method:
 //
 //	type CA interface {
 //	    IssueCertificate(ctx, reqType, template, sender) (*Response, error)
-//	    LookupSecret(senderKID) ([]byte, error)
-//	    LookupCertificate(issuer, subject, senderKID) (*x509.Certificate, error)
 //	}
 //
 // [CA.IssueCertificate] receives a certificate template with subject, public key,
 // extensions, and SKI pre-populated from the CMP request. The CA sets the serial
 // number, validity period, key usage, and signs the certificate.
-//
-// [CA.LookupSecret] and [CA.LookupCertificate] are used to verify message
-// protection (MAC or signature).
 //
 // # Basic Example
 //
@@ -52,17 +47,19 @@
 //	    return &server.Response{Certificate: cert}, nil
 //	}
 //
-//	func (c *myCA) LookupSecret(senderKID []byte) ([]byte, error) {
+//	func lookupSecret(sender pkix.Name, senderKID []byte) ([]byte, error) {
 //	    return []byte("shared-secret"), nil
 //	}
 //
-//	func (c *myCA) LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
+//	func lookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 //	    return nil, errors.New("not found")
 //	}
 //
 //	// Create server
 //	srv := server.NewCAServer(ca, caKey, caCert,
 //	    []server.Middleware{server.LightweightPolicy()},
+//	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
+//	    server.WithCertificateLookup(server.CertificateLookupFunc(lookupCertificate)),
 //	)
 //	http.ListenAndServe(":8080", srv)
 //
@@ -116,13 +113,25 @@
 //
 // This package does not provide a credential store; it only defines the
 // [SecretLookup] and [CertificateLookup] read interfaces. The caller provides
-// the backing store and must enforce uniqueness of credentials at provisioning time.
+// the backing store, wires it with [WithSecretLookup] and [WithCertificateLookup],
+// and must enforce uniqueness of credentials at provisioning time.
 //
-// For MAC-protected messages, the senderKID is analogous to a username and the
-// shared secret to a password. The server identifies clients solely by senderKID
-// — if two clients share one, they become indistinguishable (shared transactions,
-// shared rate limits, possible certificate hijacking). Uniqueness must be enforced
-// by the provisioning system:
+// For MAC-protected messages, the server passes both the sender DN and the
+// senderKID to [SecretLookup.LookupSecret]. The implementation decides which
+// fields to use for the lookup. RFC 9810 §5.1.1 describes two cases:
+//
+//   - When the sender is known, the sender field carries the sender's name and
+//     senderKID SHOULD be included (RFC 9810 §5.1.1). Either or both may be
+//     used to locate the shared secret.
+//   - When the sender is unknown (e.g., initial enrollment), the sender field
+//     MUST be a NULL-DN and the senderKID field MUST carry the reference number
+//     that identifies the shared secret (RFC 4210 §5.1.3.1).
+//
+// These identifier fields are analogous to a username and the shared secret to
+// a password. The server identifies clients by whichever fields the lookup uses.
+// If two clients share the same identifier they become indistinguishable (shared
+// transactions, shared rate limits, possible certificate hijacking). Uniqueness
+// must be enforced by the provisioning system:
 //
 //	func Register(senderKID, secret []byte) error {
 //	    if exists(senderKID) {
@@ -131,7 +140,7 @@
 //	    store[senderKID] = secret
 //	}
 //
-//	func LookupSecret(senderKID []byte) ([]byte, error) {
+//	func LookupSecret(sender pkix.Name, senderKID []byte) ([]byte, error) {
 //	    return store[senderKID]
 //	}
 //
@@ -170,6 +179,8 @@
 //
 //	srv := server.NewCAServer(ca, caKey, caCert,
 //	    []server.Middleware{server.LightweightPolicy(), myPolicy()},
+//	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
+//	    server.WithCertificateLookup(server.CertificateLookupFunc(lookupCertificate)),
 //	)
 //
 // A custom middleware follows the same pattern — reject or pass through:
@@ -202,9 +213,13 @@
 //	mux := http.NewServeMux()
 //	mux.Handle("/.well-known/cmp/p/ca1", server.NewCAServer(ca1, ca1Key, ca1Cert,
 //	    []server.Middleware{server.LightweightPolicy()},
+//	    server.WithSecretLookup(ca1SecretLookup),
+//	    server.WithCertificateLookup(ca1CertLookup),
 //	))
 //	mux.Handle("/.well-known/cmp/p/ca2", server.NewCAServer(ca2, ca2Key, ca2Cert,
 //	    []server.Middleware{server.LightweightPolicy()},
+//	    server.WithSecretLookup(ca2SecretLookup),
+//	    server.WithCertificateLookup(ca2CertLookup),
 //	))
 //	http.ListenAndServe(":8080", mux)
 //

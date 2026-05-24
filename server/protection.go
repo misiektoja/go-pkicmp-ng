@@ -23,7 +23,14 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		if s.cfg.secretLookup == nil {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "MAC protection not configured"}
 		}
-		secret, err := s.cfg.secretLookup.LookupSecret(msg.Header.SenderKID)
+
+		// Resolve sender DN from header (may be NULL-DN for initial enrollment).
+		var senderName pkix.Name
+		if len(msg.Header.Sender.DirectoryName) > 0 {
+			senderName.FillFromRDNSequence(&msg.Header.Sender.DirectoryName)
+		}
+
+		secret, err := s.cfg.secretLookup.LookupSecret(senderName, msg.Header.SenderKID)
 		if err != nil {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "unknown sender"}
 		}
@@ -35,7 +42,7 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		if err != nil {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "MAC verification failed"}
 		}
-		return &SenderIdentity{SenderKID: msg.Header.SenderKID, MACVerified: true}, nil
+		return &SenderIdentity{Sender: senderName, SenderKID: msg.Header.SenderKID, MACVerified: true, secret: secret}, nil
 	}
 
 	// Signature-protected message.
@@ -70,34 +77,32 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSignerNotTrusted, StatusText: "signature verification failed"}
 	}
 
-	return &SenderIdentity{Certificate: signerCert}, nil
+	return &SenderIdentity{Certificate: signerCert, Sender: senderName}, nil
 }
 
 // protectResponseWithOptions applies protection using stored MAC options when available.
 func (s *Server) protectResponseWithOptions(resp *pkicmp.PKIMessage, sender *SenderIdentity, macOpts *pkicmp.MACOptions) error {
 	// MAC-protected request → MAC-protect response with same secret.
-	if sender != nil && sender.MACVerified && s.cfg.secretLookup != nil {
-		secret, err := s.cfg.secretLookup.LookupSecret(sender.SenderKID)
-		if err == nil && len(secret) > 0 {
-			if macOpts != nil {
-				// Echo back the client's MAC parameters (fresh salt is generated).
-				if macOpts.Algorithm.Equal(pkicmp.OIDPBMAC1) {
-					// RFC 9481 §6.1.2: PBMAC1 protection.
-					return resp.ProtectWithPBMAC1Options(pkicmp.PBMAC1Options{
-						Secret:         secret,
-						IterationCount: macOpts.IterationCount,
-						KeyLength:      macOpts.KeyLength,
-						PRF:            macOpts.OWF,
-						MAC:            macOpts.MAC,
-					})
-				}
-				opts := *macOpts
-				opts.Secret = secret
-				return resp.ProtectWithMACOptions(opts)
+	if sender != nil && sender.MACVerified && len(sender.secret) > 0 {
+		secret := sender.secret
+		if macOpts != nil {
+			// Echo back the client's MAC parameters (fresh salt is generated).
+			if macOpts.Algorithm.Equal(pkicmp.OIDPBMAC1) {
+				// RFC 9481 §6.1.2: PBMAC1 protection.
+				return resp.ProtectWithPBMAC1Options(pkicmp.PBMAC1Options{
+					Secret:         secret,
+					IterationCount: macOpts.IterationCount,
+					KeyLength:      macOpts.KeyLength,
+					PRF:            macOpts.OWF,
+					MAC:            macOpts.MAC,
+				})
 			}
-			// extractMACOptions must succeed for any message that passed MAC verification.
-			return fmt.Errorf("internal error: MAC-verified message has no parseable MAC parameters")
+			opts := *macOpts
+			opts.Secret = secret
+			return resp.ProtectWithMACOptions(opts)
 		}
+		// extractMACOptions must succeed for any message that passed MAC verification.
+		return fmt.Errorf("internal error: MAC-verified message has no parseable MAC parameters")
 	}
 
 	// Signature protection.

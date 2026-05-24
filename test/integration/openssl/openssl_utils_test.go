@@ -202,9 +202,9 @@ func newOpenSSLCMPServer(t *testing.T, opts opensslCMPServerOpts) *opensslCMPSer
 
 // TrustedCAs returns a CertPool containing the CA certificate for trust verification.
 func (s *opensslCMPServer) TrustedCAs() *x509.CertPool {
-	roots := x509.NewCertPool()
-	roots.AddCert(s.CACert)
-	return roots
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(s.CACert)
+	return trustedCAs
 }
 
 // freePort returns an available TCP port on localhost.

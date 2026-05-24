@@ -24,7 +24,11 @@ Protocol features include:
 
 ## Usage
 
-### Initialization Request (IR) with Shared Secret
+### Client
+
+Use the `client` package to enroll certificates from a CMP-capable CA.
+
+#### Initialization Request (IR) with Shared Secret
 
 ```go
 package main
@@ -63,7 +67,7 @@ func main() {
 }
 ```
 
-### Key Update Request (KUR) with Signature Protection
+#### Key Update Request (KUR) with Signature Protection
 
 ```go
 // Protected by an existing certificate's signature.
@@ -80,6 +84,26 @@ result, err := c.SendKUR(context.Background(), newKey, creds,
 ```
 
 See integration tests for more examples.
+
+### Server
+
+Use the `server` package to add a CMP endpoint to an existing CA. Implement the `CA`
+interface and wrap it with `NewCAServer`, which returns a standard `http.Handler`.
+
+The `CA` interface has one required method:
+
+- `IssueCertificate` — called for every enrollment request. Receives a certificate
+  template pre-populated from the CMP request; sign it with your CA backend.
+
+Protection verification is configured separately:
+
+- `WithSecretLookup(...)` — provides shared secrets for MAC-protected requests.
+- `WithCertificateLookup(...)` — provides signer certificates for signature-protected requests.
+
+The server handles all protocol mechanics automatically: message parsing, protection
+verification, response construction, nonce and transaction management, and the
+certConf round-trip. See the `server` package documentation for optional interfaces
+such as `PendingChecker` (asynchronous issuance) and `CertificateConfirmer`.
 
 ## Integration Testing
 

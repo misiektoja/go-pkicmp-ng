@@ -23,6 +23,9 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	sender := pkicmp.GeneralName{}
 	if opts.sender != nil {
 		sender = pkicmp.NewDirectoryName((*opts.sender).ToRDNSequence())
+	} else if sc, ok := creds.(*pkicmp.SignatureCredentials); ok && sc.Cert != nil {
+		// RFC 9810 §C.5/C.6: sender name SHOULD be present for CR/KUR.
+		sender = pkicmp.NewDirectoryName(sc.Cert.Subject.ToRDNSequence())
 	}
 
 	recipient := pkicmp.GeneralName{}
@@ -38,6 +41,10 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	for _, cert := range c.extraCerts {
 		msg.ExtraCerts = append(msg.ExtraCerts, pkicmp.CMPCertificate{Raw: cert.Raw})
 	}
+
+	// RFC 9810 §5.1.1: senderKID identifies the key used for protection.
+	// For MAC-protected requests it carries the reference number of the shared secret.
+	msg.Header.SenderKID = opts.senderKID
 
 	if err := creds.Protect(msg); err != nil {
 		return nil, &ClientError{Op: "protect request", Err: err}
@@ -100,25 +107,25 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		return nil, err
 	}
 
-	// Build effective trust pool: start with pre-configured roots, add any
+	// Build effective trust pool: start with pre-configured trusted CAs, add any
 	// caPubs bootstrapped via PBM (RFC 9810 §5.3.2).
-	effectiveRoots := c.trustedCAs
+	effectiveTrustPool := c.trustedCAs
 	caPubs := rep.TrustedCAPubs(vr)
 	if len(caPubs) > 0 {
-		if effectiveRoots != nil {
-			effectiveRoots = effectiveRoots.Clone()
+		if effectiveTrustPool != nil {
+			effectiveTrustPool = effectiveTrustPool.Clone()
 		} else {
-			effectiveRoots = x509.NewCertPool()
+			effectiveTrustPool = x509.NewCertPool()
 		}
 		for _, ca := range caPubs {
-			effectiveRoots.AddCert(ca)
+			effectiveTrustPool.AddCert(ca)
 		}
 	}
 
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
-	if effectiveRoots != nil {
+	if effectiveTrustPool != nil {
 		verifyOpts := x509.VerifyOptions{
-			Roots:     effectiveRoots,
+			Roots:     effectiveTrustPool,
 			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := cert.Verify(verifyOpts); err != nil {
@@ -160,6 +167,10 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		},
 	)
 	confMsg.Header.TransactionID = msg.Header.TransactionID
+	// Preserve senderKID across all messages in this transaction (RFC 9810 §5.1.1).
+	// For signature-based creds, ProtectWithSignature will overwrite this with the
+	// cert SubjectKeyId; for MAC-based creds it must be set explicitly.
+	confMsg.Header.SenderKID = msg.Header.SenderKID
 
 	if err := creds.Protect(confMsg); err != nil {
 		return nil, &ClientError{Op: "protect certConf", Err: err}
@@ -181,7 +192,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		return nil, &ClientError{Op: "parse PKIConf", Err: err}
 	}
 
-	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveRoots); err != nil {
+	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool); err != nil {
 		return nil, &ClientError{Op: "verify PKIConf", Err: err}
 	}
 
@@ -306,6 +317,7 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 			},
 		)
 		pollMsg.Header.TransactionID = origHeader.TransactionID
+		pollMsg.Header.SenderKID = origHeader.SenderKID
 
 		if err := creds.Protect(pollMsg); err != nil {
 			return nil, nil, &ClientError{Op: "protect poll request", Err: err}
@@ -372,7 +384,7 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 	// legitimately differ from the recipient the client addressed (e.g.,
 	// RA-forwarded requests, or CAs using a separate CMP signing identity).
 	// Authenticity is established by verifying the protection: signature
-	// chain against trusted roots (§8.9), or MAC via shared secret.
+	// chain against trusted CAs (§8.9), or MAC via shared secret.
 
 	if resp.Header.ProtectionAlg == nil {
 		return nil, &ClientError{Op: "missing protection algorithm in response"}

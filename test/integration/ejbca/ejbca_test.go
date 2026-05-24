@@ -654,13 +654,13 @@ func TestEJBCAChainVerification(t *testing.T) {
 	// In signature protection mode, EJBCA should return the CA certificate in ExtraCertificates.
 	assert.NotEmpty(t, result.ExtraCertificates, "ExtraCertificates should not be empty")
 
-	roots := x509.NewCertPool()
+	trustedCAs := x509.NewCertPool()
 	for _, c := range result.ExtraCertificates {
-		roots.AddCert(c)
+		trustedCAs.AddCert(c)
 	}
 
 	_, err = cert.Verify(x509.VerifyOptions{
-		Roots:     roots,
+		Roots:     trustedCAs,
 		KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 	})
 	assert.NoError(t, err, "verification using returned extra certs")

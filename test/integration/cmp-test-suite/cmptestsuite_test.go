@@ -14,7 +14,8 @@ import (
 	"time"
 
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/internal/mockserver"
+	"github.com/tsaarni/go-pkicmp/examples/mockserver"
+	"github.com/tsaarni/go-pkicmp/server"
 )
 
 const sharedSecret = "test-shared-secret"
@@ -49,13 +50,17 @@ func startMockServer(t *testing.T) int {
 
 	logger := slog.New(slog.NewTextHandler(newPrefixWriter(os.Stdout, "[mockserver] "), &slog.HandlerOptions{Level: slog.LevelDebug}))
 
-	ca, err := mockserver.New(
-		mockserver.WithLogger(logger),
-		mockserver.WithSecret([]byte("CN=CMP Client"), []byte(sharedSecret)),
-	)
+	ca, err := mockserver.New(map[string][]byte{
+		"CN=CMP Client": []byte(sharedSecret),
+	}, logger)
 	require.NoError(t, err)
 
-	srv := ca.NewServer()
+	srv := server.NewCAServer(ca, ca.Key(), ca.Cert(),
+		[]server.Middleware{server.LightweightPolicy()},
+		server.WithImplicitConfirm(),
+		server.WithSecretLookup(ca),
+		server.WithCertificateLookup(ca),
+	)
 
 	mux := http.NewServeMux()
 	mux.Handle("/cmp", srv)

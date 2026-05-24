@@ -9,18 +9,18 @@
 // standard Go [encoding.BinaryMarshaler] and [encoding.BinaryUnmarshaler]
 // interfaces.
 //
-// ## Standard Go Interfaces
+// # Standard Go Interfaces
 //
 // Use [PKIMessage.MarshalBinary] and [ParsePKIMessage] (which wraps UnmarshalBinary)
 // to convert between Go structs and raw DER bytes. These methods make the
 // package compatible with standard Go tools like [http.Client].
 //
-// ## Message Construction
+// # Message Construction
 //
 // Use [NewPKIMessage] to create a message with a body and header options.
 // It auto-generates a random TransactionID and SenderNonce per RFC 9810 §5.1.1.
 //
-// ## Protection and Verification
+// # Protection and Verification
 //
 // [PKIMessage.Protect] is the primary API for applying message protection.
 // It accepts a [Credentials] value — either [MACCredentials] (created
@@ -39,7 +39,7 @@
 // [ProtectionError] for protection failures, and [VerificationError] for
 // verification failures. All carry an [InvalidReason] for programmatic inspection.
 //
-// ## Internal Encoding Logic
+// # Internal Encoding Logic
 //
 // Components within the package use the cryptobyte library to process DER data
 // as a stream. This approach is used for two practical reasons:
@@ -54,13 +54,13 @@
 //     buffer, ensuring that no data is copied as the message is decoded into
 //     the struct hierarchy.
 //
-// ## Thread Safety
+// # Thread Safety
 //
 // Types in this package (including PKIMessage and PKIBody) are not thread-safe.
 // Concurrent access to a message or any of its components must be synchronized
 // by the caller.
 //
-// ## Usage Example
+// # Usage Example
 //
 // Building, protecting, sending, and verifying a CMP message:
 //

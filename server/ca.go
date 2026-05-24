@@ -22,15 +22,6 @@ type CA interface {
 	// validity period, add extensions). Return Response.Waiting to trigger
 	// the polling flow for async issuance.
 	IssueCertificate(ctx context.Context, reqType RequestType, template *x509.Certificate, sender *SenderIdentity) (*Response, error)
-
-	// LookupSecret returns the shared secret for MAC-protected requests.
-	// Return error if MAC protection is not supported or senderKID is unknown.
-	LookupSecret(senderKID []byte) ([]byte, error)
-
-	// LookupCertificate returns the certificate for verifying signature-protected requests.
-	// The issuer is derived from the recipient header field. The senderKID is optional
-	// and may be nil. Return error if the certificate is unknown.
-	LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error)
 }
 
 // PendingChecker is an optional interface for CAs that support async issuance.
@@ -78,8 +69,8 @@ type caHandler struct {
 //	srv := server.New(
 //	    server.Chain(server.NewCAHandler(ca), server.LightweightPolicy()),
 //	    server.WithSigner(caKey, caCert),
-//	    server.WithSecretLookup(ca),
-//	    server.WithCertificateLookup(ca),
+//	    server.WithSecretLookup(secretLookup),
+//	    server.WithCertificateLookup(certLookup),
 //	)
 func NewCAHandler(ca CA) Handler {
 	return &caHandler{ca: ca}
@@ -193,12 +184,13 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 }
 
 // NewCAServer creates a complete CMP server from a CA implementation.
-// Use [WithMiddleware] to add policy middleware (e.g., [LightweightPolicy]).
+// The CA is responsible only for certificate issuance. Configure request
+// verification separately with [WithSecretLookup] and/or
+// [WithCertificateLookup]. Use middleware to add policy enforcement
+// (e.g., [LightweightPolicy]).
 func NewCAServer(ca CA, caKey crypto.Signer, caCert *x509.Certificate, mw []Middleware, opts ...Option) *Server {
 	defaultOpts := []Option{
 		WithSigner(caKey, caCert),
-		WithSecretLookup(SecretLookupFunc(ca.LookupSecret)),
-		WithCertificateLookup(CertificateLookupFunc(ca.LookupCertificate)),
 		WithExtraCerts([]*x509.Certificate{caCert}),
 	}
 	return New(

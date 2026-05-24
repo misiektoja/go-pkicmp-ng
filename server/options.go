@@ -11,20 +11,40 @@ import (
 type Option func(*serverConfig)
 
 // SecretLookup resolves shared secrets for verifying MAC-protected messages.
-// The implementation decides whether to require senderKID by returning an error
-// when empty (RFC 9810 §5.1.1).
+//
+// The sender parameter is the DN from the PKIHeader sender field. It may be
+// a NULL-DN (len(sender.Names) == 0) when the sender identity is unknown,
+// e.g., during initial enrollment (RFC 9810 §5.1.1).
+//
+// The senderKID parameter is the reference number that identifies the shared
+// secret (RFC 4210 §5.1.3.1). When sender is a NULL-DN, senderKID MUST be
+// present (non-nil) and is the sole means of identifying the shared secret.
+//
+// Implementations may use either or both fields to locate the shared secret.
 type SecretLookup interface {
-	LookupSecret(senderKID []byte) ([]byte, error)
+	LookupSecret(sender pkix.Name, senderKID []byte) ([]byte, error)
 }
 
 // SecretLookupFunc adapts a function to the SecretLookup interface.
-type SecretLookupFunc func(senderKID []byte) ([]byte, error)
+type SecretLookupFunc func(sender pkix.Name, senderKID []byte) ([]byte, error)
 
-func (f SecretLookupFunc) LookupSecret(senderKID []byte) ([]byte, error) { return f(senderKID) }
+func (f SecretLookupFunc) LookupSecret(sender pkix.Name, senderKID []byte) ([]byte, error) {
+	return f(sender, senderKID)
+}
 
 // CertificateLookup resolves sender certificates for verifying signature-protected messages.
-// The issuer is derived from the recipient header field. The senderKID is optional and may
-// be nil if the client did not include it (RFC 9810 §5.1.1).
+//
+// The issuer parameter is the DN from the PKIHeader recipient field (the CA's identity).
+// It may be a NULL-DN (len(issuer.Names) == 0) if the client did not set a recipient.
+//
+// The subject parameter is the DN from the PKIHeader sender field (the end entity's identity).
+// It may be a NULL-DN (len(subject.Names) == 0) when the sender identity is not yet known,
+// e.g., during initial enrollment (RFC 9810 §5.1.1).
+//
+// The senderKID parameter is the key identifier from the PKIHeader senderKID field. It is
+// OPTIONAL and may be nil if the client did not include it (RFC 9810 §5.1.1).
+//
+// Implementations may use any combination of these fields to locate the certificate.
 type CertificateLookup interface {
 	LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error)
 }
@@ -37,15 +57,15 @@ func (f CertificateLookupFunc) LookupCertificate(issuer pkix.Name, subject pkix.
 }
 
 type serverConfig struct {
-	signerKey   crypto.Signer
-	signerCert  *x509.Certificate
-	signerChain []*x509.Certificate
-	secretLookup      SecretLookup
-	certificateLookup CertificateLookup
-	extraCerts  []*x509.Certificate
-	sender      pkix.Name
-	confirmWait     time.Duration
-	implicitConfirm bool
+	signerKey                    crypto.Signer
+	signerCert                   *x509.Certificate
+	signerChain                  []*x509.Certificate
+	secretLookup                 SecretLookup
+	certificateLookup            CertificateLookup
+	extraCerts                   []*x509.Certificate
+	sender                       pkix.Name
+	confirmWait                  time.Duration
+	implicitConfirm              bool
 	maxTransactions              int
 	maxTransactionsPerCredential int
 }
@@ -103,7 +123,6 @@ func WithImplicitConfirm() Option {
 		c.implicitConfirm = true
 	}
 }
-
 
 // WithMaxTransactions sets the maximum number of concurrent transactions.
 // Default is 10000.

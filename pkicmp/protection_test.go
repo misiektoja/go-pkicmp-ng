@@ -155,11 +155,11 @@ func TestSignatureRoundTrip(t *testing.T) {
 	parsed, err := pkicmp.ParsePKIMessage(der)
 	require.NoError(t, err)
 
-	roots := x509.NewCertPool()
-	roots.AddCert(caCert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(caCert)
 
 	vr, err := parsed.Verify(pkicmp.VerifyOptions{
-		TrustPool:  roots,
+		TrustPool:  trustedCAs,
 		ExtraCerts: parsed.ExtraCerts,
 		SenderKID:  parsed.Header.SenderKID,
 	})
@@ -227,11 +227,11 @@ func TestVerifyRejectsUntrustedCA(t *testing.T) {
 	// Use a different CA as trust anchor.
 	otherCAKey, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	otherCACert := selfSignedCA(t, otherCAKey, "Other CA")
-	roots := x509.NewCertPool()
-	roots.AddCert(otherCACert)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(otherCACert)
 
 	_, err = parsed.Verify(pkicmp.VerifyOptions{
-		TrustPool:  roots,
+		TrustPool:  trustedCAs,
 		ExtraCerts: parsed.ExtraCerts,
 		SenderKID:  parsed.Header.SenderKID,
 	})
@@ -311,11 +311,11 @@ func TestVerifyResultMACVerified(t *testing.T) {
 		der, _ := msg.MarshalBinary()
 		parsed, _ := pkicmp.ParsePKIMessage(der)
 
-		roots := x509.NewCertPool()
-		roots.AddCert(caCert)
+		trustedCAs := x509.NewCertPool()
+		trustedCAs.AddCert(caCert)
 
 		vr, err := parsed.Verify(pkicmp.VerifyOptions{
-			TrustPool:  roots,
+			TrustPool:  trustedCAs,
 			ExtraCerts: parsed.ExtraCerts,
 			SenderKID:  parsed.Header.SenderKID,
 		})

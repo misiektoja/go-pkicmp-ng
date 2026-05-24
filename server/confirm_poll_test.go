@@ -645,7 +645,7 @@ type multiMACLookup struct {
 	secrets map[string][]byte
 }
 
-func (m *multiMACLookup) LookupSecret(senderKID []byte) ([]byte, error) {
+func (m *multiMACLookup) LookupSecret(_ pkix.Name, senderKID []byte) ([]byte, error) {
 	if secret, ok := m.secrets[string(senderKID)]; ok {
 		return secret, nil
 	}
