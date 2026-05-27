@@ -3,24 +3,31 @@
 Go library for the Certificate Management Protocol (CMP).
 
 > [!NOTE]
-> This codebase is LLM-generated from [IETF protocol specifications](docs/specs).
+> This codebase is LLM-generated using [IETF protocol specifications](docs/specs).
 
-## Overview
+## Standards Compliance
 
-This project provides an implementation of the CMP protocol for certificate enrollment.
+The library implements:
+- **RFC 9810**: Certificate Management Protocol (CMP)
+- **RFC 9483**: Lightweight CMP Profile
+- **RFC 4211**: Certificate Request Message Format (CRMF)
+- **RFC 6712**: Certificate Management Protocol (CMP) over HTTP
+
+## Package Structure
+
+The library is split into three packages:
+
+*   **[`pkicmp`](./pkicmp/)**: Defines the Go types that map to CMP and CRMF ASN.1 structures. Handles message parsing, serialization, protection, and verification.
+*   **[`client`](./client/)**: A client implementation to request certificates. It handles transaction ID tracking, nonces, polling, and the certificate confirmation round-trip.
+*   **[`server`](./server/)**: A framework to add CMP support to an existing CA. It exposes a CMP endpoint as an `http.Handler` and implements verification, transaction binding, and nonce checking.
 
 ## Features
 
-The library implements core CMP message types for enrollment:
-- Initialization (IR/IP), Certification (CR/CP), and Key Update (KUR/KUP) flows
-- PKCS#10 requests (P10CR)
-- Certificate confirmation (CertConf/PKIConf)
-- Polling (PollReq/PollRep) and error reporting
-
-Protocol features include:
-- Support for both PVNO 2 and PVNO 3
-- Automated polling, respecting CA-provided `checkAfter` intervals
-- Message protection using either shared-secret MAC (PBM) or X.509 signatures
+- **Enrollment Flows**: Supports Initialization (IR/IP), Certification (CR/CP), Key Update (KUR/KUP), and PKCS#10 requests (P10CR).
+- **Protocol Versions**: Supports both PVNO 2 and PVNO 3.
+- **Polling**: Automatically polls when the CA returns a waiting response, respecting the CA's `checkAfter` interval.
+- **Protection**: Supports shared-secret MAC (PBM/PBMAC1) and X.509 signature-based protection.
+- **Lightweight Profile**: Provides `LightweightPolicy()` middleware to enforce RFC 9483 requirements.
 
 ## Usage
 
@@ -31,59 +38,33 @@ Use the `client` package to enroll certificates from a CMP-capable CA.
 #### Initialization Request (IR) with Shared Secret
 
 ```go
-package main
+// Generate a key pair and configure MAC protection using a shared secret.
+key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+creds, _ := pkicmp.NewMACCredentials([]byte("my-shared-secret"))
 
-import (
-	"context"
-	"crypto/ecdsa"
-	"crypto/elliptic"
-	"crypto/rand"
-	"crypto/x509/pkix"
-	"log"
-
-	"github.com/tsaarni/go-pkicmp/client"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+// Create a client and send the Initialization Request.
+c := client.NewClient("http://localhost:8080/cmp")
+result, err := c.SendIR(context.Background(), key, creds,
+	client.WithSenderKID([]byte("my-device")),
+	client.WithTemplateSubject(pkix.Name{CommonName: "my-device"}),
 )
-
-func main() {
-	// Generate a new private key.
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-
-	// Configure MAC protection using a shared secret.
-	creds, _ := pkicmp.NewMACCredentials([]byte("my-shared-secret"))
-
-	// Create a client for the protocol implementation.
-	c := client.NewClient("http://ejbca:8080/ejbca/publicweb/cmp/<cmp-alias>")
-
-	// Send Initialization Request.
-	result, err := c.SendIR(context.Background(), key, creds,
-		client.WithTemplateSubject(pkix.Name{CommonName: "my-device"}),
-	)
-	if err != nil {
-		log.Fatal(err)
-	}
-
-	log.Printf("Certificate issued: %s", result.Certificate.Subject)
-}
 ```
 
 #### Key Update Request (KUR) with Signature Protection
 
 ```go
-// Protected by an existing certificate's signature.
+// Protect using an existing key and certificate, and configure trust anchors.
 creds, _ := pkicmp.NewSignatureCredentials(existingKey, existingCert)
+c := client.NewClient("http://localhost:8080/cmp", client.WithTrustedCAs(trustedCAs))
 
-c := client.NewClient("http://ejbca:8080/ejbca/publicweb/cmp/<cmp-alias>",
-	// Adds trusted CAs for verifying signature-protected CMP responses.
-	client.WithTrustedCAs(trustedCAs),
-)
-
+// Send Key Update Request.
 result, err := c.SendKUR(context.Background(), newKey, creds,
 	client.WithSender(existingCert.Subject),
+	client.WithTemplateSubject(existingCert.Subject),
 )
 ```
 
-See integration tests for more examples.
+See the [runnable examples](./examples/) or integration tests for more detailed client usage.
 
 ### Server
 
@@ -104,6 +85,21 @@ The server handles all protocol mechanics automatically: message parsing, protec
 verification, response construction, nonce and transaction management, and the
 certConf round-trip. See the `server` package documentation for optional interfaces
 such as `PendingChecker` (asynchronous issuance) and `CertificateConfirmer`.
+
+## Runnable Examples
+
+For a complete, runnable demonstration of both client and server packages, check out the [examples](./examples/) directory. It contains:
+- **[Mock Server](./examples/mockserver/)**: A simple HTTP server implementing the `server.CA` interface.
+- **[Mock Client](./examples/mockclient/)**: A client executing a MAC-protected IR enrollment followed by a signature-protected KUR key update.
+
+You can run them locally in separate terminals:
+```bash
+# In terminal 1: Start the CA server
+go run ./examples/mockserver/cmd
+
+# In terminal 2: Run the enrollment client
+go run ./examples/mockclient/cmd
+```
 
 ## Integration Testing
 

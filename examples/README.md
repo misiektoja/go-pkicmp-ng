@@ -1,22 +1,8 @@
 # Examples
 
-Runnable examples demonstrating the `server` and `client` packages.
+This directory contains a complete, runnable demonstration of the `client` and `server` packages in memory. For instructions on how to run them, please refer to the root [README.md](../README.md).
 
-## Quick start
-
-Start the mock CA server in one terminal:
-
-```
-go run ./mockserver/cmd
-```
-
-Run the mock client in another terminal to enroll and renew a certificate:
-
-```
-go run ./mockclient/cmd
-```
-
-## What happens
+## How It Works
 
 **Server startup**
 
@@ -54,7 +40,7 @@ go run ./mockclient/cmd
 
 Everything runs in memory — no files are written to disk.
 
-## What to read
+## Code Structure
 
 - [`mockserver/mockserver.go`](mockserver/mockserver.go) — implements the
   [`server.CA`](../server/ca.go) interface (certificate issuance, secret
