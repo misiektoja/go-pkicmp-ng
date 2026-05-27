@@ -7,7 +7,7 @@ Go library for the Certificate Management Protocol (CMP).
 
 ## Standards Compliance
 
-The library implements:
+The library partially implements:
 - **RFC 9810**: Certificate Management Protocol (CMP)
 - **RFC 9483**: Lightweight CMP Profile
 - **RFC 4211**: Certificate Request Message Format (CRMF)
