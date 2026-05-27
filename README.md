@@ -35,7 +35,7 @@ The library is split into three packages:
 
 Use the `client` package to enroll certificates from a CMP-capable CA.
 
-#### Initialization Request (IR) with Shared Secret
+Initialization Request (IR) with Shared Secret
 
 ```go
 // Generate a key pair and configure MAC protection using a shared secret.
@@ -50,7 +50,7 @@ result, err := c.SendIR(context.Background(), key, creds,
 )
 ```
 
-#### Key Update Request (KUR) with Signature Protection
+Key Update Request (KUR) with Signature Protection
 
 ```go
 // Protect using an existing key and certificate, and configure trust anchors.
