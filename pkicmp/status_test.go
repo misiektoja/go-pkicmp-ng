@@ -142,7 +142,7 @@ func TestPKIStatusInfoASN1(t *testing.T) {
 		}
 
 		var b cryptobyte.Builder
-		si.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		si.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -175,7 +175,7 @@ func TestErrorMsgContentASN1(t *testing.T) {
 	}
 
 	var b cryptobyte.Builder
-	e.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+	e.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 	marshaled, err := b.Bytes()
 	require.NoError(t, err)
 
@@ -232,7 +232,7 @@ func TestPKIStatusInfoFailInfoDEREncoding(t *testing.T) {
 			}
 
 			var b cryptobyte.Builder
-			si.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+			si.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 			marshaled, err := b.Bytes()
 			require.NoError(t, err)
 

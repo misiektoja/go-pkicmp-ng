@@ -18,27 +18,27 @@ func TestPKIHeaderASN1(t *testing.T) {
 		now := time.Now().Truncate(time.Second).UTC()
 		h := &PKIHeader{
 			PVNO: PVNO2,
-			Sender: NewDirectoryName(pkix.RDNSequence{{{
+			Sender: GeneralName{DirectoryName: pkix.RDNSequence{{{
 				Type:  asn1.ObjectIdentifier{2, 5, 4, 3},
 				Value: "Sender",
-			}}}),
-			Recipient: NewDirectoryName(pkix.RDNSequence{{{
+			}}}},
+			Recipient: GeneralName{DirectoryName: pkix.RDNSequence{{{
 				Type:  asn1.ObjectIdentifier{2, 5, 4, 3},
 				Value: "Recipient",
-			}}}),
+			}}}},
 			MessageTime:   now,
-			ProtectionAlg: &AlgorithmIdentifier{Algorithm: OIDSHA256},
+			ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidSHA256},
 			SenderKID:     []byte{0x01},
 			RecipKID:      []byte{0x02},
 			TransactionID: []byte{0x03},
 			SenderNonce:   []byte{0x04},
 			RecipNonce:    []byte{0x05},
 			FreeText:      PKIFreeText{"text"},
-			GeneralInfo:   []InfoTypeAndValue{{InfoType: OIDSHA256}},
+			GeneralInfo:   []InfoTypeAndValue{{InfoType: oidSHA256}},
 		}
 
 		var b cryptobyte.Builder
-		h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -62,9 +62,9 @@ func TestPKIHeaderASN1(t *testing.T) {
 		var b cryptobyte.Builder
 		b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 			b.AddASN1Int64(1) // PVNO1
-			gn := NewDirectoryName(pkix.RDNSequence{})
-			gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-			gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+			gn := GeneralName{}
+			gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
+			gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 		})
 		marshaled, _ := b.Bytes()
 		var unmarshaled PKIHeader
@@ -97,9 +97,9 @@ func TestPKIHeaderASN1(t *testing.T) {
 		t.Run("InvalidOptionalFields", func(t *testing.T) {
 			marshalBase := func(b *cryptobyte.Builder) {
 				b.AddASN1Int64(2)
-				gn := NewDirectoryName(pkix.RDNSequence{})
-				gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
-				gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				gn := GeneralName{}
+				gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
+				gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 			}
 
 			t.Run("InvalidMessageTime", func(t *testing.T) {
@@ -327,8 +327,8 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{
-				Sender:    NewDirectoryName(nil),
-				Recipient: NewDirectoryName(nil),
+				Sender:    GeneralName{},
+				Recipient: GeneralName{},
 			},
 			Body: body,
 		}
@@ -344,8 +344,8 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 			Status:    PKIStatusInfo{Status: StatusAccepted},
 			CertifiedKeyPair: &CertifiedKeyPair{
 				CertOrEncCert: CertOrEncCert{
-					EncryptedCert: &EncryptedKey{
-						EnvelopedData: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+					EncryptedCert: &encryptedKey{
+						envelopedData: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 					},
 				},
 			},
@@ -355,8 +355,8 @@ func TestPKIMessagePVNOTigger(t *testing.T) {
 		})
 		msg := &PKIMessage{
 			Header: PKIHeader{
-				Sender:    NewDirectoryName(nil),
-				Recipient: NewDirectoryName(nil),
+				Sender:    GeneralName{},
+				Recipient: GeneralName{},
 			},
 			Body: body,
 		}
@@ -374,8 +374,8 @@ func TestPKIMessageASN1(t *testing.T) {
 		body := NewPKIConfBody()
 		msg := &PKIMessage{
 			Header: PKIHeader{
-				Sender:    NewDirectoryName(nil),
-				Recipient: NewDirectoryName(nil),
+				Sender:    GeneralName{},
+				Recipient: GeneralName{},
 			},
 			Body:       body,
 			Protection: []byte{0xDE, 0xAD},
@@ -403,7 +403,7 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 			})
 			marshaled, _ := b.Bytes()
 			var unmarshaled PKIMessage
@@ -414,9 +414,9 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				body := NewPKIConfBody()
-				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				body.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddUint8(0x02)
 					b.AddUint8(0x00)
@@ -432,9 +432,9 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				body := NewPKIConfBody()
-				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				body.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
 					})
@@ -449,9 +449,9 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				body := NewPKIConfBody()
-				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				body.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddUint8(0x02)
 				})
@@ -466,9 +466,9 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				body := NewPKIConfBody()
-				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				body.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddUint8(0x02)
 					b.AddUint8(0x00)
@@ -484,9 +484,9 @@ func TestPKIMessageASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				h := &PKIHeader{PVNO: PVNO2}
-				h.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				h.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				body := NewPKIConfBody()
-				body.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				body.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 					b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 						b.AddUint8(0x01)

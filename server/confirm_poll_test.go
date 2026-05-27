@@ -137,7 +137,7 @@ func TestCertConfRejection(t *testing.T) {
 		CertReq: pkicmp.CertRequest{
 			CertReqID: 0,
 			CertTemplate: pkicmp.CertTemplate{
-				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}),
 				PublicKey: pubDER,
 			},
 		},
@@ -198,7 +198,7 @@ func TestCertConfWithBadHash(t *testing.T) {
 		CertReq: pkicmp.CertRequest{
 			CertReqID: 0,
 			CertTemplate: pkicmp.CertTemplate{
-				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}),
 				PublicKey: pubDER,
 			},
 		},
@@ -267,7 +267,7 @@ func TestCertConfWithRejectionStatus(t *testing.T) {
 		CertReq: pkicmp.CertRequest{
 			CertReqID: 0,
 			CertTemplate: pkicmp.CertTemplate{
-				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}),
 				PublicKey: pubDER,
 			},
 		},
@@ -529,18 +529,18 @@ func TestCertConfWithDifferentCredentials(t *testing.T) {
 		CertReq: pkicmp.CertRequest{
 			CertReqID: 0,
 			CertTemplate: pkicmp.CertTemplate{
-				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}),
 				PublicKey: pubDER,
 			},
 		},
 	}
 	_ = certReqMsg.GeneratePOP(key)
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{certReqMsg}), pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid1"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid1"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	msg.Header.SenderKID = []byte("kid1")
-	_ = msg.ProtectWithMAC(secret1)
+	{ _mc, _ := pkicmp.NewMACCredentials(secret1); _ = _mc.Protect(msg) }
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -552,13 +552,13 @@ func TestCertConfWithDifferentCredentials(t *testing.T) {
 	// Send certConf with secret2 (different credentials) — should be rejected.
 	emptyConf := pkicmp.CertConfirmContent{}
 	confMsg := pkicmp.NewPKIMessage(pkicmp.NewCertConfBody(&emptyConf), pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid2"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid2"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	confMsg.Header.TransactionID = msg.Header.TransactionID
 	confMsg.Header.RecipNonce = respMsg.Header.SenderNonce
 	confMsg.Header.SenderKID = []byte("kid2")
-	_ = confMsg.ProtectWithMAC(secret2)
+	{ _mc, _ := pkicmp.NewMACCredentials(secret2); _ = _mc.Protect(confMsg) }
 	confDER, _ := confMsg.MarshalBinary()
 
 	resp2, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(confDER)))
@@ -601,11 +601,11 @@ func TestPollReqWithDifferentCredentials(t *testing.T) {
 		{CertReq: pkicmp.CertRequest{CertReqID: 0, CertTemplate: pkicmp.CertTemplate{PublicKey: pubDER}}},
 	}
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&msgs), pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid1"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid1"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	msg.Header.SenderKID = []byte("kid1")
-	_ = msg.ProtectWithMAC(secret1)
+	{ _mc, _ := pkicmp.NewMACCredentials(secret1); _ = _mc.Protect(msg) }
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -617,13 +617,13 @@ func TestPollReqWithDifferentCredentials(t *testing.T) {
 	// Send pollReq with secret2 (different credentials) — should be rejected.
 	pollReq := pkicmp.PollReqContent{0}
 	pollMsg := pkicmp.NewPKIMessage(pkicmp.NewPollReqBody(&pollReq), pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid2"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "kid2"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	pollMsg.Header.TransactionID = msg.Header.TransactionID
 	pollMsg.Header.RecipNonce = respMsg.Header.SenderNonce
 	pollMsg.Header.SenderKID = []byte("kid2")
-	_ = pollMsg.ProtectWithMAC(secret2)
+	{ _mc, _ := pkicmp.NewMACCredentials(secret2); _ = _mc.Protect(pollMsg) }
 	pollDER, _ := pollMsg.MarshalBinary()
 
 	resp2, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(pollDER)))

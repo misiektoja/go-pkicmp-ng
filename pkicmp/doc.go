@@ -1,84 +1,65 @@
-// Package pkicmp provides types for handling Certificate Management Protocol (CMP)
-// messages as defined in RFC 9810.
+// Package pkicmp implements the Certificate Management Protocol (CMP) as defined
+// in RFC 9810, with CRMF support per RFC 4211.
 //
-// # How it works
+// This is the foundational package of the go-pkicmp module. It defines the
+// protocol types, message construction, protection, and verification. The
+// [server] and [client] packages build on it. Callers who need direct control
+// over CMP messages — for custom tooling, RA proxying, or testing — can use
+// this package independently.
 //
-// This package is built around the [PKIMessage] struct. While most structs in
-// the package (like [PKIHeader] and [PKIBody]) are public so you can easily
-// read or set their fields, only the top-level [PKIMessage] provides the
-// standard Go [encoding.BinaryMarshaler] and [encoding.BinaryUnmarshaler]
-// interfaces.
+// # Message construction
 //
-// # Standard Go Interfaces
+// [PKIMessage] is the top-level type, corresponding to the ASN.1 PKIMessage
+// structure. Create one with [NewPKIMessage], supplying a [PKIBody] and
+// [MessageOptions]. TransactionID and SenderNonce default to 128 bits of random
+// data per RFC 9810 §5.1.1.
 //
-// Use [PKIMessage.MarshalBinary] and [ParsePKIMessage] (which wraps UnmarshalBinary)
-// to convert between Go structs and raw DER bytes. These methods make the
-// package compatible with standard Go tools like [http.Client].
+// [PKIBody] constructors (e.g., [NewIRBody], [NewIPBody], [NewPKIConfBody]) wrap
+// the corresponding CHOICE variant. [PKIBody] is lazy: it carries the raw DER
+// and decodes into the appropriate Go type only when a typed getter
+// (e.g., [PKIBody.IR], [PKIBody.IP]) is called.
 //
-// # Message Construction
+// [PKIMessage.MarshalBinary] and [ParsePKIMessage] are the only points where
+// CMP messages become wire bytes and back; all other types exist only in memory.
+// Implementing [encoding.BinaryMarshaler] and [encoding.BinaryUnmarshaler] makes
+// [PKIMessage] compatible with standard Go HTTP tooling.
 //
-// Use [NewPKIMessage] to create a message with a body and header options.
-// It auto-generates a random TransactionID and SenderNonce per RFC 9810 §5.1.1.
+// # Protection
 //
-// # Protection and Verification
+// [Credentials] is the interface for applying message protection. Two concrete
+// types cover all standard CMP protection schemes:
 //
-// [PKIMessage.Protect] is the primary API for applying message protection.
-// It accepts a [Credentials] value — either [MACCredentials] (created
-// with [NewMACCredentials]) or [SignatureCredentials] (created with
-// [NewSignatureCredentials]). The sealed interface makes it impossible to
-// accidentally mix protection modes.
+//   - [MACCredentials]: password-based MAC, created with [NewMACCredentials].
+//     Defaults to PBMAC1 (RFC 8018), the recommended algorithm per RFC 9481 §7.
+//     Use [WithPBM] for PasswordBasedMac.
+//   - [SignatureCredentials]: X.509 signature, created with [NewSignatureCredentials].
 //
-// For lower-level control, [PKIMessage.ProtectWithMAC] and
-// [PKIMessage.ProtectWithSignature] are also available.
+// Apply protection by calling [Credentials.Protect]:
 //
-// [PKIMessage.Verify] verifies the protection of a received message. Pass
-// [VerifyOptions] with either a shared secret (for MAC) or a [crypto/x509.CertPool]
-// (for signature). It returns a [VerifyResult] indicating which path was taken.
+//	creds, err := pkicmp.NewMACCredentials([]byte("shared-secret"))
+//	if err != nil { ... }
+//	err = creds.Protect(msg)
 //
-// Errors from this package are typed: [ParseError] for malformed messages,
-// [ProtectionError] for protection failures, and [VerificationError] for
-// verification failures. All carry an [InvalidReason] for programmatic inspection.
+// # Verification
 //
-// # Internal Encoding Logic
+// [PKIMessage.Verify] verifies message protection. [VerifyOptions] accepts a
+// shared secret (MAC), a [crypto/x509.CertPool] (signature), or both when the
+// protection algorithm is not known in advance:
 //
-// Components within the package use the cryptobyte library to process DER data
-// as a stream. This approach is used for two practical reasons:
+//	result, err := msg.Verify(pkicmp.VerifyOptions{SharedSecret: []byte("shared-secret")})
 //
-//  1. ASN.1 Nesting: In DER encoding, a "parent" (like a SEQUENCE) must know
-//     the total size of its "children" before it can write its own length.
-//     Marshaling is handled by passing a *cryptobyte.Builder to each component,
-//     allowing them to append directly to a single shared buffer while the
-//     library handles nested length calculations automatically.
-//  2. Performance and Memory: Parsing is handled by passing a *cryptobyte.String.
-//     This provides each component with a zero-copy "view" of the original
-//     buffer, ensuring that no data is copied as the message is decoded into
-//     the struct hierarchy.
+// [VerifyResult.ProtectionParams] captures the algorithm parameters from a verified
+// MAC-protected message. Pass it to [NewMACCredentials] with [WithProtectionAlgorithm]
+// to protect a response with the same algorithm suite (with a fresh salt),
+// as required by RFC 9483 §3.2.
 //
-// # Thread Safety
+// # Errors
 //
-// Types in this package (including PKIMessage and PKIBody) are not thread-safe.
-// Concurrent access to a message or any of its components must be synchronized
-// by the caller.
+// All errors from this package are typed:
 //
-// # Usage Example
+//   - [ParseError]: malformed message or missing required field.
+//   - [ProtectionError]: failure applying protection.
+//   - [VerificationError]: bad MAC or signature.
 //
-// Building, protecting, sending, and verifying a CMP message:
-//
-//	// 1. Create a message
-//	msg := pkicmp.NewPKIMessage(pkicmp.NewPKIConfBody(), pkicmp.MessageOptions{
-//	    Recipient: pkicmp.DirectoryName(caSubject),
-//	})
-//
-//	// 2. Protect with a shared secret
-//	_ = msg.ProtectWithMAC([]byte("my-shared-secret"))
-//
-//	// 3. Marshal and send via HTTP
-//	der, _ := msg.MarshalBinary()
-//	resp, _ := http.Post("https://ca.example.com/pkix/", "application/pkixcmp", bytes.NewReader(der))
-//	defer resp.Body.Close()
-//
-//	// 4. Parse and verify the response
-//	body, _ := io.ReadAll(resp.Body)
-//	parsed, _ := pkicmp.ParsePKIMessage(body)
-//	_, _ = parsed.Verify(pkicmp.VerifyOptions{Credentials: creds})
+// Each carries an [InvalidReason] for programmatic inspection.
 package pkicmp

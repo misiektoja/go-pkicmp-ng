@@ -68,6 +68,7 @@ type serverConfig struct {
 	implicitConfirm              bool
 	maxTransactions              int
 	maxTransactionsPerCredential int
+	confirmer                    CertificateConfirmer // set automatically by NewCAServer
 }
 
 // WithSigner configures signature-based response protection.
@@ -107,8 +108,9 @@ func WithSender(name pkix.Name) Option {
 	}
 }
 
-// WithConfirmWaitTime sets the confirmWaitTime included in certificate responses.
-// RFC 9810 §5.1.1.2.
+// WithConfirmWaitTime sets the confirmWaitTime included in certificate responses
+// and controls when [Server.CleanupExpired] considers transactions stale.
+// The default is 10 seconds. RFC 9810 §5.1.1.2.
 func WithConfirmWaitTime(d time.Duration) Option {
 	return func(c *serverConfig) {
 		c.confirmWait = d

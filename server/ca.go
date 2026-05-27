@@ -2,7 +2,6 @@ package server
 
 import (
 	"context"
-	"crypto"
 	"crypto/rand"
 	"crypto/sha1" // #nosec G505 -- used for SKI computation (opaque identifier)
 	"crypto/x509"
@@ -32,13 +31,48 @@ type PendingChecker interface {
 	CheckPending(ctx context.Context, pollRef string, sender *SenderIdentity) (*Response, error)
 }
 
+// ConfirmStatus indicates the outcome of a certificate confirmation.
+type ConfirmStatus int
+
+const (
+	// ConfirmAccepted means the client sent a certConf message accepting the certificate.
+	ConfirmAccepted ConfirmStatus = iota
+	// ConfirmRejected means the client sent a certConf message rejecting the certificate.
+	ConfirmRejected
+	// ConfirmImplicit means the server granted implicit confirm (id-it-implicitConfirm).
+	// The certificate is considered accepted without a certConf round-trip.
+	ConfirmImplicit
+	// ConfirmExpired means the transaction timed out without receiving certConf.
+	// The CA may want to revoke the certificate.
+	ConfirmExpired
+)
+
+// String returns a human-readable name for the confirmation status.
+func (s ConfirmStatus) String() string {
+	switch s {
+	case ConfirmAccepted:
+		return "accepted"
+	case ConfirmRejected:
+		return "rejected"
+	case ConfirmImplicit:
+		return "implicit"
+	case ConfirmExpired:
+		return "expired"
+	default:
+		return "unknown"
+	}
+}
+
 // CertificateConfirmer is an optional interface a CA can implement to receive
 // certificate confirmation notifications.
 type CertificateConfirmer interface {
-	// ConfirmCertificate is called when the client confirms or rejects a certificate.
-	// The cert parameter is the certificate that was issued; the CA can use
-	// cert.SerialNumber or any other field to identify it.
-	ConfirmCertificate(ctx context.Context, cert *x509.Certificate, accepted bool) error
+	// ConfirmCertificate is called when a certificate's confirmation status
+	// is determined.
+	//
+	// The issueRef parameter is the [Response.IssueRef] value set by the CA
+	// in [CA.IssueCertificate], allowing the CA to correlate the confirmation
+	// with the original issuance without looking up by certificate fields.
+	ConfirmCertificate(ctx context.Context, cert *x509.Certificate, status ConfirmStatus, issueRef any) error
 }
 
 // pollRefKey is the context key for passing pollRef to handlers.
@@ -145,9 +179,14 @@ func (h *caHandler) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage) 
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "no issued certificate"}
 	}
 
+	issueRef := IssueRefFromContext(ctx)
+
 	for _, cs := range *conf {
-		accepted := cs.StatusInfo == nil || cs.StatusInfo.Status != pkicmp.StatusRejection
-		if err := confirmer.ConfirmCertificate(ctx, cert, accepted); err != nil {
+		status := ConfirmAccepted
+		if cs.StatusInfo != nil && cs.StatusInfo.Status == pkicmp.StatusRejection {
+			status = ConfirmRejected
+		}
+		if err := confirmer.ConfirmCertificate(ctx, cert, status, issueRef); err != nil {
 			return nil, err
 		}
 	}
@@ -188,14 +227,17 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 // verification separately with [WithSecretLookup] and/or
 // [WithCertificateLookup]. Use middleware to add policy enforcement
 // (e.g., [LightweightPolicy]).
-func NewCAServer(ca CA, caKey crypto.Signer, caCert *x509.Certificate, mw []Middleware, opts ...Option) *Server {
-	defaultOpts := []Option{
-		WithSigner(caKey, caCert),
-		WithExtraCerts([]*x509.Certificate{caCert}),
+// Use [WithSigner] and [WithExtraCerts] options to configure the signing
+// credentials for CMP response protection.
+func NewCAServer(ca CA, mw []Middleware, opts ...Option) *Server {
+	// Detect if the CA implements CertificateConfirmer so the server can
+	// call it on implicit confirm (not just explicit certConf).
+	if confirmer, ok := ca.(CertificateConfirmer); ok {
+		opts = append([]Option{func(c *serverConfig) { c.confirmer = confirmer }}, opts...)
 	}
 	return New(
 		Chain(NewCAHandler(ca), mw...),
-		append(defaultOpts, opts...)...,
+		opts...,
 	)
 }
 

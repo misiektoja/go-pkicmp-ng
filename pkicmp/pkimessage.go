@@ -3,7 +3,6 @@ package pkicmp
 import (
 	"crypto/rand"
 	"encoding/asn1"
-	"fmt"
 	"time"
 
 	"golang.org/x/crypto/cryptobyte"
@@ -28,30 +27,21 @@ type MessageOptions struct {
 // NewPKIMessage creates a PKIMessage with the given body and header options.
 // TransactionID and SenderNonce default to 128 bits of random data per
 // RFC 9810 §5.1.1. Sets MessageTime to time.Now(). Panics if random number
-// generation fails — this indicates a broken system.
+// generation fails — this indicates a broken system (crypto/rand failure is
+// unrecoverable; Go's own crypto/tls panics on this condition).
 func NewPKIMessage(body *PKIBody, opts MessageOptions) *PKIMessage {
-	msg, err := CreatePKIMessage(body, opts)
-	if err != nil {
-		panic("pkicmp: " + err.Error())
-	}
-	return msg
-}
-
-// CreatePKIMessage is like NewPKIMessage but returns an error instead of
-// panicking if random number generation fails.
-func CreatePKIMessage(body *PKIBody, opts MessageOptions) (*PKIMessage, error) {
 	txnID := opts.TransactionID
 	if txnID == nil {
 		txnID = make([]byte, 16)
 		if _, err := rand.Read(txnID); err != nil {
-			return nil, fmt.Errorf("crypto/rand.Read failed: %w", err)
+			panic("pkicmp: crypto/rand.Read failed: " + err.Error())
 		}
 	}
 	senderNonce := opts.SenderNonce
 	if senderNonce == nil {
 		senderNonce = make([]byte, 16)
 		if _, err := rand.Read(senderNonce); err != nil {
-			return nil, fmt.Errorf("crypto/rand.Read failed: %w", err)
+			panic("pkicmp: crypto/rand.Read failed: " + err.Error())
 		}
 	}
 
@@ -66,12 +56,12 @@ func CreatePKIMessage(body *PKIBody, opts MessageOptions) (*PKIMessage, error) {
 			RecipNonce:    opts.RecipNonce,
 		},
 		Body: body,
-	}, nil
+	}
 }
 
 // All types that participate in recursive DER encoding implement:
 //
-//     marshal(mctx *MarshalContext, b *cryptobyte.Builder)
+//     marshal(mctx *marshalContext, b *cryptobyte.Builder)
 //     unmarshal(s *cryptobyte.String) error
 //
 // PKIMessage is the top-level entry point and instead exposes the standard
@@ -79,8 +69,8 @@ func CreatePKIMessage(body *PKIBody, opts MessageOptions) (*PKIMessage, error) {
 // to the internal marshal/unmarshal methods of its components.
 // New types added to the encoding tree must implement both methods.
 
-// MarshalContext holds state and configuration for the marshaling process.
-type MarshalContext struct {
+// marshalContext holds state and configuration for the marshaling process.
+type marshalContext struct {
 	// MinRequiredPVNO is the minimum Protocol Version Number (PVNO) required
 	// by the features used in the message.
 	// Per RFC 9810 §7: "Version cmp2021 SHOULD only be used if cmp2021 syntax
@@ -106,10 +96,10 @@ type PKIMessage struct {
 	// ExtraCerts provides optional helper certificates for path building.
 	ExtraCerts []CMPCertificate
 
-	// RawHeader is the exact DER-encoded header element used for protection verification.
-	RawHeader []byte
-	// RawBody is the exact DER-encoded body element used for protection verification.
-	RawBody []byte
+	// rawHeader is the exact DER-encoded header element used for protection verification.
+	rawHeader []byte
+	// rawBody is the exact DER-encoded body element used for protection verification.
+	rawBody []byte
 }
 
 // PKIHeader per RFC 9810 §5.1.1.
@@ -181,7 +171,7 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	if !seq.ReadAnyASN1Element(&rawHeader, &headerTag) {
 		return &ParseError{Detail: "missing PKIHeader"}
 	}
-	m.RawHeader = rawHeader
+	m.rawHeader = rawHeader
 	if err := m.Header.unmarshal(&rawHeader); err != nil {
 		return err
 	}
@@ -192,7 +182,7 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 	if !seq.ReadAnyASN1Element(&rawBody, &bodyTag) {
 		return &ParseError{Detail: "missing PKIBody"}
 	}
-	m.RawBody = rawBody
+	m.rawBody = rawBody
 	var body PKIBody
 	if err := body.unmarshal(&rawBody); err != nil {
 		return err
@@ -253,7 +243,7 @@ func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 	}
 
 	// 1. Marshal body first to discover required PVNO
-	mctx := &MarshalContext{MinRequiredPVNO: PVNO2}
+	mctx := &marshalContext{MinRequiredPVNO: PVNO2}
 	if m.Header.PVNO > PVNO2 {
 		mctx.MinRequiredPVNO = m.Header.PVNO
 	}
@@ -430,7 +420,7 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (h *PKIHeader) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (h *PKIHeader) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1Int64(int64(h.PVNO))
 		h.Sender.marshal(mctx, b)
@@ -512,7 +502,7 @@ func (h *PKIHeader) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 // Returns empty string if not present.
 func (h *PKIHeader) CertProfile() string {
 	for _, itv := range h.GeneralInfo {
-		if itv.InfoType.Equal(OIDCertProfile) {
+		if itv.InfoType.Equal(oidCertProfile) {
 			var profiles []string
 			if _, err := asn1.Unmarshal(itv.InfoValue, &profiles); err == nil && len(profiles) > 0 {
 				return profiles[0]
@@ -522,6 +512,16 @@ func (h *PKIHeader) CertProfile() string {
 	return ""
 }
 
+// ProtectedData returns the DER-encoded ProtectedPart (SEQUENCE { header, body })
+// that is signed or MAC'd when protecting the message.
+// The message must have been protected first (e.g. via [Credentials.Protect]).
+// This is primarily useful for testing scenarios that require manual signature
+// construction (for example, to forge an invalid signature for server rejection tests).
+// RFC 9810 §5.1.3.
+func (m *PKIMessage) ProtectedData() ([]byte, error) {
+	return m.protectedPart()
+}
+
 // protectedPart computes the DER-encoded ProtectedPart (SEQUENCE { header, body })
 // used as input to both protection and verification.
 // RFC 9810 §5.1.3.
@@ -529,13 +529,13 @@ func (m *PKIMessage) protectedPart() ([]byte, error) {
 	if m.Body == nil {
 		return nil, &ParseError{Detail: "missing message body"}
 	}
-	if len(m.RawHeader) == 0 || len(m.RawBody) == 0 {
+	if len(m.rawHeader) == 0 || len(m.rawBody) == 0 {
 		return nil, &ParseError{Detail: "raw header or body missing"}
 	}
 	var b cryptobyte.Builder
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-		b.AddBytes(m.RawHeader)
-		b.AddBytes(m.RawBody)
+		b.AddBytes(m.rawHeader)
+		b.AddBytes(m.rawBody)
 	})
 	return b.Bytes()
 }

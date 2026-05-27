@@ -78,7 +78,10 @@ func TestSignatureNotConfigured(t *testing.T) {
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{
 		{CertReq: pkicmp.CertRequest{CertReqID: 0}},
 	}), macMessageOpts())
-	_ = msg.ProtectWithSignature(clientKey, &clientX509)
+	{
+		_sc, _ := pkicmp.NewSignatureCredentials(clientKey, &clientX509)
+		_ = _sc.Protect(msg)
+	}
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, err := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -126,7 +129,10 @@ func TestSignatureVerificationWithBadSigner(t *testing.T) {
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{
 		{CertReq: pkicmp.CertRequest{CertReqID: 0}},
 	}), macMessageOpts())
-	_ = msg.ProtectWithSignature(clientKey, &clientX509)
+	{
+		_sc, _ := pkicmp.NewSignatureCredentials(clientKey, &clientX509)
+		_ = _sc.Protect(msg)
+	}
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, err := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -182,7 +188,6 @@ func TestMACLookupReturnsError(t *testing.T) {
 	assert.Equal(t, pkicmp.BodyTypeError, respMsg.Body.Type)
 }
 
-
 func TestPBMAC1Protection(t *testing.T) {
 	secret := []byte("pbmac1-secret")
 
@@ -210,12 +215,17 @@ func TestPBMAC1Protection(t *testing.T) {
 }
 
 // pbmac1Creds explicitly uses PBMAC1 protection for testing.
+// PBMAC1 is now the default, so this just wraps NewMACCredentials.
 type pbmac1Creds struct {
 	secret []byte
 }
 
 func (c *pbmac1Creds) Protect(msg *pkicmp.PKIMessage) error {
-	return msg.ProtectWithPBMAC1(c.secret)
+	mc, err := pkicmp.NewMACCredentials(c.secret)
+	if err != nil {
+		return err
+	}
+	return mc.Protect(msg)
 }
 
 func (c *pbmac1Creds) SharedSecret() []byte {

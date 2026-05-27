@@ -13,25 +13,25 @@ import (
 func TestHashFromOID(t *testing.T) {
 	// SHA1 is deprecated per RFC 9481 §7.1 but accepted for compatibility.
 	t.Run("SHA1-Deprecated", func(t *testing.T) {
-		got, err := hashFromOID(OIDSHA1)
+		got, err := hashFromOID(oidSHA1)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA1, got)
 	})
 
 	t.Run("SHA256", func(t *testing.T) {
-		got, err := hashFromOID(OIDSHA256)
+		got, err := hashFromOID(oidSHA256)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA256, got)
 	})
 
 	t.Run("SHA384", func(t *testing.T) {
-		got, err := hashFromOID(OIDSHA384)
+		got, err := hashFromOID(oidSHA384)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA384, got)
 	})
 
 	t.Run("SHA512", func(t *testing.T) {
-		got, err := hashFromOID(OIDSHA512)
+		got, err := hashFromOID(oidSHA512)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA512, got)
 	})
@@ -47,25 +47,25 @@ func TestHashFromOID(t *testing.T) {
 func TestHMACHashFromOID(t *testing.T) {
 	// SHA1 is deprecated per RFC 9481 §7.1 but accepted for compatibility.
 	t.Run("HMAC-SHA1-Deprecated", func(t *testing.T) {
-		got, err := hmacHashFromOID(OIDHMACWithSHA1)
+		got, err := hmacHashFromOID(oidHMACWithSHA1)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA1, got)
 	})
 
 	t.Run("HMAC-SHA256", func(t *testing.T) {
-		got, err := hmacHashFromOID(OIDHMACWithSHA256)
+		got, err := hmacHashFromOID(oidHMACWithSHA256)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA256, got)
 	})
 
 	t.Run("HMAC-SHA384", func(t *testing.T) {
-		got, err := hmacHashFromOID(OIDHMACWithSHA384)
+		got, err := hmacHashFromOID(oidHMACWithSHA384)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA384, got)
 	})
 
 	t.Run("HMAC-SHA512", func(t *testing.T) {
-		got, err := hmacHashFromOID(OIDHMACWithSHA512)
+		got, err := hmacHashFromOID(oidHMACWithSHA512)
 		assert.NoError(t, err)
 		assert.Equal(t, crypto.SHA512, got)
 	})
@@ -80,49 +80,49 @@ func TestHMACHashFromOID(t *testing.T) {
 // RFC 9481 §3 (Signature Algorithm Mapping tests)
 func TestSigAlgFromOID(t *testing.T) {
 	t.Run("RSA-SHA256", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDSHA256WithRSAEncryption)
+		got, err := sigAlgFromOID(oidSHA256WithRSAEncryption)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.SHA256WithRSA, got)
 	})
 
 	t.Run("RSA-SHA384", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDSHA384WithRSAEncryption)
+		got, err := sigAlgFromOID(oidSHA384WithRSAEncryption)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.SHA384WithRSA, got)
 	})
 
 	t.Run("RSA-SHA512", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDSHA512WithRSAEncryption)
+		got, err := sigAlgFromOID(oidSHA512WithRSAEncryption)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.SHA512WithRSA, got)
 	})
 
 	t.Run("ECDSA-SHA256", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDECDSAWithSHA256)
+		got, err := sigAlgFromOID(oidECDSAWithSHA256)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.ECDSAWithSHA256, got)
 	})
 
 	t.Run("ECDSA-SHA384", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDECDSAWithSHA384)
+		got, err := sigAlgFromOID(oidECDSAWithSHA384)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.ECDSAWithSHA384, got)
 	})
 
 	t.Run("ECDSA-SHA512", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDECDSAWithSHA512)
+		got, err := sigAlgFromOID(oidECDSAWithSHA512)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.ECDSAWithSHA512, got)
 	})
 
 	t.Run("Ed25519", func(t *testing.T) {
-		got, err := SigAlgFromOID(OIDEd25519)
+		got, err := sigAlgFromOID(oidEd25519)
 		assert.NoError(t, err)
 		assert.Equal(t, x509.PureEd25519, got)
 	})
 
 	t.Run("Unsupported", func(t *testing.T) {
-		got, err := SigAlgFromOID(asn1.ObjectIdentifier{1, 2, 3})
+		got, err := sigAlgFromOID(asn1.ObjectIdentifier{1, 2, 3})
 		assert.Error(t, err)
 		assert.Equal(t, x509.UnknownSignatureAlgorithm, got)
 	})
@@ -130,30 +130,30 @@ func TestSigAlgFromOID(t *testing.T) {
 
 func TestHashFromSigAlg(t *testing.T) {
 	t.Run("RSA-SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, HashFromSigAlg(x509.SHA256WithRSA))
+		assert.Equal(t, crypto.SHA256, hashFromSigAlg(x509.SHA256WithRSA))
 	})
 
 	t.Run("ECDSA-SHA256", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA256, HashFromSigAlg(x509.ECDSAWithSHA256))
+		assert.Equal(t, crypto.SHA256, hashFromSigAlg(x509.ECDSAWithSHA256))
 	})
 
 	t.Run("RSA-SHA384", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA384, HashFromSigAlg(x509.SHA384WithRSA))
+		assert.Equal(t, crypto.SHA384, hashFromSigAlg(x509.SHA384WithRSA))
 	})
 
 	t.Run("ECDSA-SHA384", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA384, HashFromSigAlg(x509.ECDSAWithSHA384))
+		assert.Equal(t, crypto.SHA384, hashFromSigAlg(x509.ECDSAWithSHA384))
 	})
 
 	t.Run("RSA-SHA512", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA512, HashFromSigAlg(x509.SHA512WithRSA))
+		assert.Equal(t, crypto.SHA512, hashFromSigAlg(x509.SHA512WithRSA))
 	})
 
 	t.Run("ECDSA-SHA512", func(t *testing.T) {
-		assert.Equal(t, crypto.SHA512, HashFromSigAlg(x509.ECDSAWithSHA512))
+		assert.Equal(t, crypto.SHA512, hashFromSigAlg(x509.ECDSAWithSHA512))
 	})
 
 	t.Run("Unknown", func(t *testing.T) {
-		assert.Equal(t, crypto.Hash(0), HashFromSigAlg(x509.UnknownSignatureAlgorithm))
+		assert.Equal(t, crypto.Hash(0), hashFromSigAlg(x509.UnknownSignatureAlgorithm))
 	})
 }

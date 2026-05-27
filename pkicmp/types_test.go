@@ -19,7 +19,7 @@ func TestAlgorithmIdentifierASN1(t *testing.T) {
 		}
 
 		var b cryptobyte.Builder
-		alg.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		alg.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -48,7 +48,7 @@ func TestInfoTypeAndValueASN1(t *testing.T) {
 	}
 
 	var b cryptobyte.Builder
-	itv.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+	itv.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 	marshaled, err := b.Bytes()
 	require.NoError(t, err)
 
@@ -67,7 +67,7 @@ func TestPKIFreeTextASN1(t *testing.T) {
 		ft := PKIFreeText{"hello", "world"}
 
 		var b cryptobyte.Builder
-		ft.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		ft.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -82,7 +82,7 @@ func TestPKIFreeTextASN1(t *testing.T) {
 	t.Run("Empty", func(t *testing.T) {
 		var b cryptobyte.Builder
 		var ft PKIFreeText
-		ft.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		ft.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 		assert.Empty(t, marshaled)
@@ -95,10 +95,10 @@ func TestGeneralNameASN1(t *testing.T) {
 		name := pkix.RDNSequence{
 			{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test Name"}},
 		}
-		gn := NewDirectoryName(name)
+		gn := GeneralName{DirectoryName: name}
 
 		var b cryptobyte.Builder
-		gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -121,9 +121,9 @@ func TestGeneralNameASN1(t *testing.T) {
 		assert.Equal(t, "foo", unmarshaled.RFC822Name)
 
 		// Round-trip via marshal.
-		gn := NewRFC822Name("foo")
+		gn := GeneralName{RFC822Name: "foo"}
 		var b cryptobyte.Builder
-		gn.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		gn.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 		assert.Equal(t, data, marshaled)
@@ -151,7 +151,7 @@ func TestCMPCertificateASN1(t *testing.T) {
 	}
 
 	var b cryptobyte.Builder
-	cert.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+	cert.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 	marshaled, err := b.Bytes()
 	require.NoError(t, err)
 
@@ -164,52 +164,52 @@ func TestCMPCertificateASN1(t *testing.T) {
 }
 
 func TestEncryptedKeyASN1(t *testing.T) {
-	t.Run("EncryptedValue", func(t *testing.T) {
-		ev := &EncryptedValue{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}}
+	t.Run("encryptedValue", func(t *testing.T) {
+		ev := &encryptedValue{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}}
 		var b cryptobyte.Builder
-		ev.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		ev.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled EncryptedValue
+		var unmarshaled encryptedValue
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
 		assert.Equal(t, ev.Raw, unmarshaled.Raw)
 
-		ek := EncryptedKey{
-			EncryptedValue: ev,
+		ek := encryptedKey{
+			encryptedValue: ev,
 		}
 
 		var b2 cryptobyte.Builder
-		ek.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b2)
+		ek.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b2)
 		marshaled, _ = b2.Bytes()
 
-		var unmarshaledKey EncryptedKey
+		var unmarshaledKey encryptedKey
 		s = cryptobyte.String(marshaled)
 		err = unmarshaledKey.unmarshal(&s)
 		require.NoError(t, err)
-		assert.NotNil(t, unmarshaledKey.EncryptedValue)
+		assert.NotNil(t, unmarshaledKey.encryptedValue)
 	})
 
-	t.Run("EnvelopedData", func(t *testing.T) {
-		ek := EncryptedKey{
-			EnvelopedData: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x02}},
+	t.Run("envelopedData", func(t *testing.T) {
+		ek := encryptedKey{
+			envelopedData: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x02}},
 		}
 
 		var b cryptobyte.Builder
-		ek.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		ek.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled EncryptedKey
+		var unmarshaled encryptedKey
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
-		assert.NotNil(t, unmarshaled.EnvelopedData)
+		assert.NotNil(t, unmarshaled.envelopedData)
 	})
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
 		s := cryptobyte.String([]byte{0x80}) // Tag [0] but no content
-		var unmarshaled EncryptedKey
+		var unmarshaled encryptedKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})

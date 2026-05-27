@@ -277,7 +277,7 @@ type ErrorMsgContent struct {
 
 // ASN.1 Helpers
 
-func (si *PKIStatusInfo) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (si *PKIStatusInfo) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1Int64(int64(si.Status))
 		if len(si.StatusString) > 0 {
@@ -336,7 +336,7 @@ func (si *PKIStatusInfo) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (e *ErrorMsgContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (e *ErrorMsgContent) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		e.PKIStatusInfo.marshal(mctx, b)
 		if e.ErrorCode != 0 {

@@ -158,7 +158,7 @@ func TestRecipientMismatch(t *testing.T) {
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{
 		{CertReq: pkicmp.CertRequest{CertReqID: 0}},
 	}), pkicmp.MessageOptions{
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Wrong Server"}.ToRDNSequence()),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Wrong Server"}),
 	})
 	protectMAC(msg, secret)
 	msgDER, _ := msg.MarshalBinary()

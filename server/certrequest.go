@@ -117,9 +117,9 @@ func isSignatureCapableKey(pub crypto.PublicKey) bool {
 	}
 }
 
-// HasCABasicConstraints checks if extensions contain BasicConstraints with cA=true.
+// hasCABasicConstraints checks if extensions contain BasicConstraints with cA=true.
 // Handlers can use this to reject CA certificate requests as a policy decision.
-func HasCABasicConstraints(extensions []pkix.Extension) bool {
+func hasCABasicConstraints(extensions []pkix.Extension) bool {
 	// OID for BasicConstraints: 2.5.29.19
 	oidBasicConstraints := asn1.ObjectIdentifier{2, 5, 29, 19}
 

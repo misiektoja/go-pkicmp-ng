@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"os"
 	"testing"
 
@@ -27,8 +28,8 @@ func TestP10CRRoundTrip(t *testing.T) {
 	body := pkicmp.NewP10CRBody(csr)
 	msg := &pkicmp.PKIMessage{
 		Header: pkicmp.PKIHeader{
-			Sender:        pkicmp.NewDirectoryName(pkix.RDNSequence{{{Type: []int{2, 5, 4, 3}, Value: "Sender"}}}),
-			Recipient:     pkicmp.NewDirectoryName(pkix.RDNSequence{{{Type: []int{2, 5, 4, 3}, Value: "Recipient"}}}),
+			Sender:        pkicmp.NewDirectoryName(pkix.Name{CommonName: "Sender"}),
+			Recipient:     pkicmp.NewDirectoryName(pkix.Name{CommonName: "Recipient"}),
 			TransactionID: []byte("trans-123"),
 			SenderNonce:   []byte("nonce-123"),
 		},
@@ -53,15 +54,15 @@ func TestP10CRRoundTrip(t *testing.T) {
 
 func TestImplicitPVNO3Upgrades(t *testing.T) {
 	t.Run("CertConfWithHashAlg", func(t *testing.T) {
-		conf := pkicmp.NewCertConfirmContent(
-			pkicmp.NewCertStatusWithHashAlg([]byte("hash"), 123, &pkicmp.AlgorithmIdentifier{Algorithm: pkicmp.OIDSHA256}),
-		)
+		conf := &pkicmp.CertConfirmContent{
+			pkicmp.CertStatus{CertHash: []byte("hash"), CertReqID: 123, HashAlg: &pkicmp.AlgorithmIdentifier{Algorithm: asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}}},
+		}
 		body := pkicmp.NewCertConfBody(conf)
 
 		msg := &pkicmp.PKIMessage{
 			Header: pkicmp.PKIHeader{
-				Sender:    pkicmp.NewDirectoryName(pkix.RDNSequence{}),
-				Recipient: pkicmp.NewDirectoryName(pkix.RDNSequence{}),
+				Sender:    pkicmp.NewDirectoryName(pkix.Name{}),
+				Recipient: pkicmp.NewDirectoryName(pkix.Name{}),
 			},
 			Body: body,
 		}
@@ -77,18 +78,14 @@ func TestImplicitPVNO3Upgrades(t *testing.T) {
 		gotConf, err := parsed.Body.CertConf()
 		require.NoError(t, err)
 		assert.Len(t, *gotConf, 1)
-		assert.Equal(t, pkicmp.OIDSHA256, (*gotConf)[0].HashAlg.Algorithm)
+		assert.Equal(t, asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}, (*gotConf)[0].HashAlg.Algorithm)
 	})
 
 	t.Run("POPOPrivKeyEncryptedKey", func(t *testing.T) {
 		req := pkicmp.CertReqMessages{
 			{
 				CertReq: pkicmp.CertRequest{CertReqID: 1},
-				Popo: &pkicmp.ProofOfPossession{
-					KeyEncipherment: &pkicmp.POPOPrivKey{
-						EncryptedKey: &pkicmp.EnvelopedData{Raw: []byte{0x30, 0x00}},
-					},
-				},
+				Popo:    pkicmp.NewEncryptedKeyPOP([]byte{0x30, 0x00}),
 			},
 		}
 

@@ -67,7 +67,7 @@ const (
 	stateActive    txnState = iota // Transaction started, awaiting CA response
 	statePending                   // CA returned "waiting", awaiting poll
 	stateIssued                    // Certificate issued, awaiting certConf
-	stateCompleted                 // Transaction completed (implicit confirm or certConf received)
+	stateCompleted                 // Transaction done (implicit confirm granted); kept until cleanupExpired to block transactionID reuse
 )
 
 // transactionEntry holds all state for a single transaction.
@@ -86,9 +86,10 @@ type transactionEntry struct {
 
 	// Set when state == stateIssued
 	cert              *x509.Certificate
-	issuedSenderNonce []byte             // server's senderNonce from the issued response
-	clientSenderNonce []byte             // client's original senderNonce from the cert request
-	macOptions        *pkicmp.MACOptions // PBM parameters from the client's request
+	issueRef          any                        // opaque CA reference for CertificateConfirmer
+	issuedSenderNonce []byte                     // server's senderNonce from the issued response
+	clientSenderNonce []byte                     // client's original senderNonce from the cert request
+	protectionParams  pkicmp.MACCredentialOption // decoded protection parameters for echo-back
 }
 
 // transactionTracker manages transaction state for the CMP server.
@@ -98,9 +99,9 @@ type transactionEntry struct {
 type transactionTracker struct {
 	transactions sync.Map // transactionKey → *transactionEntry
 
-	count            atomic.Int64
-	maxTransactions  int
-	credentialCounts sync.Map // credentialKey → *atomic.Int64
+	count                        atomic.Int64
+	maxTransactions              int
+	credentialCounts             sync.Map // credentialKey → *atomic.Int64
 	maxTransactionsPerCredential int
 }
 
@@ -196,7 +197,7 @@ func (t *transactionTracker) getPending(credentialID, transactionID []byte) (*tr
 	return entry, true
 }
 
-func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert *x509.Certificate, senderNonce, clientSenderNonce []byte, macOptions *pkicmp.MACOptions) bool {
+func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert *x509.Certificate, issueRef any, senderNonce, clientSenderNonce []byte, protectionParams pkicmp.MACCredentialOption) bool {
 	key := makeKey(credentialID, transactionID)
 	ck := makeCredentialKey(credentialID)
 
@@ -215,9 +216,10 @@ func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert 
 		lastActivity:      time.Now(),
 		credentialKey:     ck,
 		cert:              cert,
+		issueRef:          issueRef,
 		issuedSenderNonce: senderNonce,
 		clientSenderNonce: clientSenderNonce,
-		macOptions:        macOptions,
+		protectionParams:  protectionParams,
 	}
 	return t.transactions.CompareAndSwap(key, old, newEntry)
 }
@@ -234,20 +236,17 @@ func (t *transactionTracker) getIssued(credentialID, transactionID []byte) (*tra
 	return entry, true
 }
 
-// setCompleted marks a transaction as completed (e.g., after implicit confirm).
-// The entry remains to block duplicate transactionIDs until cleanup.
+// setCompleted marks a transaction as done without deleting it, keeping the
+// transactionID locked until cleanupExpired removes the entry. This prevents
+// a client from reusing the same transactionID within the same confirmWaitTime
+// window (RFC 9483 §3.5).
 func (t *transactionTracker) setCompleted(credentialID, transactionID []byte) {
 	key := makeKey(credentialID, transactionID)
-	old, ok := t.transactions.Load(key)
-	if !ok {
-		return
+	if v, ok := t.transactions.Load(key); ok {
+		entry := v.(*transactionEntry)
+		entry.state = stateCompleted
+		entry.lastActivity = time.Now()
 	}
-	newEntry := &transactionEntry{
-		state:         stateCompleted,
-		lastActivity:  time.Now(),
-		credentialKey: old.(*transactionEntry).credentialKey,
-	}
-	t.transactions.CompareAndSwap(key, old, newEntry)
 }
 
 func (t *transactionTracker) delete(credentialID, transactionID []byte) {
@@ -261,11 +260,19 @@ func (t *transactionTracker) delete(credentialID, transactionID []byte) {
 	}
 }
 
-// cleanupExpired removes entries older than maxAge.
-func (t *transactionTracker) cleanupExpired(maxAge time.Duration) {
+// expiredIssued holds details of an expired issued transaction for CA notification.
+type expiredIssued struct {
+	cert     *x509.Certificate
+	issueRef any
+}
+
+// cleanupExpired removes entries older than maxAge and returns any expired
+// issued transactions (certificates that were never confirmed).
+func (t *transactionTracker) cleanupExpired(maxAge time.Duration) []expiredIssued {
 	if maxAge <= 0 {
-		return
+		return nil
 	}
+	var expired []expiredIssued
 	cutoff := time.Now().Add(-maxAge)
 	t.transactions.Range(func(key, value any) bool {
 		entry := value.(*transactionEntry)
@@ -275,8 +282,15 @@ func (t *transactionTracker) cleanupExpired(maxAge time.Duration) {
 				t.count.Add(-1)
 				credCount := t.getOrCreateCredCount(entry.credentialKey)
 				credCount.Add(-1)
+				if entry.state == stateIssued && entry.cert != nil {
+					expired = append(expired, expiredIssued{
+						cert:     entry.cert,
+						issueRef: entry.issueRef,
+					})
+				}
 			}
 		}
 		return true
 	})
+	return expired
 }

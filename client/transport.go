@@ -18,19 +18,19 @@ import (
 // (RFC 9810 §5.3.1–§5.3.4, Appendix C.4).
 func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions) (*EnrollResult, error) {
 	if creds == nil {
-		return nil, &ClientError{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
+		return nil, &Error{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
 	}
 	sender := pkicmp.GeneralName{}
 	if opts.sender != nil {
-		sender = pkicmp.NewDirectoryName((*opts.sender).ToRDNSequence())
-	} else if sc, ok := creds.(*pkicmp.SignatureCredentials); ok && sc.Cert != nil {
+		sender = pkicmp.NewDirectoryName(*opts.sender)
+	} else if sc, ok := creds.(*pkicmp.SignatureCredentials); ok && sc.Certificate() != nil {
 		// RFC 9810 §C.5/C.6: sender name SHOULD be present for CR/KUR.
-		sender = pkicmp.NewDirectoryName(sc.Cert.Subject.ToRDNSequence())
+		sender = pkicmp.NewDirectoryName(sc.Certificate().Subject)
 	}
 
 	recipient := pkicmp.GeneralName{}
 	if len(c.recipient.Names) > 0 || len(c.recipient.ExtraNames) > 0 {
-		recipient = pkicmp.NewDirectoryName(c.recipient.ToRDNSequence())
+		recipient = pkicmp.NewDirectoryName(c.recipient)
 	}
 
 	msg := pkicmp.NewPKIMessage(reqBody, pkicmp.MessageOptions{
@@ -47,12 +47,12 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	msg.Header.SenderKID = opts.senderKID
 
 	if err := creds.Protect(msg); err != nil {
-		return nil, &ClientError{Op: "protect request", Err: err}
+		return nil, &Error{Op: "protect request", Err: err}
 	}
 
 	reqDER, err := msg.MarshalBinary()
 	if err != nil {
-		return nil, &ClientError{Op: "marshal request", Err: err}
+		return nil, &Error{Op: "marshal request", Err: err}
 	}
 
 	respDER, err := c.sendHTTP(ctx, reqDER)
@@ -62,16 +62,16 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	resp, err := pkicmp.ParsePKIMessage(respDER)
 	if err != nil {
-		return nil, &ClientError{Op: "parse response", Err: err}
+		return nil, &Error{Op: "parse response", Err: err}
 	}
 
 	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs)
 	if err != nil {
-		return nil, &ClientError{Op: "verify response", Err: err}
+		return nil, &Error{Op: "verify response", Err: err}
 	}
 
 	if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
-		return nil, &ClientError{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)}
+		return nil, &Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)}
 	}
 
 	if resp.Body.Type == pkicmp.BodyTypeError {
@@ -79,7 +79,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	if resp.Body.Type != expectedRepType {
-		return nil, &ClientError{Op: fmt.Sprintf("unexpected response body type: %d", resp.Body.Type)}
+		return nil, &Error{Op: fmt.Sprintf("unexpected response body type: %d", resp.Body.Type)}
 	}
 
 	certResp, rep, err := extractCertRespAndRep(resp, expectedRepType)
@@ -110,15 +110,25 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	// Build effective trust pool: start with pre-configured trusted CAs, add any
 	// caPubs bootstrapped via PBM (RFC 9810 §5.3.2).
 	effectiveTrustPool := c.trustedCAs
-	caPubs := rep.TrustedCAPubs(vr)
-	if len(caPubs) > 0 {
-		if effectiveTrustPool != nil {
-			effectiveTrustPool = effectiveTrustPool.Clone()
-		} else {
-			effectiveTrustPool = x509.NewCertPool()
+	// D20: TrustedCAPubs removed; manually check MACVerified and iterate CAPubs.
+	if vr != nil && vr.MACVerified && len(rep.CAPubs) > 0 {
+		var caPubs []*x509.Certificate
+		for _, c := range rep.CAPubs {
+			parsed, err := c.Parse()
+			if err != nil {
+				continue
+			}
+			caPubs = append(caPubs, parsed)
 		}
-		for _, ca := range caPubs {
-			effectiveTrustPool.AddCert(ca)
+		if len(caPubs) > 0 {
+			if effectiveTrustPool != nil {
+				effectiveTrustPool = effectiveTrustPool.Clone()
+			} else {
+				effectiveTrustPool = x509.NewCertPool()
+			}
+			for _, ca := range caPubs {
+				effectiveTrustPool.AddCert(ca)
+			}
 		}
 	}
 
@@ -129,7 +139,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := cert.Verify(verifyOpts); err != nil {
-			return nil, &ClientError{Op: "verify certificate trust", Err: err}
+			return nil, &Error{Op: "verify certificate trust", Err: err}
 		}
 	}
 
@@ -151,7 +161,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	// signature algorithm.
 	certHash, err := certHashForCert(cert)
 	if err != nil {
-		return nil, &ClientError{Op: "compute certHash", Err: err}
+		return nil, &Error{Op: "compute certHash", Err: err}
 	}
 	certStatus := pkicmp.CertStatus{
 		CertHash:  certHash,
@@ -173,27 +183,27 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	confMsg.Header.SenderKID = msg.Header.SenderKID
 
 	if err := creds.Protect(confMsg); err != nil {
-		return nil, &ClientError{Op: "protect certConf", Err: err}
+		return nil, &Error{Op: "protect certConf", Err: err}
 	}
 
 	confDER, err := confMsg.MarshalBinary()
 	if err != nil {
-		return nil, &ClientError{Op: "marshal certConf", Err: err}
+		return nil, &Error{Op: "marshal certConf", Err: err}
 	}
 
 	confRespDER, err := c.sendHTTP(ctx, confDER)
 	if err != nil {
-		return nil, &ClientError{Op: "certConf exchange", Err: err}
+		return nil, &Error{Op: "certConf exchange", Err: err}
 	}
 
 	// RFC 9810 §5.3.18: The server MUST respond with PKIConf.
 	confResp, err := pkicmp.ParsePKIMessage(confRespDER)
 	if err != nil {
-		return nil, &ClientError{Op: "parse PKIConf", Err: err}
+		return nil, &Error{Op: "parse PKIConf", Err: err}
 	}
 
 	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool); err != nil {
-		return nil, &ClientError{Op: "verify PKIConf", Err: err}
+		return nil, &Error{Op: "verify PKIConf", Err: err}
 	}
 
 	if confResp.Body.Type == pkicmp.BodyTypeError {
@@ -201,7 +211,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	if confResp.Body.Type != pkicmp.BodyTypePKIConf {
-		return nil, &ClientError{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)}
+		return nil, &Error{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)}
 	}
 
 	return &EnrollResult{
@@ -223,13 +233,13 @@ func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyT
 	case pkicmp.BodyTypeKUP:
 		rep, err = resp.Body.KUP()
 	default:
-		return nil, nil, &ClientError{Op: fmt.Sprintf("unsupported expected response type %d", expectedRepType)}
+		return nil, nil, &Error{Op: fmt.Sprintf("unsupported expected response type %d", expectedRepType)}
 	}
 	if err != nil {
 		return nil, nil, err
 	}
 	if len(rep.Response) == 0 {
-		return nil, nil, &ClientError{Op: "empty response"}
+		return nil, nil, &Error{Op: "empty response"}
 	}
 	return &rep.Response[0], rep, nil
 }
@@ -237,13 +247,13 @@ func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyT
 func (c *Client) sendHTTP(ctx context.Context, reqDER []byte) ([]byte, error) {
 	httpReq, err := http.NewRequestWithContext(ctx, http.MethodPost, c.endpoint, bytes.NewReader(reqDER))
 	if err != nil {
-		return nil, &ClientError{Op: "create HTTP request", Err: err}
+		return nil, &Error{Op: "create HTTP request", Err: err}
 	}
 	httpReq.Header.Set("Content-Type", "application/pkixcmp")
 
 	resp, err := c.httpClient.Do(httpReq)
 	if err != nil {
-		return nil, &ClientError{Op: "HTTP request", Err: err}
+		return nil, &Error{Op: "HTTP request", Err: err}
 	}
 	defer func() { _ = resp.Body.Close() }()
 
@@ -254,19 +264,19 @@ func (c *Client) sendHTTP(ctx context.Context, reqDER []byte) ([]byte, error) {
 
 	body, err := io.ReadAll(readBody)
 	if err != nil {
-		return nil, &ClientError{Op: "read response", Err: err}
+		return nil, &Error{Op: "read response", Err: err}
 	}
 	if c.maxResponseBytes > 0 && int64(len(body)) > c.maxResponseBytes {
-		return nil, &ClientError{Op: fmt.Sprintf("response body too large: limit=%d", c.maxResponseBytes)}
+		return nil, &Error{Op: fmt.Sprintf("response body too large: limit=%d", c.maxResponseBytes)}
 	}
 
 	if resp.StatusCode != http.StatusOK {
-		return nil, &ClientError{Op: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))}
+		return nil, &Error{Op: fmt.Sprintf("HTTP %d: %s", resp.StatusCode, http.StatusText(resp.StatusCode))}
 	}
 
 	// RFC 6712 §3: Response Content-Type MUST be application/pkixcmp.
 	if ct := resp.Header.Get("Content-Type"); ct != "application/pkixcmp" {
-		return nil, &ClientError{Op: fmt.Sprintf("unexpected Content-Type: %s", ct)}
+		return nil, &Error{Op: fmt.Sprintf("unexpected Content-Type: %s", ct)}
 	}
 
 	return body, nil
@@ -275,18 +285,18 @@ func (c *Client) sendHTTP(ctx context.Context, reqDER []byte) ([]byte, error) {
 func parseErrorResponse(msg *pkicmp.PKIMessage) error {
 	errContent, err := msg.Body.Error()
 	if err != nil {
-		return &ClientError{Op: "error parsing ErrorMsgContent", Err: err}
+		return &Error{Op: "error parsing ErrorMsgContent", Err: err}
 	}
 	return errContent.PKIStatusInfo.AsError()
 }
 
 func extractCertificate(resp *pkicmp.CertResponse) (*x509.Certificate, error) {
 	if resp.CertifiedKeyPair == nil {
-		return nil, &ClientError{Op: "missing certifiedKeyPair in response"}
+		return nil, &Error{Op: "missing certifiedKeyPair in response"}
 	}
 	cert := resp.CertifiedKeyPair.CertOrEncCert.Certificate
 	if cert == nil {
-		return nil, &ClientError{Op: "encrypted certificates not yet supported"}
+		return nil, &Error{Op: "encrypted certificates not yet supported"}
 	}
 	return cert.Parse()
 }
@@ -320,12 +330,12 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 		pollMsg.Header.SenderKID = origHeader.SenderKID
 
 		if err := creds.Protect(pollMsg); err != nil {
-			return nil, nil, &ClientError{Op: "protect poll request", Err: err}
+			return nil, nil, &Error{Op: "protect poll request", Err: err}
 		}
 
 		pollDER, err := pollMsg.MarshalBinary()
 		if err != nil {
-			return nil, nil, &ClientError{Op: "marshal poll request", Err: err}
+			return nil, nil, &Error{Op: "marshal poll request", Err: err}
 		}
 
 		respDER, err := c.sendHTTP(ctx, pollDER)
@@ -335,16 +345,16 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 
 		resp, err := pkicmp.ParsePKIMessage(respDER)
 		if err != nil {
-			return nil, nil, &ClientError{Op: "parse polled response", Err: err}
+			return nil, nil, &Error{Op: "parse polled response", Err: err}
 		}
 
 		vr, err := c.verifyResponse(pollMsg, resp, creds, c.trustedCAs)
 		if err != nil {
-			return nil, nil, &ClientError{Op: "verify polled response", Err: err}
+			return nil, nil, &Error{Op: "verify polled response", Err: err}
 		}
 
 		if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
-			return nil, nil, &ClientError{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)}
+			return nil, nil, &Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)}
 		}
 
 		if resp.Body.Type == pkicmp.BodyTypeError {
@@ -365,16 +375,16 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 		return resp, vr, nil
 	}
 
-	return nil, nil, &ClientError{Op: fmt.Sprintf("polling exceeded max retries (%d)", c.maxPolls)}
+	return nil, nil, &Error{Op: fmt.Sprintf("polling exceeded max retries (%d)", c.maxPolls)}
 }
 
 func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage, creds pkicmp.Credentials, trustedCAs *x509.CertPool) (*pkicmp.VerifyResult, error) {
 	if !bytes.Equal(resp.Header.TransactionID, req.Header.TransactionID) {
-		return nil, &ClientError{Op: "transaction ID mismatch"}
+		return nil, &Error{Op: "transaction ID mismatch"}
 	}
 
 	if !bytes.Equal(resp.Header.RecipNonce, req.Header.SenderNonce) {
-		return nil, &ClientError{Op: "recipient nonce mismatch"}
+		return nil, &Error{Op: "recipient nonce mismatch"}
 	}
 
 	// NOTE: Do NOT compare resp.Header.Sender against c.recipient here.
@@ -387,17 +397,23 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 	// chain against trusted CAs (§8.9), or MAC via shared secret.
 
 	if resp.Header.ProtectionAlg == nil {
-		return nil, &ClientError{Op: "missing protection algorithm in response"}
+		return nil, &Error{Op: "missing protection algorithm in response"}
 	}
 
 	vr, err := resp.Verify(pkicmp.VerifyOptions{
-		Credentials: creds,
-		TrustPool:   trustedCAs,
-		ExtraCerts:  resp.ExtraCerts,
-		SenderKID:   resp.Header.SenderKID,
+		SharedSecret: func() []byte {
+			type sharedSecreter interface{ SharedSecret() []byte }
+			if ss, ok := creds.(sharedSecreter); ok {
+				return ss.SharedSecret()
+			}
+			return nil
+		}(),
+		TrustPool:  trustedCAs,
+		ExtraCerts: resp.ExtraCerts,
+		SenderKID:  resp.Header.SenderKID,
 	})
 	if err != nil {
-		return nil, &ClientError{Op: "verify protection", Err: err}
+		return nil, &Error{Op: "verify protection", Err: err}
 	}
 
 	return vr, nil

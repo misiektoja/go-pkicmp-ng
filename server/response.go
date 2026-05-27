@@ -5,7 +5,6 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/x509"
-	"encoding/asn1"
 	"time"
 
 	"github.com/tsaarni/go-pkicmp/pkicmp"
@@ -17,19 +16,19 @@ func (s *Server) buildResponse(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sen
 	return s.buildResponseInternal(req, body, sender, nil, nil)
 }
 
-// buildResponseWithMACOptions creates a protected response using stored MAC options.
-func (s *Server) buildResponseWithMACOptions(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, macOpts *pkicmp.MACOptions) *pkicmp.PKIMessage {
-	return s.buildResponseInternal(req, body, sender, nil, macOpts)
+// buildResponseWithEchoProtection creates a protected response echoing the request's MAC parameters.
+func (s *Server) buildResponseWithEchoProtection(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, protectionParams pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
+	return s.buildResponseInternal(req, body, sender, nil, protectionParams)
 }
 
 // buildResponseInternal is the shared implementation for building protected responses.
-func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, generalInfo []pkicmp.InfoTypeAndValue, macOpts *pkicmp.MACOptions) *pkicmp.PKIMessage {
+func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, generalInfo []pkicmp.InfoTypeAndValue, protectionParams pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
 	senderNonce := make([]byte, 16)
 	_, _ = rand.Read(senderNonce)
 
 	senderName := pkicmp.GeneralName{}
 	if len(s.cfg.sender.CommonName) > 0 || len(s.cfg.sender.Organization) > 0 {
-		senderName = pkicmp.NewDirectoryName(s.cfg.sender.ToRDNSequence())
+		senderName = pkicmp.NewDirectoryName(s.cfg.sender)
 	} else if s.cfg.signerCert != nil {
 		// Use RawSubject to preserve the original DER encoding (e.g., PrintableString
 		// vs UTF8String) from the certificate, avoiding re-encoding through pkix.Name.
@@ -63,10 +62,10 @@ func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIB
 	}
 
 	// Protection failure is non-fatal; unprotected error responses are acceptable per RFC 9810 §5.3.21.
-	if macOpts == nil {
-		macOpts = extractMACOptions(req)
+	if protectionParams == nil && sender != nil {
+		protectionParams = sender.protectionParams
 	}
-	_ = s.protectResponseWithOptions(resp, sender, macOpts)
+	_ = s.protectResponseWithOptions(resp, sender, protectionParams)
 
 	return resp
 }
@@ -77,7 +76,7 @@ func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, si pkicmp.PKIStatusI
 }
 
 // buildCertRepResponseForType creates a CertRepMessage with the specified response type.
-func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID int64, si pkicmp.PKIStatusInfo, cert *x509.Certificate, caCerts []*x509.Certificate, sender *SenderIdentity, reqType RequestType, macOpts ...*pkicmp.MACOptions) *pkicmp.PKIMessage {
+func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID int64, si pkicmp.PKIStatusInfo, cert *x509.Certificate, caCerts []*x509.Certificate, sender *SenderIdentity, reqType RequestType, protectionParams ...pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
 	certResp := pkicmp.CertResponse{
 		CertReqID: certReqID,
 		Status:    si,
@@ -113,23 +112,15 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 	// the server is configured for implicit confirm AND the client requested it.
 	// RFC 9810 §5.1.1.2: Otherwise include confirmWaitTime if configured.
 	var generalInfo []pkicmp.InfoTypeAndValue
-	if si.Status == pkicmp.StatusAccepted && s.cfg.implicitConfirm && requestHasImplicitConfirm(req) {
-		generalInfo = append(generalInfo, pkicmp.InfoTypeAndValue{
-			InfoType: pkicmp.OIDImplicitConfirm,
-		})
+	if s.cfg.implicitConfirm && requestHasImplicitConfirm(req) {
+		generalInfo = append(generalInfo, pkicmp.ImplicitConfirmInfoValue())
 	} else if s.cfg.confirmWait > 0 && si.Status == pkicmp.StatusAccepted {
-		derBytes, err := asn1.Marshal(time.Now().Add(s.cfg.confirmWait))
-		if err == nil {
-			generalInfo = append(generalInfo, pkicmp.InfoTypeAndValue{
-				InfoType:  pkicmp.OIDConfirmWaitTime,
-				InfoValue: derBytes,
-			})
-		}
+		generalInfo = append(generalInfo, pkicmp.ConfirmWaitTimeInfoValue(s.cfg.confirmWait))
 	}
 
-	return s.buildResponseInternal(req, body, sender, generalInfo, func() *pkicmp.MACOptions {
-		if len(macOpts) > 0 {
-			return macOpts[0]
+	return s.buildResponseInternal(req, body, sender, generalInfo, func() pkicmp.MACCredentialOption {
+		if len(protectionParams) > 0 {
+			return protectionParams[0]
 		}
 		return nil
 	}())
@@ -137,7 +128,7 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 
 // handleCertRequestNew processes cert requests via the new Handler interface.
 func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
-	credID, err := sender.CredentialID()
+	credID, err := sender.credentialID()
 	if err != nil {
 		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadMessageCheck,
@@ -188,16 +179,21 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 
 	// Certificate issued.
 	si := pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}
-	macOpts := extractMACOptions(msg)
-	respMsg := s.buildCertRepResponseForType(msg, certReqID, si, resp.Certificate, resp.CACerts, sender, reqType, macOpts)
+	protectionParams := sender.protectionParams
+	respMsg := s.buildCertRepResponseForType(msg, certReqID, si, resp.Certificate, resp.CACerts, sender, reqType, protectionParams)
 
 	if resp.Certificate != nil {
 		if s.cfg.implicitConfirm && requestHasImplicitConfirm(msg) {
-			// No CertConf will arrive — mark transaction completed but keep it
-			// to block duplicate transactionIDs until cleanup.
+			// Mark the transaction completed but keep it in the table until
+			// cleanupExpired runs, so the transactionID cannot be reused within
+			// the same confirmWaitTime window (RFC 9483 §3.5).
 			s.setCompleted(credID, txnID)
+			// Notify the CA that the certificate was implicitly confirmed.
+			if s.cfg.confirmer != nil {
+				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
+			}
 		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, respMsg.Header.SenderNonce, msg.Header.SenderNonce, macOpts) {
+			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams) {
 				return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})
@@ -222,7 +218,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 		certReqID = (*pollReq)[0]
 	}
 
-	credID, err := sender.CredentialID()
+	credID, err := sender.credentialID()
 	if err != nil {
 		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadMessageCheck,
@@ -295,11 +291,16 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 
 	if resp.Certificate != nil {
 		if s.cfg.implicitConfirm && requestHasImplicitConfirm(msg) {
-			// No CertConf will arrive — mark transaction completed but keep it
-			// to block duplicate transactionIDs until cleanup.
+			// Mark the transaction completed but keep it in the table until
+			// cleanupExpired runs, so the transactionID cannot be reused within
+			// the same confirmWaitTime window (RFC 9483 §3.5).
 			s.setCompleted(credID, txnID)
+			// Notify the CA that the certificate was implicitly confirmed.
+			if s.cfg.confirmer != nil {
+				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
+			}
 		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, respMsg.Header.SenderNonce, msg.Header.SenderNonce, extractMACOptions(msg)) {
+			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams) {
 				return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})
@@ -324,8 +325,9 @@ func certReqIDFromRequest(msg *pkicmp.PKIMessage) int64 {
 // requestTypeFromBody maps a body type to a RequestType.
 // requestHasImplicitConfirm checks if the request includes id-it-implicitConfirm in generalInfo.
 func requestHasImplicitConfirm(msg *pkicmp.PKIMessage) bool {
+	oidImplicitConfirm := pkicmp.ImplicitConfirmInfoValue().InfoType
 	for _, info := range msg.Header.GeneralInfo {
-		if info.InfoType.Equal(pkicmp.OIDImplicitConfirm) {
+		if info.InfoType.Equal(oidImplicitConfirm) {
 			return true
 		}
 	}

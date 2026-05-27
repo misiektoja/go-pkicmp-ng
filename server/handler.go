@@ -40,6 +40,16 @@ type Response struct {
 	Certificate *x509.Certificate
 	CACerts     []*x509.Certificate
 	Waiting     *WaitingResponse
+	// IssueRef is an opaque value set by the CA during issuance and passed back
+	// to [CertificateConfirmer.ConfirmCertificate] when the certificate is
+	// confirmed, rejected, or expires. Use it to correlate the confirmation
+	// with the original issuance (e.g., a database row ID or job reference):
+	//
+	//     return &server.Response{
+	//         Certificate: cert,
+	//         IssueRef:    dbRowID,
+	//     }, nil
+	IssueRef any
 }
 
 // SenderIdentity represents the authenticated message sender.
@@ -57,11 +67,15 @@ type SenderIdentity struct {
 	// secret is the verified shared secret, cached to avoid redundant lookups
 	// when protecting the response.
 	secret []byte
+
+	// protectionParams captures the decoded MAC parameters from the verified
+	// request, used to protect responses with the same algorithm suite.
+	protectionParams pkicmp.MACCredentialOption
 }
 
-// CredentialID returns a hash identifying the credentials used for protection.
+// credentialID returns a hash identifying the credentials used for protection.
 // Used to verify that follow-up messages use the same credentials per RFC 9483 §3.2.
-func (s *SenderIdentity) CredentialID() ([]byte, error) {
+func (s *SenderIdentity) credentialID() ([]byte, error) {
 	h := sha256.New()
 	if s.MACVerified {
 		h.Write(s.SenderKID)

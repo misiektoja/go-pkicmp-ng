@@ -85,11 +85,11 @@ func setupMockServer(cfg mockServerConfig, mutateResp func(req, resp *pkicmp.PKI
 
 		switch cfg.respProtector {
 		case "sig":
-			_ = resp.ProtectWithSignature(cfg.serverKey, cfg.serverCert)
+			{ _sc, _ := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert); _ = _sc.Protect(resp) }
 		case "pbm-server-secret":
-			_ = resp.ProtectWithMAC([]byte("server-secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("server-secret")); _ = _mc.Protect(resp) }
 		default:
-			_ = resp.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		}
 
 		if cfg.postProtect != nil {
@@ -138,7 +138,7 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 					}},
 				}),
 			}
-			_ = respMsg.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(respMsg) }
 		} else {
 			respMsg = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
@@ -148,7 +148,7 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 				},
 				Body: pkicmp.NewPKIConfBody(),
 			}
-			_ = respMsg.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(respMsg) }
 		}
 
 		der, _ := respMsg.MarshalBinary()
@@ -187,7 +187,7 @@ func TestResponseValidationRejectsMismatchedIssuer(t *testing.T) {
 	c := client.NewClient(server.URL, client.WithRecipient(pkix.Name{CommonName: "target-ca"}))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify certificate trust", ce.Op)
 }
@@ -205,10 +205,10 @@ func TestResponseValidationRejectsMismatchedTransactionID(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify response", ce.Op)
-	var inner *client.ClientError
+	var inner *client.Error
 	require.ErrorAs(t, ce.Err, &inner)
 	assert.Equal(t, "transaction ID mismatch", inner.Op)
 }
@@ -226,10 +226,10 @@ func TestResponseValidationRejectsMismatchedNonce(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify response", ce.Op)
-	var inner *client.ClientError
+	var inner *client.Error
 	require.ErrorAs(t, ce.Err, &inner)
 	assert.Equal(t, "recipient nonce mismatch", inner.Op)
 }
@@ -291,7 +291,7 @@ func TestResponseValidationRejectsUntrustedCA(t *testing.T) {
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify certificate trust", ce.Op)
 	assert.Contains(t, ce.Err.Error(), "certificate signed by unknown authority")
@@ -338,7 +338,7 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 	cfg := setupValidationCerts()
 	cfg.respProtector = "sig"
 	server := setupMockServer(cfg, func(req, resp *pkicmp.PKIMessage) {
-		resp.Header.Sender = pkicmp.NewDirectoryName(pkix.Name{CommonName: "cmp-server"}.ToRDNSequence())
+		resp.Header.Sender = pkicmp.NewDirectoryName(pkix.Name{CommonName: "cmp-server"})
 		resp.Header.SenderKID = []byte("wrong-sender-kid")
 	})
 	defer server.Close()
@@ -375,7 +375,7 @@ func TestResponseValidationRejectsOversizedHTTPResponse(t *testing.T) {
 	c := client.NewClient(server.URL, client.WithMaxResponseBytes(128))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "response body too large")
 }

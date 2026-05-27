@@ -173,7 +173,15 @@ func (m *mockHandler) doCertConf(ctx context.Context, msg *pkicmp.PKIMessage, se
 		for _, cs := range *conf {
 			accepted := true
 			if issuedCert != nil {
-				hash := pkicmp.HashFromSigAlg(issuedCert.SignatureAlgorithm)
+				var hash crypto.Hash
+				switch issuedCert.SignatureAlgorithm {
+				case x509.ECDSAWithSHA256, x509.SHA256WithRSA:
+					hash = crypto.SHA256
+				case x509.ECDSAWithSHA384, x509.SHA384WithRSA:
+					hash = crypto.SHA384
+				case x509.ECDSAWithSHA512, x509.SHA512WithRSA:
+					hash = crypto.SHA512
+				}
 				if hash != 0 {
 					h := hash.New()
 					h.Write(issuedCert.Raw)
@@ -307,12 +315,12 @@ var testSender = pkix.Name{CommonName: "test"}
 // macMessageOpts returns MessageOptions with a directoryName sender for MAC tests.
 func macMessageOpts() pkicmp.MessageOptions {
 	return pkicmp.MessageOptions{
-		Sender: pkicmp.NewDirectoryName(testSender.ToRDNSequence()),
+		Sender: pkicmp.NewDirectoryName(testSender),
 	}
 }
 
 // protectMAC sets senderKID and applies MAC protection to a message.
 func protectMAC(msg *pkicmp.PKIMessage, secret []byte) {
 	msg.Header.SenderKID = []byte(testSender.String())
-	_ = msg.ProtectWithMAC(secret)
+	{ _mc, _ := pkicmp.NewMACCredentials(secret); _ = _mc.Protect(msg) }
 }

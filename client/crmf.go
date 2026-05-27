@@ -36,7 +36,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 
 	pubDER, err := x509.MarshalPKIXPublicKey(key.Public())
 	if err != nil {
-		return nil, &ClientError{Op: "marshal public key", Err: err}
+		return nil, &Error{Op: "marshal public key", Err: err}
 	}
 
 	tmpl := pkicmp.CertTemplate{
@@ -44,13 +44,13 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 	}
 
 	if ropts.templateSubject != nil {
-		tmpl.Subject = pkicmp.NewDirectoryName((*ropts.templateSubject).ToRDNSequence())
+		tmpl.Subject = pkicmp.NewDirectoryName(*ropts.templateSubject)
 	}
 
 	if len(ropts.templateExts) > 0 {
 		extDER, err := asn1.Marshal(ropts.templateExts)
 		if err != nil {
-			return nil, &ClientError{Op: "marshal extensions", Err: err}
+			return nil, &Error{Op: "marshal extensions", Err: err}
 		}
 		tmpl.Extensions = extDER
 	}
@@ -65,7 +65,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 	}
 
 	if err := certReqMsg.GeneratePOP(key); err != nil {
-		return nil, &ClientError{Op: "generate POP", Err: err}
+		return nil, &Error{Op: "generate POP", Err: err}
 	}
 
 	reqs := pkicmp.CertReqMessages{certReqMsg}
@@ -78,7 +78,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 	case pkicmp.BodyTypeKUP:
 		body = pkicmp.NewKURBody(&reqs)
 	default:
-		return nil, &ClientError{Op: fmt.Sprintf("unsupported CRMF expected response type %d", expectedRepType)}
+		return nil, &Error{Op: fmt.Sprintf("unsupported CRMF expected response type %d", expectedRepType)}
 	}
 
 	return c.enroll(ctx, body, expectedRepType, creds, ropts)

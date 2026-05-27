@@ -10,8 +10,8 @@ import (
 func ExampleNewPKIMessage() {
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}),
 	})
 
 	fmt.Println("Body type:", msg.Body.Type == pkicmp.BodyTypePKIConf)
@@ -23,14 +23,15 @@ func ExampleNewPKIMessage() {
 	// Recipient set: true
 }
 
-func ExamplePKIMessage_ProtectWithMAC() {
+func ExampleMACCredentials_Protect() {
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}),
 	})
 
-	err := msg.ProtectWithMAC([]byte("my-shared-secret"))
+	creds, _ := pkicmp.NewMACCredentials([]byte("my-shared-secret"))
+	err := creds.Protect(msg)
 	fmt.Println("Error:", err)
 	fmt.Println("Has protection:", len(msg.Protection) > 0)
 	fmt.Println("Has protectionAlg:", msg.Header.ProtectionAlg != nil)
@@ -43,15 +44,15 @@ func ExamplePKIMessage_ProtectWithMAC() {
 func ExamplePKIMessage_Verify() {
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}),
 	})
 
 	secret := []byte("my-shared-secret")
-	_ = msg.ProtectWithMAC(secret)
-
 	creds, _ := pkicmp.NewMACCredentials(secret)
-	result, err := msg.Verify(pkicmp.VerifyOptions{Credentials: creds})
+	_ = creds.Protect(msg)
+
+	result, err := msg.Verify(pkicmp.VerifyOptions{SharedSecret: secret})
 	fmt.Println("Error:", err)
 	fmt.Println("MAC verified:", result.MACVerified)
 	// Output:
@@ -63,8 +64,8 @@ func ExampleParsePKIMessage() {
 	// Create and marshal a message.
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{
-		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}.ToRDNSequence()),
-		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}.ToRDNSequence()),
+		Sender:    pkicmp.NewDirectoryName(pkix.Name{CommonName: "client"}),
+		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "ca"}),
 	})
 
 	der, _ := msg.MarshalBinary()

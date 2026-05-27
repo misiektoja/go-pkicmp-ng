@@ -34,8 +34,8 @@ func VerifyPOP(reqMsg *CertReqMsg) error {
 		return &ParseError{Detail: "no raw CertRequest DER available for POP verification"}
 	}
 
-	// Verify signature using the algorithm from POPOSigningKey.
-	sigAlg, err := SigAlgFromOID(reqMsg.Popo.Signature.Algorithm.Algorithm)
+	// Verify signature using the algorithm from popoSigningKey.
+	sigAlg, err := sigAlgFromOID(reqMsg.Popo.Signature.Algorithm.Algorithm)
 	if err != nil {
 		return err
 	}

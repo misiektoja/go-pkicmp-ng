@@ -3,6 +3,7 @@
 package cmptestsuite
 
 import (
+	"crypto/x509"
 	"fmt"
 	"log/slog"
 	"net"
@@ -55,8 +56,10 @@ func startMockServer(t *testing.T) int {
 	}, logger)
 	require.NoError(t, err)
 
-	srv := server.NewCAServer(ca, ca.Key(), ca.Cert(),
+	srv := server.NewCAServer(ca,
 		[]server.Middleware{server.LightweightPolicy()},
+		server.WithSigner(ca.Key(), ca.Cert()),
+		server.WithExtraCerts([]*x509.Certificate{ca.Cert()}),
 		server.WithImplicitConfirm(),
 		server.WithSecretLookup(ca),
 		server.WithCertificateLookup(ca),

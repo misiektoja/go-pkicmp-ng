@@ -92,6 +92,40 @@ const (
 	BodyTypePollRep  = BodyType(26 | classContextSpecific | classConstructed)
 )
 
+// String returns the short lowercase name for the body type, e.g. "ir", "ip".
+func (t BodyType) String() string {
+	switch t {
+	case BodyTypeIR:
+		return "ir"
+	case BodyTypeIP:
+		return "ip"
+	case BodyTypeCR:
+		return "cr"
+	case BodyTypeCP:
+		return "cp"
+	case BodyTypeP10CR:
+		return "p10cr"
+	case BodyTypeKUR:
+		return "kur"
+	case BodyTypeKUP:
+		return "kup"
+	case BodyTypePKIConf:
+		return "pkiconf"
+	case BodyTypeNested:
+		return "nested"
+	case BodyTypeError:
+		return "error"
+	case BodyTypeCertConf:
+		return "certConf"
+	case BodyTypePollReq:
+		return "pollReq"
+	case BodyTypePollRep:
+		return "pollRep"
+	default:
+		return fmt.Sprintf("BodyType(%d)", int(t))
+	}
+}
+
 func (b *PKIBody) unmarshal(s *cryptobyte.String) error {
 	b.Raw = []byte(*s)
 	var content cryptobyte.String
@@ -106,7 +140,7 @@ func (b *PKIBody) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (b *PKIBody) marshal(mctx *MarshalContext, builder *cryptobyte.Builder) {
+func (b *PKIBody) marshal(mctx *marshalContext, builder *cryptobyte.Builder) {
 	if len(b.Raw) > 0 && !b.dirty {
 		builder.AddBytes(b.Raw)
 		return
@@ -158,7 +192,7 @@ func (b *PKIBody) marshal(mctx *MarshalContext, builder *cryptobyte.Builder) {
 
 func (b *PKIBody) IR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeIR {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not ir (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not ir (type %s)", b.Type)}
 	}
 	if b.ir == nil && b.err == nil {
 		b.ir = &CertReqMessages{}
@@ -169,7 +203,7 @@ func (b *PKIBody) IR() (*CertReqMessages, error) {
 
 func (b *PKIBody) CR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeCR {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not cr (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not cr (type %s)", b.Type)}
 	}
 	if b.cr == nil && b.err == nil {
 		b.cr = &CertReqMessages{}
@@ -180,7 +214,7 @@ func (b *PKIBody) CR() (*CertReqMessages, error) {
 
 func (b *PKIBody) KUR() (*CertReqMessages, error) {
 	if b.Type != BodyTypeKUR {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not kur (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not kur (type %s)", b.Type)}
 	}
 	if b.kur == nil && b.err == nil {
 		b.kur = &CertReqMessages{}
@@ -200,13 +234,13 @@ func (b *PKIBody) CertReqMessages() (*CertReqMessages, error) {
 	case BodyTypeKUR:
 		return b.KUR()
 	default:
-		return nil, &ParseError{Detail: fmt.Sprintf("body type %d is not a cert request", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body type %s is not a cert request", b.Type)}
 	}
 }
 
 func (b *PKIBody) KUP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeKUP {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not kup (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not kup (type %s)", b.Type)}
 	}
 	if b.kup == nil && b.err == nil {
 		b.kup = &CertRepMessage{}
@@ -217,7 +251,7 @@ func (b *PKIBody) KUP() (*CertRepMessage, error) {
 
 func (b *PKIBody) P10CR() (*x509.CertificateRequest, error) {
 	if b.Type != BodyTypeP10CR {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not p10cr (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not p10cr (type %s)", b.Type)}
 	}
 	if b.p10cr != nil || b.err != nil {
 		return b.p10cr, b.err
@@ -247,7 +281,7 @@ func (b *PKIBody) P10CR() (*x509.CertificateRequest, error) {
 
 func (b *PKIBody) CP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeCP {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not cp (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not cp (type %s)", b.Type)}
 	}
 	if b.cp == nil && b.err == nil {
 		b.cp = &CertRepMessage{}
@@ -258,7 +292,7 @@ func (b *PKIBody) CP() (*CertRepMessage, error) {
 
 func (b *PKIBody) IP() (*CertRepMessage, error) {
 	if b.Type != BodyTypeIP {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not ip (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not ip (type %s)", b.Type)}
 	}
 	if b.ip == nil && b.err == nil {
 		b.ip = &CertRepMessage{}
@@ -269,7 +303,7 @@ func (b *PKIBody) IP() (*CertRepMessage, error) {
 
 func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 	if b.Type != BodyTypeCertConf {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not certConf (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not certConf (type %s)", b.Type)}
 	}
 	if b.certConf == nil && b.err == nil {
 		b.certConf = &CertConfirmContent{}
@@ -280,7 +314,7 @@ func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 
 func (b *PKIBody) PKIConf() (*PKIConfirmContent, error) {
 	if b.Type != BodyTypePKIConf {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not pkiconf (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pkiconf (type %s)", b.Type)}
 	}
 	if b.pkiConf == nil && b.err == nil {
 		b.pkiConf = &PKIConfirmContent{}
@@ -291,7 +325,7 @@ func (b *PKIBody) PKIConf() (*PKIConfirmContent, error) {
 
 func (b *PKIBody) PollReq() (*PollReqContent, error) {
 	if b.Type != BodyTypePollReq {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollReq (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollReq (type %s)", b.Type)}
 	}
 	if b.pollReq == nil && b.err == nil {
 		b.pollReq = &PollReqContent{}
@@ -302,7 +336,7 @@ func (b *PKIBody) PollReq() (*PollReqContent, error) {
 
 func (b *PKIBody) PollRep() (*PollRepContent, error) {
 	if b.Type != BodyTypePollRep {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollRep (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not pollRep (type %s)", b.Type)}
 	}
 	if b.pollRep == nil && b.err == nil {
 		b.pollRep = &PollRepContent{}
@@ -313,7 +347,7 @@ func (b *PKIBody) PollRep() (*PollRepContent, error) {
 
 func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 	if b.Type != BodyTypeError {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not error (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not error (type %s)", b.Type)}
 	}
 	if b.errorMsg == nil && b.err == nil {
 		b.errorMsg = &ErrorMsgContent{}
@@ -326,7 +360,7 @@ func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 // RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
 func (b *PKIBody) Nested() (*PKIMessage, error) {
 	if b.Type != BodyTypeNested {
-		return nil, &ParseError{Detail: fmt.Sprintf("body is not nested (type %d)", b.Type)}
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not nested (type %s)", b.Type)}
 	}
 	if b.nested == nil && b.err == nil {
 		// Parse the inner PKIMessage from the body content bytes.
@@ -343,12 +377,12 @@ func (b *PKIBody) Nested() (*PKIMessage, error) {
 
 func (b *PKIBody) unmarshalBodyContent(p interface {
 	unmarshal(s *cryptobyte.String) error
-	marshal(mctx *MarshalContext, b *cryptobyte.Builder)
+	marshal(mctx *marshalContext, b *cryptobyte.Builder)
 }) error {
 	if len(b.Raw) == 0 {
 		var builder cryptobyte.Builder
 		// Use a temporary context for this internal marshaling
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &builder)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &builder)
 		var err error
 		b.Raw, err = builder.Bytes()
 		if err != nil {
@@ -358,7 +392,7 @@ func (b *PKIBody) unmarshalBodyContent(p interface {
 	s := cryptobyte.String(b.Raw)
 	var sub cryptobyte.String
 	if !s.ReadASN1(&sub, cbasn1.Tag(b.Type)) {
-		return &ParseError{Detail: fmt.Sprintf("invalid body content for type %d", b.Type)}
+		return &ParseError{Detail: fmt.Sprintf("invalid body content for type %s", b.Type)}
 	}
 	return p.unmarshal(&sub)
 }

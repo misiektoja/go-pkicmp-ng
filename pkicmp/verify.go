@@ -18,7 +18,7 @@ import (
 // the credential type. This allows a client to verify responses regardless of
 // which protection mode the server chose:
 //
-//   - MAC-protected response: uses the shared secret from Credentials.
+//   - MAC-protected response: uses the SharedSecret field.
 //   - Signature-protected response: uses TrustPool for chain verification.
 //
 // Both fields may be populated simultaneously. The verifier ignores whichever
@@ -26,10 +26,10 @@ import (
 //
 // RFC 9810 §5.1.3.
 type VerifyOptions struct {
-	// Credentials provides the shared secret for MAC-protected messages.
+	// SharedSecret is the shared secret for MAC-protected messages.
 	// For signature-protected messages this field is ignored (TrustPool is
 	// used instead). May be nil if only signature verification is needed.
-	Credentials Credentials
+	SharedSecret []byte
 
 	// TrustPool holds root CA certificates for verifying signature-protected
 	// messages. For MAC-protected messages this field is ignored. May be nil
@@ -58,6 +58,13 @@ type VerifyResult struct {
 	// (PBM, PBMAC1, or KEM-MAC). This determines whether caPubs from the
 	// message body may be trusted (RFC 9810 §5.3.2).
 	MACVerified bool
+
+	// ProtectionParams is a [MACCredentialOption] that captures the decoded
+	// protection parameters from a verified MAC-protected message.
+	// Pass it to [NewMACCredentials] to protect a response with the same
+	// algorithm suite (fresh salt is generated). Nil for signature-verified messages.
+	// RFC 9810 §5.1.3.
+	ProtectionParams MACCredentialOption
 }
 
 // Verify verifies the message protection and returns verification metadata.
@@ -79,13 +86,13 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 	alg := m.Header.ProtectionAlg.Algorithm
 
 	// Dispatch based on algorithm OID.
-	if alg.Equal(OIDPasswordBasedMac) {
+	if alg.Equal(oidPasswordBasedMac) {
 		return m.verifyPBM(opts)
 	}
-	if alg.Equal(OIDPBMAC1) {
+	if alg.Equal(oidPBMAC1) {
 		return m.verifyPBMAC1(opts)
 	}
-	if _, err := SigAlgFromOID(alg); err == nil {
+	if _, err := sigAlgFromOID(alg); err == nil {
 		return m.verifySignature(opts)
 	}
 
@@ -95,15 +102,12 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 // verifyPBM verifies Password-Based MAC protection.
 // RFC 9810 §5.1.3.1.
 func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
-	var secret []byte
-	if opts.Credentials != nil {
-		secret = opts.Credentials.SharedSecret()
-	}
+	secret := opts.SharedSecret
 	if len(secret) == 0 {
 		return nil, &VerificationError{Reason: ReasonMissingSharedSecret}
 	}
 
-	var p PBMParameter
+	var p pbmParameter
 	params := cryptobyte.String(m.Header.ProtectionAlg.Parameters)
 	if err := p.unmarshal(&params); err != nil {
 		return nil, err
@@ -146,16 +150,23 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonBadMAC}
 	}
 
-	return &VerifyResult{MACVerified: true}, nil
+	return &VerifyResult{
+		MACVerified: true,
+		ProtectionParams: func(c *macCredentialConfig) {
+			c.algorithm = oidPasswordBasedMac
+			c.iterationCount = p.IterationCount
+			c.owf = p.OWF.Algorithm
+			c.mac = p.MAC.Algorithm
+			c.owfParameters = p.OWF.Parameters
+			c.macParameters = p.MAC.Parameters
+		},
+	}, nil
 }
 
 // verifyPBMAC1 verifies PBMAC1 protection.
 // RFC 8018 §7.1, RFC 9481 §6.1.2.
 func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
-	var secret []byte
-	if opts.Credentials != nil {
-		secret = opts.Credentials.SharedSecret()
-	}
+	secret := opts.SharedSecret
 	if len(secret) == 0 {
 		return nil, &VerificationError{Reason: ReasonMissingSharedSecret}
 	}
@@ -169,7 +180,7 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &ParseError{Detail: "invalid PBMAC1-params: " + err.Error()}
 	}
 
-	if !pbmac1Params.KeyDerivationFunc.Algorithm.Equal(OIDPBKDF2) {
+	if !pbmac1Params.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("KDF OID %v", pbmac1Params.KeyDerivationFunc.Algorithm)}
 	}
 
@@ -212,7 +223,16 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonBadMAC}
 	}
 
-	return &VerifyResult{MACVerified: true}, nil
+	return &VerifyResult{
+		MACVerified: true,
+		ProtectionParams: func(c *macCredentialConfig) {
+			c.algorithm = oidPBMAC1
+			c.iterationCount = pbkdf2Params.IterationCount
+			c.keyLength = pbkdf2Params.KeyLength
+			c.owf = pbkdf2Params.PRF.Algorithm
+			c.mac = pbmac1Params.MessageAuthScheme.Algorithm
+		},
+	}, nil
 }
 
 // verifySignature verifies signature-based protection.
@@ -221,7 +241,7 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 // RFC 9810 §8.9: The message sender MUST be authenticated with existing
 // trust anchors.
 func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
-	sigAlg, err := SigAlgFromOID(m.Header.ProtectionAlg.Algorithm)
+	sigAlg, err := sigAlgFromOID(m.Header.ProtectionAlg.Algorithm)
 	if err != nil {
 		return nil, err
 	}

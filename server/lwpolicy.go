@@ -105,7 +105,7 @@ func validateP10CR(msg *pkicmp.PKIMessage) error {
 		return err
 	}
 	// Policy: Reject requests for CA certificates.
-	if HasCABasicConstraints(csr.Extensions) {
+		if hasCABasicConstraints(csr.Extensions) {
 		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized, StatusText: "CA certificates not allowed"}
 	}
 	return nil
@@ -168,7 +168,7 @@ func validateCRMF(msg *pkicmp.PKIMessage) error {
 	}
 
 	// Policy: Reject requests for CA certificates.
-	if HasCABasicConstraints(crmf.extensions) {
+	if hasCABasicConstraints(crmf.extensions) {
 		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized, StatusText: "CA certificates not allowed"}
 	}
 

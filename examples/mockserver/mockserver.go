@@ -19,6 +19,7 @@ import (
 	"log/slog"
 	"math/big"
 	"sync"
+	"sync/atomic"
 	"time"
 
 	"github.com/tsaarni/go-pkicmp/server"
@@ -32,6 +33,7 @@ type MockCA struct {
 	mu          sync.Mutex          // guards issuedCerts; the HTTP server handles requests concurrently
 	issuedCerts []*x509.Certificate // certificates issued so far; used by LookupCertificate
 	secrets     map[string][]byte   // senderKID -> IAK, used by LookupSecret for MAC-protected requests
+	nextIssueID atomic.Uint64       // monotonic counter; used as IssueRef
 
 	Log *slog.Logger
 }
@@ -114,7 +116,10 @@ func (c *MockCA) IssueCertificate(_ context.Context, reqType server.RequestType,
 	c.issuedCerts = append(c.issuedCerts, cert)
 	c.mu.Unlock()
 
-	resp := &server.Response{Certificate: cert}
+	// IssueRef is an opaque value passed back to ConfirmCertificate.  The
+	// server treats it as interface{} and never inspects it, so the CA is
+	// free to store anything convenient.
+	resp := &server.Response{Certificate: cert, IssueRef: c.nextIssueID.Add(1)}
 
 	// Include the CA certificate in caPubs for IR responses only.
 	// RFC 9483 §4.1.1 allows caPubs in IR responses to bootstrap trust.
@@ -178,6 +183,27 @@ func (c *MockCA) LookupCertificate(_ pkix.Name, _ pkix.Name, senderKID []byte) (
 		"senderKID", fmt.Sprintf("%x", senderKID),
 	)
 	return nil, fmt.Errorf("certificate not found")
+}
+
+// ConfirmCertificate implements [server.CertificateConfirmer].
+// The server calls this after receiving certConf from the client, or when a
+// transaction expires without confirmation. issueRef is whatever value the CA
+// stored in [Response.IssueRef] during issuance — the server passes it back
+// unchanged so the CA can update its records without an extra certificate
+// lookup.
+//
+// status is one of:
+//   - [server.ConfirmAccepted]: client accepted the certificate via certConf
+//   - [server.ConfirmRejected]: client rejected the certificate via certConf
+//   - [server.ConfirmImplicit]: implicit confirm was granted; no certConf round-trip
+//   - [server.ConfirmExpired]: transaction timed out before certConf was received
+func (c *MockCA) ConfirmCertificate(_ context.Context, cert *x509.Certificate, status server.ConfirmStatus, issueRef any) error {
+	c.Log.Info("certificate confirmation received",
+		"status", status.String(),
+		"subject", cert.Subject.String(),
+		"issueRef", issueRef,
+	)
+	return nil
 }
 
 // generateSelfSignedCA creates a self-signed CA key and certificate.

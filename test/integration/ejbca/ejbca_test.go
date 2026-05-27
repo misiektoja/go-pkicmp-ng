@@ -451,7 +451,7 @@ func TestEJBCAKeyUpdateWrongKey(t *testing.T) {
 	wrongKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	wrongCreds := &wrongSignatureCredentials{key: wrongKey, cert: initialResult.Certificate}
+	wrongCreds := &wrongSignatureCredentials{matchingKey: oldKey, wrongKey: wrongKey, cert: initialResult.Certificate}
 
 	c = client.NewClient(admin.Endpoint,
 		client.WithRecipient(admin.CACert.Subject),
@@ -470,18 +470,39 @@ func TestEJBCAKeyUpdateWrongKey(t *testing.T) {
 	t.Logf("Expected error: %v", statusErr)
 }
 
-// wrongSignatureCredentials signs with a key that doesn't match the certificate,
-// producing an invalid signature that the server will reject.
+// wrongSignatureCredentials produces a message signed with a key that doesn't
+// match the declared sender certificate, so the server will reject the signature.
+// It first protects with the matching key (to populate header fields and raw DER),
+// then replaces Protection with a signature computed by wrongKey over the same
+// protected bytes. Both keys must be the same algorithm family.
 type wrongSignatureCredentials struct {
-	key  crypto.Signer
-	cert *x509.Certificate
+	matchingKey crypto.Signer // key that matches cert — used to set up the message
+	wrongKey    crypto.Signer // key that does NOT match cert — used for the forged signature
+	cert        *x509.Certificate
 }
 
 func (c *wrongSignatureCredentials) Protect(msg *pkicmp.PKIMessage) error {
-	return msg.ProtectWithSignature(c.key, c.cert)
-}
+	// Sign with the correct key to set up header fields and marshal rawHeader/rawBody.
+	sc, err := pkicmp.NewSignatureCredentials(c.matchingKey, c.cert)
+	if err != nil {
+		return err
+	}
+	if err := sc.Protect(msg); err != nil {
+		return err
+	}
 
-func (c *wrongSignatureCredentials) SharedSecret() []byte {
+	// Retrieve the protected bytes and replace the signature with one from wrongKey.
+	data, err := msg.ProtectedData()
+	if err != nil {
+		return err
+	}
+	h := crypto.SHA256.New()
+	h.Write(data)
+	sig, err := c.wrongKey.Sign(rand.Reader, h.Sum(nil), crypto.SHA256)
+	if err != nil {
+		return err
+	}
+	msg.Protection = sig
 	return nil
 }
 

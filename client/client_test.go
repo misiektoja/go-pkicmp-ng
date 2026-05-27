@@ -75,7 +75,7 @@ func mockCMPServer(pki testPKI, respBodyFn func(req *pkicmp.PKIMessage) *pkicmp.
 			}
 		}
 
-		_ = resp.ProtectWithMAC(secret)
+		{ _mc, _ := pkicmp.NewMACCredentials(secret); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -179,7 +179,7 @@ func TestSendCRHappyPath(t *testing.T) {
 				}),
 			}
 		}
-		_ = resp.ProtectWithSignature(sigKey, &sigX509)
+		{ _sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509); _ = _sc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -233,7 +233,7 @@ func TestSendKURHappyPath(t *testing.T) {
 				}),
 			}
 		}
-		_ = resp.ProtectWithSignature(sigKey, &sigX509)
+		{ _sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509); _ = _sc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -346,7 +346,7 @@ func TestPollingHappyPath(t *testing.T) {
 			}
 		}
 
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -401,7 +401,7 @@ func TestPollingMaxRetries(t *testing.T) {
 			}
 		}
 
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -415,7 +415,7 @@ func TestPollingMaxRetries(t *testing.T) {
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.Error(t, err)
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "polling exceeded max retries")
 }
@@ -456,7 +456,7 @@ func TestPollingContextCancellation(t *testing.T) {
 			}
 		}
 
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -492,7 +492,7 @@ func TestHTTPErrorStatus(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "HTTP 500")
 }
@@ -535,7 +535,7 @@ func TestContentTypeValidation(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "unexpected Content-Type")
 }
@@ -555,7 +555,7 @@ func TestServerReturnsErrorBody(t *testing.T) {
 				PKIStatusInfo: pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -638,12 +638,12 @@ func TestWithTemplateExtension(t *testing.T) {
 
 func TestClientErrorString(t *testing.T) {
 	// Error with Err set
-	ce := &client.ClientError{Op: "test op", Err: assert.AnError}
+	ce := &client.Error{Op: "test op", Err: assert.AnError}
 	assert.Contains(t, ce.Error(), "test op")
 	assert.Contains(t, ce.Error(), assert.AnError.Error())
 
 	// Error without Err
-	ce2 := &client.ClientError{Op: "test op only"}
+	ce2 := &client.Error{Op: "test op only"}
 	assert.Equal(t, "cmp: test op only", ce2.Error())
 	assert.Nil(t, ce2.Unwrap())
 }
@@ -706,7 +706,7 @@ func TestServerReturnsRejection(t *testing.T) {
 				}},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -741,7 +741,7 @@ func TestServerReturnsMissingCertifiedKeyPair(t *testing.T) {
 				}},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -754,7 +754,7 @@ func TestServerReturnsMissingCertifiedKeyPair(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "missing certifiedKeyPair")
 }
@@ -778,7 +778,7 @@ func TestServerReturnsUnexpectedBodyType(t *testing.T) {
 				}},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -791,7 +791,7 @@ func TestServerReturnsUnexpectedBodyType(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "unexpected response body type")
 }
@@ -827,7 +827,7 @@ func TestServerReturnsMissingProtection(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify response", ce.Op)
 }
@@ -869,7 +869,7 @@ func TestPollingServerReturnsErrorDuringPoll(t *testing.T) {
 			}
 		}
 
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -928,7 +928,7 @@ func TestSendIRWithRSAKey(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -988,7 +988,7 @@ func TestSendIRWithP384Key(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1048,7 +1048,7 @@ func TestSendIRWithP521Key(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1088,7 +1088,7 @@ func TestPollingHTTPErrorDuringPoll(t *testing.T) {
 					}},
 				}),
 			}
-			_ = resp.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 			der, _ := resp.MarshalBinary()
 			w.Header().Set("Content-Type", "application/pkixcmp")
 			_, _ = w.Write(der)
@@ -1105,7 +1105,7 @@ func TestPollingHTTPErrorDuringPoll(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "HTTP 500")
 }
@@ -1128,7 +1128,7 @@ func TestServerReturnsUnsupportedPVNO(t *testing.T) {
 				}},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1141,7 +1141,7 @@ func TestServerReturnsUnsupportedPVNO(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "unsupported protocol version")
 }
@@ -1217,7 +1217,7 @@ func TestCertConfServerReturnsError(t *testing.T) {
 				}),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1278,7 +1278,7 @@ func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 				}),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1291,7 +1291,7 @@ func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "expected PKIConf")
 }
@@ -1323,7 +1323,7 @@ func TestCertConfHTTPError(t *testing.T) {
 					}},
 				}),
 			}
-			_ = resp.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 			der, _ := resp.MarshalBinary()
 			w.Header().Set("Content-Type", "application/pkixcmp")
 			_, _ = w.Write(der)
@@ -1339,7 +1339,7 @@ func TestCertConfHTTPError(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "certConf exchange", ce.Op)
 }
@@ -1365,7 +1365,7 @@ func TestServerReturnsEncryptedCert(t *testing.T) {
 				}},
 			}),
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1405,7 +1405,7 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 					}},
 				}),
 			}
-			_ = resp.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		} else {
 			// Poll response with wrong transaction ID to trigger verification error
 			resp = &pkicmp.PKIMessage{
@@ -1416,7 +1416,7 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 				},
 				Body: pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}}),
 			}
-			_ = resp.ProtectWithMAC([]byte("secret"))
+			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		}
 
 		der, _ := resp.MarshalBinary()
@@ -1431,7 +1431,7 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify polled response", ce.Op)
 }
@@ -1469,7 +1469,7 @@ func TestPollingUnsupportedPVNODuringPoll(t *testing.T) {
 				Body: pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}}),
 			}
 		}
-		_ = resp.ProtectWithMAC([]byte("secret"))
+		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1482,7 +1482,7 @@ func TestPollingUnsupportedPVNODuringPoll(t *testing.T) {
 	c := client.NewClient(server.URL)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	var ce *client.ClientError
+	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Contains(t, ce.Op, "unsupported protocol version")
 }

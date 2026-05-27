@@ -24,16 +24,16 @@ func TestCertReqMessagesASN1(t *testing.T) {
 				CertReq: CertRequest{
 					CertReqID: 1,
 					CertTemplate: CertTemplate{
-						Subject: NewDirectoryName(pkix.RDNSequence{
-							{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test"}},
-						}),
+					Subject: GeneralName{DirectoryName: pkix.RDNSequence{
+						{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test"}},
+					}},
 					},
 				},
 			},
 		}
 
 		var b cryptobyte.Builder
-		m.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		m.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -102,16 +102,16 @@ func TestCertReqMsgGeneratePOP(t *testing.T) {
 	})
 }
 
-func mustPOPSignatureDigest(t *testing.T, certReq CertRequest, popSig *POPOSigningKey) []byte {
+func mustPOPSignatureDigest(t *testing.T, certReq CertRequest, popSig *popoSigningKey) []byte {
 	t.Helper()
 
-	sigAlg, err := SigAlgFromOID(popSig.Algorithm.Algorithm)
+	sigAlg, err := sigAlgFromOID(popSig.Algorithm.Algorithm)
 	require.NoError(t, err)
 
-	hash := HashFromSigAlg(sigAlg)
+	hash := hashFromSigAlg(sigAlg)
 	require.NotEqual(t, crypto.Hash(0), hash)
 
-	mctx := &MarshalContext{MinRequiredPVNO: PVNO2}
+	mctx := &marshalContext{MinRequiredPVNO: PVNO2}
 	var b cryptobyte.Builder
 	certReq.marshal(mctx, &b)
 	certReqDER, err := b.Bytes()
@@ -154,15 +154,15 @@ func TestCertRequestASN1(t *testing.T) {
 func TestCertTemplateASN1(t *testing.T) {
 	t.Run("MarshalAndUnmarshalFull", func(t *testing.T) {
 		tmpl := CertTemplate{
-			Subject: NewDirectoryName(pkix.RDNSequence{
+			Subject: GeneralName{DirectoryName: pkix.RDNSequence{
 				{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test Template"}},
-			}),
+			}},
 			PublicKey:  []byte{0x30, 0x05, 0x02, 0x03, 0x01, 0x02, 0x03},
 			Extensions: []byte{0x30, 0x03, 0x02, 0x01, 0x01},
 		}
 
 		var b cryptobyte.Builder
-		tmpl.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		tmpl.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -183,16 +183,16 @@ func TestCertTemplateASN1(t *testing.T) {
 	})
 }
 
-// RFC 4211 §4 (ProofOfPossession ASN.1 tests)
+// RFC 4211 §4 (proofOfPossession ASN.1 tests)
 func TestProofOfPossessionASN1(t *testing.T) {
 	t.Run("RAVerified", func(t *testing.T) {
-		p := ProofOfPossession{RAVerified: true}
+		p := proofOfPossession{RAVerified: true}
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		s := cryptobyte.String(marshaled)
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -202,15 +202,15 @@ func TestProofOfPossessionASN1(t *testing.T) {
 	t.Run("RAVerifiedRaw", func(t *testing.T) {
 		// Manually create a [0] NULL tag
 		s := cryptobyte.String([]byte{0x80, 0x00})
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
 		assert.True(t, unmarshaled.RAVerified)
 	})
 
 	t.Run("Signature", func(t *testing.T) {
-		p := ProofOfPossession{
-			Signature: &POPOSigningKey{
+		p := proofOfPossession{
+			Signature: &popoSigningKey{
 				Algorithm: AlgorithmIdentifier{
 					Algorithm: asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11},
 				},
@@ -218,11 +218,11 @@ func TestProofOfPossessionASN1(t *testing.T) {
 			},
 		}
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		s := cryptobyte.String(marshaled)
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -231,38 +231,38 @@ func TestProofOfPossessionASN1(t *testing.T) {
 	})
 
 	t.Run("KeyEnciphermentWithEnvelopedData", func(t *testing.T) {
-		p := ProofOfPossession{
-			KeyEncipherment: &POPOPrivKey{
-				EncryptedKey: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+		p := proofOfPossession{
+			KeyEncipherment: &popoPrivKey{
+				encryptedKey: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 			},
 		}
 
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		s := cryptobyte.String(marshaled)
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
-		assert.NotNil(t, unmarshaled.KeyEncipherment.EncryptedKey)
+		assert.NotNil(t, unmarshaled.KeyEncipherment.encryptedKey)
 	})
 
 	t.Run("KeyAgreementWithSubsequentMessage", func(t *testing.T) {
 		subsequentMessage := int64(0) // encrCert
-		p := ProofOfPossession{
-			KeyAgreement: &POPOPrivKey{
+		p := proofOfPossession{
+			KeyAgreement: &popoPrivKey{
 				SubsequentMessage: &subsequentMessage,
 			},
 		}
 
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		s := cryptobyte.String(marshaled)
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -273,39 +273,39 @@ func TestProofOfPossessionASN1(t *testing.T) {
 		// [2] keyEncipherment (not supported yet)
 		// Wait, I actually implemented it. Let's trigger a real unsupported one.
 		s := cryptobyte.String([]byte{0xbf, 0x1f, 0x00}) // high tag
-		var unmarshaled ProofOfPossession
+		var unmarshaled proofOfPossession
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
 }
 
 func TestPOPOPrivKeyASN1(t *testing.T) {
-	t.Run("EncryptedKey", func(t *testing.T) {
-		p := POPOPrivKey{
-			EncryptedKey: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+	t.Run("encryptedKey", func(t *testing.T) {
+		p := popoPrivKey{
+			encryptedKey: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 		}
 
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
-		assert.NotNil(t, unmarshaled.EncryptedKey)
+		assert.NotNil(t, unmarshaled.encryptedKey)
 	})
 
 	t.Run("SubsequentMessage", func(t *testing.T) {
 		subsequentMessage := int64(0)
-		p := POPOPrivKey{
+		p := popoPrivKey{
 			SubsequentMessage: &subsequentMessage,
 		}
 		var b cryptobyte.Builder
-		p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -315,14 +315,14 @@ func TestPOPOPrivKeyASN1(t *testing.T) {
 	t.Run("MissingSubsequentMessage", func(t *testing.T) {
 		// [1] subsequentMessage but empty content
 		s := cryptobyte.String([]byte{0x81, 0x00})
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
 		s := cryptobyte.String([]byte{0x00})
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -330,7 +330,7 @@ func TestPOPOPrivKeyASN1(t *testing.T) {
 	t.Run("UnmarshalTruncated", func(t *testing.T) {
 		// [1] subsequentMessage but missing integer data
 		s := cryptobyte.String([]byte{0x81, 0x01})
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -338,24 +338,24 @@ func TestPOPOPrivKeyASN1(t *testing.T) {
 	t.Run("UnmarshalUnsupportedVariant", func(t *testing.T) {
 		// [3] agreeMAC (not implemented yet)
 		s := cryptobyte.String([]byte{0x83, 0x00})
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported POPOPrivKey variant")
+		assert.Contains(t, err.Error(), "unsupported popoPrivKey variant")
 	})
 
 	t.Run("UnmarshalDeprecatedVariant", func(t *testing.T) {
 		// [0] thisMessage (deprecated, not implemented)
 		s := cryptobyte.String([]byte{0x80, 0x00})
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
-		assert.Contains(t, err.Error(), "unsupported POPOPrivKey variant")
+		assert.Contains(t, err.Error(), "unsupported popoPrivKey variant")
 	})
 
 	t.Run("InvalidTag", func(t *testing.T) {
 		s := cryptobyte.String([]byte{0x02, 0x01, 0x01}) // INTEGER
-		var unmarshaled POPOPrivKey
+		var unmarshaled popoPrivKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -363,15 +363,15 @@ func TestPOPOPrivKeyASN1(t *testing.T) {
 
 func TestChallengeASN1(t *testing.T) {
 	t.Run("Basic", func(t *testing.T) {
-		c := Challenge{
+		c := challenge{
 			Witness: []byte{0x01, 0x02},
 		}
 
 		var b cryptobyte.Builder
-		c.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		c.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled Challenge
+		var unmarshaled challenge
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -379,16 +379,16 @@ func TestChallengeASN1(t *testing.T) {
 	})
 
 	t.Run("WithEnvelopedDataTriggeringPVNO3", func(t *testing.T) {
-		c := Challenge{
+		c := challenge{
 			Witness:       []byte{0x01, 0x02},
-			EncryptedRand: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+			EncryptedRand: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 		}
 
 		var b cryptobyte.Builder
-		c.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		c.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled Challenge
+		var unmarshaled challenge
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -398,22 +398,22 @@ func TestChallengeASN1(t *testing.T) {
 
 func TestPOPOSigningKeyASN1(t *testing.T) {
 	t.Run("WithPoposkInput", func(t *testing.T) {
-		gn := NewDirectoryName(pkix.RDNSequence{{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Sender"}}})
-		pski := &POPOSigningKeyInput{
+		gn := GeneralName{DirectoryName: pkix.RDNSequence{{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Sender"}}}}
+		pski := &popoSigningKeyInput{
 			Sender:    &gn,
 			PublicKey: []byte{0x30, 0x00},
 		}
-		psk := &POPOSigningKey{
+		psk := &popoSigningKey{
 			PoposkInput: pski,
-			Algorithm:   AlgorithmIdentifier{Algorithm: OIDSHA256},
+			Algorithm:   AlgorithmIdentifier{Algorithm: oidSHA256},
 			Signature:   []byte{0x01, 0x02},
 		}
 
 		var b cryptobyte.Builder
-		psk.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		psk.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
-		var unmarshaled POPOSigningKey
+		var unmarshaled popoSigningKey
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -422,7 +422,7 @@ func TestPOPOSigningKeyASN1(t *testing.T) {
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
 		s := cryptobyte.String([]byte{0x00})
-		var unmarshaled POPOSigningKey
+		var unmarshaled popoSigningKey
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -438,7 +438,7 @@ func TestPOPOSigningKeyASN1(t *testing.T) {
 			})
 			marshaled, _ := b.Bytes()
 			s := cryptobyte.String(marshaled)
-			var unmarshaled POPOSigningKey
+			var unmarshaled popoSigningKey
 			err := unmarshaled.unmarshal(&s)
 			assert.Error(t, err)
 		})
@@ -447,37 +447,37 @@ func TestPOPOSigningKeyASN1(t *testing.T) {
 			var b cryptobyte.Builder
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				// Algorithm
-				alg := AlgorithmIdentifier{Algorithm: OIDSHA256}
-				alg.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				alg := AlgorithmIdentifier{Algorithm: oidSHA256}
+				alg.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				// Not a BIT STRING
 				b.AddASN1Int64(123)
 			})
 			marshaled, _ := b.Bytes()
 			s := cryptobyte.String(marshaled)
-			var unmarshaled POPOSigningKey
+			var unmarshaled popoSigningKey
 			err := unmarshaled.unmarshal(&s)
 			assert.Error(t, err)
 		})
 	})
 }
 
-// RFC 4211 §4.1 (POPOSigningKeyInput ASN.1 tests)
+// RFC 4211 §4.1 (popoSigningKeyInput ASN.1 tests)
 func TestPOPOSigningKeyInputASN1(t *testing.T) {
 	t.Run("MarshalAndUnmarshal", func(t *testing.T) {
-		gn := NewDirectoryName(pkix.RDNSequence{
+		gn := GeneralName{DirectoryName: pkix.RDNSequence{
 			{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "POPO Sender"}},
-		})
-		input := POPOSigningKeyInput{
+		}}
+		input := popoSigningKeyInput{
 			Sender:    &gn,
 			PublicKey: []byte{0x30, 0x05, 0x02, 0x03, 0x01, 0x02, 0x03},
 		}
 
 		var b cryptobyte.Builder
-		input.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		input.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
-		var unmarshaled POPOSigningKeyInput
+		var unmarshaled popoSigningKeyInput
 		s := cryptobyte.String(marshaled)
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
@@ -488,7 +488,7 @@ func TestPOPOSigningKeyInputASN1(t *testing.T) {
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
 		s := cryptobyte.String([]byte{0x00})
-		var unmarshaled POPOSigningKeyInput
+		var unmarshaled popoSigningKeyInput
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -502,7 +502,7 @@ func TestPOPOSigningKeyInputASN1(t *testing.T) {
 		})
 		marshaled, _ := b.Bytes()
 		s := cryptobyte.String(marshaled)
-		var unmarshaled POPOSigningKeyInput
+		var unmarshaled popoSigningKeyInput
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
@@ -514,7 +514,7 @@ func TestPOPOSigningKeyInputASN1(t *testing.T) {
 		})
 		marshaled, _ := b.Bytes()
 		s := cryptobyte.String(marshaled)
-		var unmarshaled POPOSigningKeyInput
+		var unmarshaled popoSigningKeyInput
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})

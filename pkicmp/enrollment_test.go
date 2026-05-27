@@ -23,7 +23,7 @@ func TestCertRepMessageASN1(t *testing.T) {
 		}
 
 		var b cryptobyte.Builder
-		m.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		m.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -88,7 +88,7 @@ func TestCertResponseASN1(t *testing.T) {
 		}
 
 		var b cryptobyte.Builder
-		resp.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		resp.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -110,18 +110,18 @@ func TestCertResponseASN1(t *testing.T) {
 			Status:    PKIStatusInfo{Status: StatusAccepted},
 			CertifiedKeyPair: &CertifiedKeyPair{
 				CertOrEncCert: CertOrEncCert{
-					EncryptedCert: &EncryptedKey{
-						EnvelopedData: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+					EncryptedCert: &encryptedKey{
+						envelopedData: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 					},
 				},
-				PrivateKey: &EncryptedKey{
-					EnvelopedData: &EnvelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
+				PrivateKey: &encryptedKey{
+					envelopedData: &envelopedData{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}},
 				},
 			},
 		}
 
 		var b cryptobyte.Builder
-		resp.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		resp.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -130,8 +130,8 @@ func TestCertResponseASN1(t *testing.T) {
 		err = unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
 
-		assert.NotNil(t, unmarshaled.CertifiedKeyPair.CertOrEncCert.EncryptedCert.EnvelopedData)
-		assert.NotNil(t, unmarshaled.CertifiedKeyPair.PrivateKey.EnvelopedData)
+		assert.NotNil(t, unmarshaled.CertifiedKeyPair.CertOrEncCert.EncryptedCert.envelopedData)
+		assert.NotNil(t, unmarshaled.CertifiedKeyPair.PrivateKey.envelopedData)
 	})
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
@@ -147,7 +147,7 @@ func TestCertResponseASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				b.AddASN1Int64(1)
 				si := PKIStatusInfo{Status: StatusAccepted}
-				si.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				si.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				// CertifiedKeyPair is a SEQUENCE, give it something else
 				b.AddUint8(0x01)
 			})
@@ -165,7 +165,7 @@ func TestCertResponseASN1(t *testing.T) {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 				b.AddASN1Int64(1)
 				si := PKIStatusInfo{Status: StatusAccepted}
-				si.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+				si.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 				// tag OCTET STRING but no data (truncated)
 				b.AddUint8(0x04)
 				b.AddUint8(0x01)
@@ -184,20 +184,20 @@ func TestCertifiedKeyPairASN1(t *testing.T) {
 	t.Run("WithPrivateKeyEncryptedValue", func(t *testing.T) {
 		ckp := CertifiedKeyPair{
 			CertOrEncCert: CertOrEncCert{Certificate: &CMPCertificate{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x01}}},
-			PrivateKey: &EncryptedKey{
-				EncryptedValue: &EncryptedValue{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x02}},
+			PrivateKey: &encryptedKey{
+				encryptedValue: &encryptedValue{Raw: []byte{0x30, 0x03, 0x02, 0x01, 0x02}},
 			},
 		}
 
 		var b cryptobyte.Builder
-		ckp.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		ckp.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, _ := b.Bytes()
 
 		var unmarshaled CertifiedKeyPair
 		s := cryptobyte.String(marshaled)
 		err := unmarshaled.unmarshal(&s)
 		require.NoError(t, err)
-		assert.NotNil(t, unmarshaled.PrivateKey.EncryptedValue)
+		assert.NotNil(t, unmarshaled.PrivateKey.encryptedValue)
 	})
 
 	t.Run("UnmarshalInvalid", func(t *testing.T) {
@@ -212,7 +212,7 @@ func TestCertifiedKeyPairASN1(t *testing.T) {
 		b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 			// certOrEncCert
 			coc := CertOrEncCert{Certificate: &CMPCertificate{Raw: []byte{0x30, 0x00}}}
-			coc.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, b)
+			coc.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
 			// tag [0] Constructed but missing data
 			b.AddUint8(0xa0)
 			b.AddUint8(0x01)
@@ -234,7 +234,7 @@ func TestCertOrEncCertASN1(t *testing.T) {
 		assert.Error(t, err)
 	})
 	t.Run("UnmarshalUnsupported", func(t *testing.T) {
-		// [1] EncryptedKey (not supported yet)
+		// [1] encryptedKey (not supported yet)
 		s := cryptobyte.String([]byte{0xa1, 0x00})
 		var unmarshaled CertOrEncCert
 		err := unmarshaled.unmarshal(&s)
@@ -258,11 +258,11 @@ func TestCertStatusASN1(t *testing.T) {
 			CertHash:   []byte{0x01, 0x02},
 			CertReqID:  3,
 			StatusInfo: &PKIStatusInfo{Status: StatusAccepted},
-			HashAlg:    &AlgorithmIdentifier{Algorithm: OIDSHA256},
+				HashAlg:    &AlgorithmIdentifier{Algorithm: oidSHA256},
 		}
 
 		var b cryptobyte.Builder
-		status.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		status.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -314,7 +314,7 @@ func TestCertConfirmContentASN1(t *testing.T) {
 		}
 
 		var b cryptobyte.Builder
-		c.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		c.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -340,7 +340,7 @@ func TestPollContentASN1(t *testing.T) {
 	t.Run("PollReq", func(t *testing.T) {
 		req := PollReqContent{10, 20}
 		var b cryptobyte.Builder
-		req.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		req.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 
@@ -365,7 +365,7 @@ func TestPollContentASN1(t *testing.T) {
 			{CertReqID: 10, CheckAfter: 30, Reason: PKIFreeText{"wait"}},
 		}
 		var b cryptobyte.Builder
-		rep.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &b)
+		rep.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
 		marshaled, err := b.Bytes()
 		require.NoError(t, err)
 

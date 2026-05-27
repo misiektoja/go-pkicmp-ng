@@ -13,10 +13,10 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
-// MACOptions configures Password-Based MAC protection when defaults are not suitable.
-type MACOptions struct {
+// macOptions configures Password-Based MAC protection when defaults are not suitable.
+type macOptions struct {
 	Secret         []byte
-	Algorithm      asn1.ObjectIdentifier // default: OIDPasswordBasedMac
+	Algorithm      asn1.ObjectIdentifier // default: oidPasswordBasedMac
 	IterationCount int                   // default: 10000
 	KeyLength      int                   // PBMAC1: derived key length (default: MAC hash size)
 	OWF            asn1.ObjectIdentifier // default: SHA-256
@@ -28,21 +28,21 @@ type MACOptions struct {
 	MACParameters []byte
 }
 
-// ProtectWithMAC protects the message using Password-Based MAC with default
+// protectWithMAC protects the message using Password-Based MAC with default
 // parameters (SHA-256 OWF, HMAC-SHA-256, 10000 iterations, random 16-byte salt).
 // RFC 9810 §5.1.3.1, RFC 9481 §7.1 (mandatory algorithm profile).
 //
 // Note: The caller is responsible for setting Header.SenderKID when the sender
 // field is a NULL-DN (RFC 9810 §5.1.1 MUST requirement for MAC-protected messages
 // with unknown sender identity).
-func (m *PKIMessage) ProtectWithMAC(secret []byte) error {
-	return m.ProtectWithMACOptions(MACOptions{Secret: secret, Algorithm: OIDPasswordBasedMac})
+func (m *PKIMessage) protectWithMAC(secret []byte) error {
+	return m.protectWithMACOptions(macOptions{Secret: secret, Algorithm: oidPasswordBasedMac})
 }
 
-// ProtectWithMACOptions protects the message using Password-Based MAC with
-// explicit parameters. Use ProtectWithMAC for the common case.
+// protectWithMACOptions protects the message using Password-Based MAC with
+// explicit parameters. Use protectWithMAC for the common case.
 // RFC 9810 §5.1.3.1.
-func (m *PKIMessage) ProtectWithMACOptions(opts MACOptions) error {
+func (m *PKIMessage) protectWithMACOptions(opts macOptions) error {
 	if m.Body == nil {
 		return &ParseError{Detail: "missing message body"}
 	}
@@ -50,22 +50,22 @@ func (m *PKIMessage) ProtectWithMACOptions(opts MACOptions) error {
 		return &ProtectionError{Reason: ReasonMissingSharedSecret}
 	}
 	if opts.Algorithm == nil {
-		return &ParseError{Detail: "MACOptions.Algorithm is required"}
+		return &ParseError{Detail: "macOptions.Algorithm is required"}
 	}
 
 	// Apply defaults.
 	alg := opts.Algorithm
 	iterCount := opts.IterationCount
 	if iterCount == 0 {
-		iterCount = DefaultPBMIterationCount
+		iterCount = defaultPBMIterationCount
 	}
 	owf := opts.OWF
 	if owf == nil {
-		owf = DefaultPBMOWF
+		owf = defaultPBMOWF
 	}
 	mac := opts.MAC
 	if mac == nil {
-		mac = DefaultPBMMAC
+		mac = defaultPBMMAC
 	}
 
 	if err := validatePBMIterationCount(iterCount); err != nil {
@@ -79,20 +79,20 @@ func (m *PKIMessage) ProtectWithMACOptions(opts MACOptions) error {
 	}
 
 	// Generate random salt.
-	salt := make([]byte, DefaultPBMSaltLength)
+	salt := make([]byte, defaultPBMSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return err
 	}
 
-	// Build PBMParameter and serialize.
-	p := PBMParameter{
+	// Build pbmParameter and serialize.
+	p := pbmParameter{
 		Salt:           salt,
 		IterationCount: iterCount,
 		OWF:            AlgorithmIdentifier{Algorithm: owf, Parameters: opts.OWFParameters},
 		MAC:            AlgorithmIdentifier{Algorithm: mac, Parameters: opts.MACParameters},
 	}
 	var pb cryptobyte.Builder
-	p.marshal(&MarshalContext{MinRequiredPVNO: PVNO2}, &pb)
+	p.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &pb)
 	params, err := pb.Bytes()
 	if err != nil {
 		return err
@@ -124,24 +124,69 @@ func (m *PKIMessage) ProtectWithMACOptions(opts MACOptions) error {
 	return nil
 }
 
-// PBMAC1Options configures PBMAC1 protection (RFC 8018 §7.1, RFC 9481 §6.1.2).
-type PBMAC1Options struct {
+// protectWithMACAlgorithm protects the message by echoing the algorithm
+// parameters from a received message (with a fresh salt). Used by servers
+// to match the request's protection suite. RFC 9810 §5.1.3.
+func (m *PKIMessage) protectWithMACAlgorithm(secret []byte, alg *AlgorithmIdentifier) error {
+	if alg.Algorithm.Equal(oidPBMAC1) {
+		var params struct {
+			KeyDerivationFunc algorithmIdentifierASN1
+			MessageAuthScheme algorithmIdentifierASN1
+		}
+		if _, err := asn1.Unmarshal(alg.Parameters, &params); err != nil {
+			return &ParseError{Detail: "invalid PBMAC1-params: " + err.Error()}
+		}
+		if !params.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
+			return &ParseError{Detail: fmt.Sprintf("unsupported KDF: %v", params.KeyDerivationFunc.Algorithm)}
+		}
+		var kdfParams struct {
+			Salt           []byte
+			IterationCount int
+			KeyLength      int
+			PRF            algorithmIdentifierASN1
+		}
+		if _, err := asn1.Unmarshal(params.KeyDerivationFunc.Parameters.FullBytes, &kdfParams); err != nil {
+			return &ParseError{Detail: "invalid PBKDF2-params: " + err.Error()}
+		}
+		return m.protectWithPBMAC1Options(pbmac1Options{
+			Secret:         secret,
+			IterationCount: kdfParams.IterationCount,
+			KeyLength:      kdfParams.KeyLength,
+			PRF:            kdfParams.PRF.Algorithm,
+			MAC:            params.MessageAuthScheme.Algorithm,
+		})
+	}
+	if alg.Algorithm.Equal(oidPasswordBasedMac) {
+		var p pbmParameter
+		params := cryptobyte.String(alg.Parameters)
+		if err := p.unmarshal(&params); err != nil {
+			return err
+		}
+		return m.protectWithMACOptions(macOptions{
+			Secret:         secret,
+			Algorithm:      alg.Algorithm,
+			IterationCount: p.IterationCount,
+			OWF:            p.OWF.Algorithm,
+			MAC:            p.MAC.Algorithm,
+			OWFParameters:  p.OWF.Parameters,
+			MACParameters:  p.MAC.Parameters,
+		})
+	}
+	return &ParseError{Detail: fmt.Sprintf("unsupported MAC algorithm: %v", alg.Algorithm)}
+}
+
+// pbmac1Options configures PBMAC1 protection (RFC 8018 §7.1, RFC 9481 §6.1.2).
+type pbmac1Options struct {
 	Secret         []byte
 	IterationCount int                   // default: 10000
 	KeyLength      int                   // default: MAC hash size
-	PRF            asn1.ObjectIdentifier // default: OIDHMACWithSHA256 (for PBKDF2)
-	MAC            asn1.ObjectIdentifier // default: OIDHMACWithSHA256 (messageAuthScheme)
+	PRF            asn1.ObjectIdentifier // default: oidHMACWithSHA256 (for PBKDF2)
+	MAC            asn1.ObjectIdentifier // default: oidHMACWithSHA256 (messageAuthScheme)
 }
 
-// ProtectWithPBMAC1 protects the message using PBMAC1 with default parameters.
-// RFC 8018 §7.1, RFC 9481 §6.1.2 (MANDATORY algorithm profile).
-func (m *PKIMessage) ProtectWithPBMAC1(secret []byte) error {
-	return m.ProtectWithPBMAC1Options(PBMAC1Options{Secret: secret})
-}
-
-// ProtectWithPBMAC1Options protects the message using PBMAC1 with explicit parameters.
+// protectWithPBMAC1Options protects the message using PBMAC1 with explicit parameters.
 // RFC 8018 §7.1, RFC 9481 §6.1.2.
-func (m *PKIMessage) ProtectWithPBMAC1Options(opts PBMAC1Options) error {
+func (m *PKIMessage) protectWithPBMAC1Options(opts pbmac1Options) error {
 	if m.Body == nil {
 		return &ParseError{Detail: "missing message body"}
 	}
@@ -151,15 +196,15 @@ func (m *PKIMessage) ProtectWithPBMAC1Options(opts PBMAC1Options) error {
 
 	iterCount := opts.IterationCount
 	if iterCount == 0 {
-		iterCount = DefaultPBMIterationCount
+		iterCount = defaultPBMIterationCount
 	}
 	prf := opts.PRF
 	if prf == nil {
-		prf = OIDHMACWithSHA256
+		prf = oidHMACWithSHA256
 	}
 	mac := opts.MAC
 	if mac == nil {
-		mac = OIDHMACWithSHA256
+		mac = oidHMACWithSHA256
 	}
 
 	if err := validatePBMIterationCount(iterCount); err != nil {
@@ -175,7 +220,7 @@ func (m *PKIMessage) ProtectWithPBMAC1Options(opts PBMAC1Options) error {
 	}
 
 	// Generate random salt (RFC 8018 §7.1).
-	salt := make([]byte, DefaultPBMSaltLength)
+	salt := make([]byte, defaultPBMSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return err
 	}
@@ -192,7 +237,7 @@ func (m *PKIMessage) ProtectWithPBMAC1Options(opts PBMAC1Options) error {
 	}
 
 	m.Header.ProtectionAlg = &AlgorithmIdentifier{
-		Algorithm:  OIDPBMAC1,
+		Algorithm:  oidPBMAC1,
 		Parameters: params,
 	}
 
@@ -236,7 +281,7 @@ func marshalPBMAC1Params(salt []byte, iterCount, keyLen int, prf, mac asn1.Objec
 		KeyDerivationFunc algorithmIdentifierASN1
 		MessageAuthScheme algorithmIdentifierASN1
 	}{
-		KeyDerivationFunc: algorithmIdentifierASN1{Algorithm: OIDPBKDF2, Parameters: asn1.RawValue{FullBytes: pbkdf2Params}},
+		KeyDerivationFunc: algorithmIdentifierASN1{Algorithm: oidPBKDF2, Parameters: asn1.RawValue{FullBytes: pbkdf2Params}},
 		MessageAuthScheme: algorithmIdentifierASN1{Algorithm: mac},
 	})
 }
@@ -247,12 +292,12 @@ type algorithmIdentifierASN1 struct {
 	Parameters asn1.RawValue `asn1:"optional"`
 }
 
-// ProtectWithSignature signs the message using the given key.
+// protectWithSignature signs the message using the given key.
 // The signature algorithm is inferred from the key type.
 // cert is added to ExtraCerts and its SubjectKeyId is set as Header.SenderKID.
 // chain provides optional intermediate certificates to include in ExtraCerts.
 // RFC 9810 §5.1.3.3.
-func (m *PKIMessage) ProtectWithSignature(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) error {
+func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) error {
 	if m.Body == nil {
 		return &ParseError{Detail: "missing message body"}
 	}
@@ -284,8 +329,8 @@ func (m *PKIMessage) ProtectWithSignature(key crypto.Signer, cert *x509.Certific
 		return err
 	}
 
-	sigAlg, _ := SigAlgFromOID(sigAlgOID)
-	hash := HashFromSigAlg(sigAlg)
+	sigAlg, _ := sigAlgFromOID(sigAlgOID)
+	hash := hashFromSigAlg(sigAlg)
 
 	var opts crypto.SignerOpts
 	var digest []byte
@@ -308,10 +353,10 @@ func (m *PKIMessage) ProtectWithSignature(key crypto.Signer, cert *x509.Certific
 	return nil
 }
 
-// marshalForProtection marshals header and body into RawHeader/RawBody for
+// marshalForProtection marshals header and body into rawHeader/rawBody for
 // protection computation. This mirrors the logic from the old Protect method.
 func (m *PKIMessage) marshalForProtection() error {
-	mctx := &MarshalContext{MinRequiredPVNO: PVNO2}
+	mctx := &marshalContext{MinRequiredPVNO: PVNO2}
 	if m.Header.PVNO > PVNO2 {
 		mctx.MinRequiredPVNO = m.Header.PVNO
 	}
@@ -319,7 +364,7 @@ func (m *PKIMessage) marshalForProtection() error {
 	var bodyBuilder cryptobyte.Builder
 	m.Body.marshal(mctx, &bodyBuilder)
 	var err error
-	m.RawBody, err = bodyBuilder.Bytes()
+	m.rawBody, err = bodyBuilder.Bytes()
 	if err != nil {
 		return err
 	}
@@ -328,14 +373,14 @@ func (m *PKIMessage) marshalForProtection() error {
 
 	var headerBuilder cryptobyte.Builder
 	m.Header.marshal(mctx, &headerBuilder)
-	m.RawHeader, err = headerBuilder.Bytes()
+	m.rawHeader, err = headerBuilder.Bytes()
 	if err != nil {
 		return err
 	}
 	return nil
 }
 
-// PBMParameter per RFC 9810 §5.1.3.1.
+// pbmParameter per RFC 9810 §5.1.3.1.
 //
 //	PBMParameter ::= SEQUENCE {
 //	   salt                OCTET STRING,
@@ -343,14 +388,14 @@ func (m *PKIMessage) marshalForProtection() error {
 //	   iterationCount      INTEGER,
 //	   mac                 AlgorithmIdentifier
 //	}
-type PBMParameter struct {
+type pbmParameter struct {
 	Salt           []byte
 	OWF            AlgorithmIdentifier
 	IterationCount int
 	MAC            AlgorithmIdentifier
 }
 
-func (p *PBMParameter) unmarshal(s *cryptobyte.String) error {
+func (p *pbmParameter) unmarshal(s *cryptobyte.String) error {
 	var seq cryptobyte.String
 	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
 		return &ParseError{Detail: "invalid PBMParameter sequence"}
@@ -372,7 +417,7 @@ func (p *PBMParameter) unmarshal(s *cryptobyte.String) error {
 	return p.MAC.unmarshal(&seq)
 }
 
-func (p *PBMParameter) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (p *pbmParameter) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1OctetString(p.Salt)
 		p.OWF.marshal(mctx, b)
@@ -382,34 +427,34 @@ func (p *PBMParameter) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
 }
 
 var (
-	// DefaultPBMSaltLength is the default length of the salt for Password-Based MAC.
+	// defaultPBMSaltLength is the default length of the salt for Password-Based MAC.
 	// RFC 4211 §4.4 recommends at least 8 octets; 16 provides additional security margin.
-	DefaultPBMSaltLength = 16
+	defaultPBMSaltLength = 16
 
-	// DefaultPBMIterationCount is the default number of iterations for Password-Based MAC.
+	// defaultPBMIterationCount is the default number of iterations for Password-Based MAC.
 	// RFC 4211 §4.4 requires a minimum of 100; 10000 is a local policy choice
 	// balancing security against computation cost.
-	DefaultPBMIterationCount = 10000
+	defaultPBMIterationCount = 10000
 
-	// DefaultPBMOWF is the default one-way function (OWF) algorithm OID for Password-Based MAC.
-	DefaultPBMOWF = OIDSHA256
+	// defaultPBMOWF is the default one-way function (OWF) algorithm OID for Password-Based MAC.
+	defaultPBMOWF = oidSHA256
 
-	// DefaultPBMMAC is the default MAC algorithm OID for Password-Based MAC.
-	DefaultPBMMAC = OIDHMACWithSHA256
+	// defaultPBMMAC is the default MAC algorithm OID for Password-Based MAC.
+	defaultPBMMAC = oidHMACWithSHA256
 
-	// DefaultPBMMinIterationCount and DefaultPBMMaxIterationCount bound PBM
+	// defaultPBMMinIterationCount and defaultPBMMaxIterationCount bound PBM
 	// iteration processing to reduce CPU DoS risk from untrusted inputs.
 	// These are local policy values; RFC 4211 §4.4 requires a minimum of 100
 	// but no maximum is specified by any RFC. PBKDF2 commonly uses 262144 (2^18).
-	DefaultPBMMinIterationCount = 1
-	DefaultPBMMaxIterationCount = 500000
+	defaultPBMMinIterationCount = 1
+	defaultPBMMaxIterationCount = 500000
 )
 
 func validatePBMIterationCount(iterationCount int) error {
-	if iterationCount < DefaultPBMMinIterationCount {
+	if iterationCount < defaultPBMMinIterationCount {
 		return &ParseError{Detail: fmt.Sprintf("PBM iterationCount too small: %d", iterationCount)}
 	}
-	if iterationCount > DefaultPBMMaxIterationCount {
+	if iterationCount > defaultPBMMaxIterationCount {
 		return &ParseError{Detail: fmt.Sprintf("PBM iterationCount too large: %d", iterationCount)}
 	}
 	return nil

@@ -30,7 +30,8 @@ func TestOpenSSLInitialize(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
+	// OpenSSL mock server only supports PBM, not PBMAC1.
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"), pkicmp.WithPBM())
 	require.NoError(t, err)
 
 	// The OpenSSL mock server signs responses with its server certificate even for
@@ -64,7 +65,8 @@ func TestOpenSSLInitializeWrongSecret(t *testing.T) {
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
 
-	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"))
+	// OpenSSL mock server only supports PBM, not PBMAC1.
+	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"), pkicmp.WithPBM())
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
@@ -207,7 +209,8 @@ func TestOpenSSLInitializeP10CR(t *testing.T) {
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	require.NoError(t, err)
 
-	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"))
+	// OpenSSL mock server only supports PBM, not PBMAC1.
+	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"), pkicmp.WithPBM())
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,
@@ -438,7 +441,8 @@ func TestOpenSSLInitializeP10CRWrongSecret(t *testing.T) {
 	csrDER, err := x509.CreateCertificateRequest(rand.Reader, template, key)
 	require.NoError(t, err)
 
-	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"))
+	// OpenSSL mock server only supports PBM, not PBMAC1.
+	creds, err := pkicmp.NewMACCredentials([]byte("wrong-secret"), pkicmp.WithPBM())
 	require.NoError(t, err)
 
 	c := client.NewClient(srv.Endpoint,

@@ -1,7 +1,6 @@
 package pkicmp
 
 import (
-	"crypto/x509"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -21,31 +20,7 @@ type CertRepMessage struct {
 	Response []CertResponse
 }
 
-// TrustedCAPubs returns parsed CA certificates from the caPubs field.
-//
-// Per RFC 9810 §5.3.2, caPubs may be directly trusted as root CA
-// certificates when the message was protected by a shared secret.
-// RFC 9810 §8.9 allows trust anchor provisioning via signature-protected
-// messages too, but that requires local policy to authorize the sender;
-// callers needing that must handle caPubs directly.
-// The caller must pass the VerifyResult from a successful Verify call.
-// If the message was not MAC-verified, TrustedCAPubs returns nil.
-func (m *CertRepMessage) TrustedCAPubs(vr *VerifyResult) []*x509.Certificate {
-	if vr == nil || !vr.MACVerified {
-		return nil
-	}
-	var certs []*x509.Certificate
-	for _, c := range m.CAPubs {
-		parsed, err := c.Parse()
-		if err != nil {
-			continue
-		}
-		certs = append(certs, parsed)
-	}
-	return certs
-}
-
-func (m *CertRepMessage) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (m *CertRepMessage) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		if len(m.CAPubs) > 0 {
 			// caPubs [1] SEQUENCE SIZE (1..MAX) OF CMPCertificate OPTIONAL
@@ -122,7 +97,7 @@ type CertResponse struct {
 	RspInfo []byte
 }
 
-func (r *CertResponse) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (r *CertResponse) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1Int64(r.CertReqID)
 		r.Status.marshal(mctx, b)
@@ -169,17 +144,17 @@ func (r *CertResponse) unmarshal(s *cryptobyte.String) error {
 //
 //	CertifiedKeyPair ::= SEQUENCE {
 //	    certOrEncCert       CertOrEncCert,
-//	    privateKey      [0] EncryptedKey         OPTIONAL,
+//	    privateKey      [0] encryptedKey         OPTIONAL,
 //	    publicationInfo [1] PKIPublicationInfo   OPTIONAL
 //	}
 type CertifiedKeyPair struct {
 	// CertOrEncCert carries either the issued certificate or encrypted certificate.
 	CertOrEncCert CertOrEncCert
 	// PrivateKey carries an optional encrypted private key for the subject.
-	PrivateKey *EncryptedKey
+	PrivateKey *encryptedKey
 }
 
-func (ckp *CertifiedKeyPair) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (ckp *CertifiedKeyPair) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		ckp.CertOrEncCert.marshal(mctx, b)
 		if ckp.PrivateKey != nil {
@@ -203,7 +178,7 @@ func (ckp *CertifiedKeyPair) unmarshal(s *cryptobyte.String) error {
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
 			return &ParseError{Detail: "invalid privateKey tag"}
 		}
-		ckp.PrivateKey = &EncryptedKey{}
+		ckp.PrivateKey = &encryptedKey{}
 		if err := ckp.PrivateKey.unmarshal(&sub); err != nil {
 			return err
 		}
@@ -215,16 +190,16 @@ func (ckp *CertifiedKeyPair) unmarshal(s *cryptobyte.String) error {
 //
 //	CertOrEncCert ::= CHOICE {
 //	    certificate     [0] CMPCertificate,
-//	    encryptedCert   [1] EncryptedKey
+//	    encryptedCert   [1] encryptedKey
 //	}
 type CertOrEncCert struct {
 	// Certificate is the plaintext issued certificate.
 	Certificate *CMPCertificate
 	// EncryptedCert is an encrypted-certificate alternative.
-	EncryptedCert *EncryptedKey
+	EncryptedCert *encryptedKey
 }
 
-func (c *CertOrEncCert) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *CertOrEncCert) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	if c.Certificate != nil {
 		b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			c.Certificate.marshal(mctx, b)
@@ -253,7 +228,7 @@ func (c *CertOrEncCert) unmarshal(s *cryptobyte.String) error {
 		if !s.ReadASN1(&sub, tag) {
 			return &ParseError{Detail: "invalid encryptedCert tag"}
 		}
-		c.EncryptedCert = &EncryptedKey{}
+		c.EncryptedCert = &encryptedKey{}
 		return c.EncryptedCert.unmarshal(&sub)
 	}
 	return &ParseError{Detail: "unsupported CertOrEncCert variant"}
@@ -264,7 +239,7 @@ func (c *CertOrEncCert) unmarshal(s *cryptobyte.String) error {
 //	CertConfirmContent ::= SEQUENCE OF CertStatus
 type CertConfirmContent []CertStatus
 
-func (c *CertConfirmContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *CertConfirmContent) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		for _, status := range *c {
 			status.marshal(mctx, b)
@@ -287,12 +262,6 @@ func (c *CertConfirmContent) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-// NewCertConfirmContent creates a new CertConfirmContent.
-func NewCertConfirmContent(status ...CertStatus) *CertConfirmContent {
-	c := CertConfirmContent(status)
-	return &c
-}
-
 // CertStatus per RFC 9810 §5.3.18.
 //
 //	CertStatus ::= SEQUENCE {
@@ -312,7 +281,7 @@ type CertStatus struct {
 	HashAlg    *AlgorithmIdentifier // CMPv3
 }
 
-func (s *CertStatus) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (s *CertStatus) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1(cbasn1.OCTET_STRING, func(b *cryptobyte.Builder) {
 			b.AddBytes(s.CertHash)
@@ -361,29 +330,12 @@ func (s *CertStatus) unmarshal(inner *cryptobyte.String) error {
 	return nil
 }
 
-// NewCertStatus creates a new CertStatus for CMPv2.
-func NewCertStatus(certHash []byte, certReqID int64) CertStatus {
-	return CertStatus{
-		CertHash:  certHash,
-		CertReqID: certReqID,
-	}
-}
-
-// NewCertStatusWithHashAlg creates a new CertStatus with a hash algorithm for CMPv3.
-func NewCertStatusWithHashAlg(certHash []byte, certReqID int64, hashAlg *AlgorithmIdentifier) CertStatus {
-	return CertStatus{
-		CertHash:  certHash,
-		CertReqID: certReqID,
-		HashAlg:   hashAlg,
-	}
-}
-
 // PKIConfirmContent per RFC 9810 §5.3.19.
 //
 //	PKIConfirmContent ::= NULL
 type PKIConfirmContent struct{}
 
-func (c *PKIConfirmContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *PKIConfirmContent) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	// PKIConfirmContent ::= NULL — encoded as ASN.1 NULL inside the constructed body tag.
 	b.AddASN1(cbasn1.NULL, func(b *cryptobyte.Builder) {})
 }
@@ -409,7 +361,7 @@ func (c *PKIConfirmContent) unmarshal(s *cryptobyte.String) error {
 //	}
 type PollReqContent []int64
 
-func (c *PollReqContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *PollReqContent) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		for _, id := range *c {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
@@ -456,7 +408,7 @@ type PollRepItem struct {
 	Reason PKIFreeText
 }
 
-func (c *PollRepContent) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *PollRepContent) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		for _, item := range *c {
 			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {

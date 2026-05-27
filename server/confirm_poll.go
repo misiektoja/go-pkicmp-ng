@@ -9,15 +9,28 @@ import (
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
-// issuedCertContextKey is used to pass the issued certificate to the handler
-// during certConf processing, enabling certHash verification.
-type issuedCertContextKey struct{}
+// issuedInfoContextKey passes issuance details to the handler during certConf.
+type issuedInfoContextKey struct{}
+
+// issuedInfo bundles the issued certificate and the CA's opaque IssueRef.
+type issuedInfo struct {
+	cert     *x509.Certificate
+	issueRef any
+}
 
 // IssuedCertFromContext retrieves the issued certificate stored by the server
 // during certConf processing. Handlers can use this for certHash verification.
 func IssuedCertFromContext(ctx context.Context) *x509.Certificate {
-	cert, _ := ctx.Value(issuedCertContextKey{}).(*x509.Certificate)
-	return cert
+	info, _ := ctx.Value(issuedInfoContextKey{}).(issuedInfo)
+	return info.cert
+}
+
+// IssueRefFromContext retrieves the opaque IssueRef stored by the server
+// during certConf processing. This is the value the CA set in
+// [Response.IssueRef] when it issued the certificate.
+func IssueRefFromContext(ctx context.Context) any {
+	info, _ := ctx.Value(issuedInfoContextKey{}).(issuedInfo)
+	return info.issueRef
 }
 
 // handleCertConf processes certConf messages (RFC 9810 §5.3.18).
@@ -42,7 +55,7 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 	}
 
 	// Look up the issued cert entry using composite key — automatically rejects different credentials.
-	credID, err := sender.CredentialID()
+	credID, err := sender.credentialID()
 	if err != nil {
 		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadMessageCheck,
@@ -125,11 +138,11 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 	// Clean up stored cert and transaction.
 	s.delete(credID, txnID)
 
-	// Notify handler about the confirmation, passing the issued cert via context.
-	ctx = context.WithValue(ctx, issuedCertContextKey{}, entry.cert)
+	// Notify handler about the confirmation, passing issuance details via context.
+	ctx = context.WithValue(ctx, issuedInfoContextKey{}, issuedInfo{cert: entry.cert, issueRef: entry.issueRef})
 	_, _ = s.handler.HandleCMP(ctx, msg, sender)
 
-	return s.buildResponseWithMACOptions(msg, pkicmp.NewPKIConfBody(), sender, entry.macOptions)
+	return s.buildResponseWithEchoProtection(msg, pkicmp.NewPKIConfBody(), sender, entry.protectionParams)
 }
 
 // computeCertHash computes the certificate hash using the hash algorithm
@@ -174,5 +187,3 @@ func publicKeysEqual(a, b crypto.PublicKey) bool {
 	}
 	return bytes.Equal(aDER, bDER)
 }
-
-

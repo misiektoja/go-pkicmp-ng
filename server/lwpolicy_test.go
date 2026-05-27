@@ -57,7 +57,7 @@ func TestRAVerifiedPOPRejected(t *testing.T) {
 				CertReqID:    0,
 				CertTemplate: pkicmp.CertTemplate{PublicKey: pubDER},
 			},
-			Popo: &pkicmp.ProofOfPossession{RAVerified: true},
+			Popo: pkicmp.NewRAVerifiedPOP(),
 		},
 	}
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&msgs), macMessageOpts())
@@ -100,7 +100,7 @@ func TestMissingPOPRejected(t *testing.T) {
 			CertReq: pkicmp.CertRequest{
 				CertReqID: 0,
 				CertTemplate: pkicmp.CertTemplate{
-					Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "no-pop-test"}.ToRDNSequence()),
+					Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "no-pop-test"}),
 					PublicKey: pubDER,
 				},
 			},
@@ -147,13 +147,11 @@ func TestKeyEnciphermentPOPRejected(t *testing.T) {
 			CertReq: pkicmp.CertRequest{
 				CertReqID: 0,
 				CertTemplate: pkicmp.CertTemplate{
-					Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "ke-pop-test"}.ToRDNSequence()),
+					Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "ke-pop-test"}),
 					PublicKey: pubDER,
 				},
 			},
-			Popo: &pkicmp.ProofOfPossession{
-				KeyEncipherment: &pkicmp.POPOPrivKey{SubsequentMessage: &subMsg},
-			},
+			Popo: pkicmp.NewKeyEnciphermentPOP(&subMsg),
 		},
 	}
 	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&msgs), macMessageOpts())

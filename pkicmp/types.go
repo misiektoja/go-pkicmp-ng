@@ -85,9 +85,9 @@ const (
 	tagDirectoryName  = 4
 )
 
-// NewDirectoryName creates a GeneralName of type directoryName.
-func NewDirectoryName(name pkix.RDNSequence) GeneralName {
-	return GeneralName{DirectoryName: name}
+// NewDirectoryName creates a GeneralName of type directoryName from a pkix.Name.
+func NewDirectoryName(name pkix.Name) GeneralName {
+	return GeneralName{DirectoryName: name.ToRDNSequence()}
 }
 
 // NewDirectoryNameFromRawDER creates a GeneralName of type directoryName from
@@ -102,20 +102,15 @@ func NewDirectoryNameFromRawDER(rawName []byte) GeneralName {
 	return GeneralName{Raw: raw}
 }
 
-// NewRFC822Name creates a GeneralName of type rfc822Name.
-func NewRFC822Name(email string) GeneralName {
-	return GeneralName{RFC822Name: email}
-}
-
 // Internal cryptobyte helpers
 
-func (a *AlgorithmIdentifier) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (a *AlgorithmIdentifier) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		a.marshalInner(mctx, b)
 	})
 }
 
-func (a *AlgorithmIdentifier) marshalInner(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (a *AlgorithmIdentifier) marshalInner(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1ObjectIdentifier(a.Algorithm)
 	if len(a.Parameters) > 0 {
 		b.AddBytes(a.Parameters)
@@ -150,7 +145,7 @@ func (a *AlgorithmIdentifier) unmarshalInner(seq *cryptobyte.String) error {
 	return nil
 }
 
-func (itv *InfoTypeAndValue) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (itv *InfoTypeAndValue) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1ObjectIdentifier(itv.InfoType)
 		if len(itv.InfoValue) > 0 {
@@ -173,7 +168,7 @@ func (itv *InfoTypeAndValue) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (ft *PKIFreeText) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (ft *PKIFreeText) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	if len(*ft) == 0 {
 		return
 	}
@@ -201,7 +196,7 @@ func (ft *PKIFreeText) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (gn *GeneralName) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (gn *GeneralName) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	// If parsed from wire (Raw is set), write back verbatim to preserve encoding.
 	if len(gn.Raw) > 0 {
 		b.AddBytes(gn.Raw)
@@ -299,7 +294,7 @@ func parseRDNSequence(s *cryptobyte.String, rdn *pkix.RDNSequence) error {
 	return err
 }
 
-func (c *CMPCertificate) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (c *CMPCertificate) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	// CMPCertificate ::= CHOICE { x509v3PKCert Certificate, ... }
 	// x509v3PKCert is Certificate (SEQUENCE).
 	b.AddBytes(c.Raw)
@@ -316,19 +311,19 @@ func (c *CMPCertificate) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-// EnvelopedData per RFC 5652 §6.
-type EnvelopedData struct {
-	// Raw contains the DER-encoded EnvelopedData value (RFC 5652 §6.1).
+// envelopedData per RFC 5652 §6.
+type envelopedData struct {
+	// Raw contains the DER-encoded envelopedData value (RFC 5652 §6.1).
 	Raw []byte
 }
 
-func (e *EnvelopedData) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (e *envelopedData) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		e.marshalInner(mctx, b)
 	})
 }
 
-func (e *EnvelopedData) marshalInner(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (e *envelopedData) marshalInner(mctx *marshalContext, b *cryptobyte.Builder) {
 	// Raw contains the full SEQUENCE, so we need to strip it if we want the inner content.
 	content, err := stripSequence(e.Raw)
 	if err != nil {
@@ -339,83 +334,83 @@ func (e *EnvelopedData) marshalInner(mctx *MarshalContext, b *cryptobyte.Builder
 	b.AddBytes(content)
 }
 
-func (e *EnvelopedData) unmarshal(s *cryptobyte.String) error {
+func (e *envelopedData) unmarshal(s *cryptobyte.String) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return &ParseError{Detail: "invalid EnvelopedData element"}
+		return &ParseError{Detail: "invalid envelopedData element"}
 	}
 	e.Raw = der
 	return nil
 }
 
-func (e *EnvelopedData) unmarshalInner(s *cryptobyte.String) error {
+func (e *envelopedData) unmarshalInner(s *cryptobyte.String) error {
 	// s is the content. We wrap it in a SEQUENCE tag to get valid DER.
 	e.Raw = wrapSequence(*s)
 	*s = nil
 	return nil
 }
 
-// EncryptedValue per RFC 4211 §2.1.
-// Deprecated: use EnvelopedData instead.
-type EncryptedValue struct {
-	// Raw contains the DER-encoded EncryptedValue CHOICE value.
+// encryptedValue per RFC 4211 §2.1.
+// Deprecated: use envelopedData instead.
+type encryptedValue struct {
+	// Raw contains the DER-encoded encryptedValue CHOICE value.
 	Raw []byte
 }
 
-func (e *EncryptedValue) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
+func (e *encryptedValue) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddBytes(e.Raw)
 }
 
-func (e *EncryptedValue) unmarshal(s *cryptobyte.String) error {
+func (e *encryptedValue) unmarshal(s *cryptobyte.String) error {
 	var der cryptobyte.String
 	var tag cbasn1.Tag
 	if !s.ReadAnyASN1Element(&der, &tag) {
-		return &ParseError{Detail: "invalid EncryptedValue element"}
+		return &ParseError{Detail: "invalid encryptedValue element"}
 	}
 	e.Raw = der
 	return nil
 }
 
-// EncryptedKey per RFC 9810 §5.2.2.
+// encryptedKey per RFC 9810 §5.2.2.
 //
-//	EncryptedKey ::= CHOICE {
-//	    encryptedValue       EncryptedValue,
-//	    envelopedData    [0] EnvelopedData }
-type EncryptedKey struct {
-	// EncryptedValue is the legacy CRMF-style encrypted container.
-	EncryptedValue *EncryptedValue
-	// EnvelopedData is the CMS EnvelopedData-based container.
-	EnvelopedData *EnvelopedData
+//	encryptedKey ::= CHOICE {
+//	    encryptedValue       encryptedValue,
+//	    envelopedData    [0] envelopedData }
+type encryptedKey struct {
+	// encryptedValue is the legacy CRMF-style encrypted container.
+	encryptedValue *encryptedValue
+	// envelopedData is the CMS envelopedData-based container.
+	envelopedData *envelopedData
 }
 
-func (k *EncryptedKey) marshal(mctx *MarshalContext, b *cryptobyte.Builder) {
-	if k.EnvelopedData != nil {
+func (k *encryptedKey) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+	if k.envelopedData != nil {
 		mctx.MinRequiredPVNO = PVNO3
-		// envelopedData [0] EnvelopedData (IMPLICIT)
+		// envelopedData [0] envelopedData (IMPLICIT)
 		b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-			k.EnvelopedData.marshalInner(mctx, b)
+			k.envelopedData.marshalInner(mctx, b)
 		})
-	} else if k.EncryptedValue != nil {
-		k.EncryptedValue.marshal(mctx, b)
+	} else if k.encryptedValue != nil {
+		k.encryptedValue.marshal(mctx, b)
 	}
 }
 
-func (k *EncryptedKey) unmarshal(s *cryptobyte.String) error {
+func (k *encryptedKey) unmarshal(s *cryptobyte.String) error {
 	if s.Empty() {
-		return &ParseError{Detail: "missing EncryptedKey"}
+		return &ParseError{Detail: "missing encryptedKey"}
 	}
 	tag := cbasn1.Tag((*s)[0])
 	if tag == cbasn1.Tag(0).ContextSpecific().Constructed() {
 		var sub cryptobyte.String
 		if !s.ReadASN1(&sub, tag) {
-			return &ParseError{Detail: "invalid EnvelopedData tag"}
+			return &ParseError{Detail: "invalid envelopedData tag"}
 		}
-		k.EnvelopedData = &EnvelopedData{}
-		return k.EnvelopedData.unmarshalInner(&sub)
+		k.envelopedData = &envelopedData{}
+		return k.envelopedData.unmarshalInner(&sub)
 	}
-	k.EncryptedValue = &EncryptedValue{}
-	return k.EncryptedValue.unmarshal(s)
+	k.encryptedValue = &encryptedValue{}
+	return k.encryptedValue.unmarshal(s)
 }
 
 // Helper to strip SEQUENCE tag and length

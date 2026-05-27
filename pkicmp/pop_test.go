@@ -24,7 +24,7 @@ func TestVerifyPOP(t *testing.T) {
 			CertReq: CertRequest{
 				CertReqID: 0,
 				CertTemplate: CertTemplate{
-					Subject:   NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+					Subject:   NewDirectoryName(pkix.Name{CommonName: "test"}),
 					PublicKey: pubDER,
 				},
 			},
@@ -51,7 +51,7 @@ func TestVerifyPOP(t *testing.T) {
 			CertReq: CertRequest{
 				CertReqID: 0,
 				CertTemplate: CertTemplate{
-					Subject:   NewDirectoryName(pkix.Name{CommonName: "test"}.ToRDNSequence()),
+					Subject:   NewDirectoryName(pkix.Name{CommonName: "test"}),
 					PublicKey: pubDER,
 				},
 			},
@@ -73,7 +73,7 @@ func TestVerifyPOP(t *testing.T) {
 	t.Run("raVerified rejected", func(t *testing.T) {
 		reqMsg := &CertReqMsg{
 			CertReq: CertRequest{CertReqID: 0},
-			Popo:    &ProofOfPossession{RAVerified: true},
+			Popo:    &proofOfPossession{RAVerified: true},
 		}
 		err := VerifyPOP(reqMsg)
 		assert.Error(t, err)
@@ -83,7 +83,7 @@ func TestVerifyPOP(t *testing.T) {
 	t.Run("no public key", func(t *testing.T) {
 		reqMsg := &CertReqMsg{
 			CertReq: CertRequest{CertReqID: 0},
-			Popo:    &ProofOfPossession{Signature: &POPOSigningKey{}},
+			Popo:    &proofOfPossession{Signature: &popoSigningKey{}},
 		}
 		err := VerifyPOP(reqMsg)
 		assert.Error(t, err)
