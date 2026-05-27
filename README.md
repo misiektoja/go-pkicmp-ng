@@ -13,6 +13,8 @@ The library partially implements:
 - **RFC 4211**: Certificate Request Message Format (CRMF)
 - **RFC 6712**: Certificate Management Protocol (CMP) over HTTP
 
+Compliance is verified via integration tests: client against [EJBCA](https://docs.keyfactor.com/ejbca/latest/cmp) and [OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html); server against [Siemens CMP Test Suite](https://github.com/siemens/cmp-test-suite).
+
 ## Package Structure
 
 The library is split into three packages:
