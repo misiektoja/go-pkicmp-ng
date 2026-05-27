@@ -225,18 +225,21 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 // NewCAServer creates a complete CMP server from a CA implementation.
 // The CA is responsible only for certificate issuance. Configure request
 // verification separately with [WithSecretLookup] and/or
-// [WithCertificateLookup]. Use middleware to add policy enforcement
-// (e.g., [LightweightPolicy]).
+// [WithCertificateLookup]. Use policy enforcement wrappers (e.g., [LightweightPolicy]).
 // Use [WithSigner] and [WithExtraCerts] options to configure the signing
 // credentials for CMP response protection.
-func NewCAServer(ca CA, mw []Middleware, opts ...Option) *Server {
+func NewCAServer(ca CA, policy func(Handler) Handler, opts ...Option) *Server {
 	// Detect if the CA implements CertificateConfirmer so the server can
 	// call it on implicit confirm (not just explicit certConf).
 	if confirmer, ok := ca.(CertificateConfirmer); ok {
 		opts = append([]Option{func(c *serverConfig) { c.confirmer = confirmer }}, opts...)
 	}
+	handler := NewCAHandler(ca)
+	if policy != nil {
+		handler = policy(handler)
+	}
 	return New(
-		Chain(NewCAHandler(ca), mw...),
+		handler,
 		opts...,
 	)
 }

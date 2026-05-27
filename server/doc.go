@@ -49,10 +49,10 @@
 //	}
 //
 // Pass the CA implementation and credential lookups to [NewCAServer] along with
-// the signing key, CA certificate, and middleware.
+// the signing key, CA certificate, and middleware (or chain of middlewares).
 //
 //	srv := server.NewCAServer(ca,
-//	    []server.Middleware{server.LightweightPolicy()},
+//	    server.LightweightPolicy(),
 //	    server.WithSigner(caKey, caCert),
 //	    server.WithExtraCerts([]*x509.Certificate{caCert}),
 //	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
@@ -147,12 +147,13 @@
 //	    return certStore[issuer, subject]
 //	}
 //
-// # Authorization middleware
+// # Middleware
 //
-// [NewCAServer] requires a middleware slice that implements authorization and
+// [NewCAServer] requires a handler wrapper that implements authorization and
 // request validation. The server handles authentication (verifying protection)
-// but delegates authorization to middleware. Without middleware, any authenticated
-// client could request any certificate.
+// but delegates authorization and other cross-cutting concerns (like audit logging,
+// metrics tracking, or rate limiting) to wrappers. Without validation wrappers,
+// any authenticated client could request any certificate.
 //
 // [LightweightPolicy] enforces the RFC 9483 Lightweight CMP Profile:
 //
@@ -163,19 +164,19 @@
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
 //
-// Add custom authorization policy as additional middleware:
+// Add custom authorization policy and logging as additional wrappers using [MiddlewareChain]:
 //
 //	srv := server.NewCAServer(ca,
-//	    []server.Middleware{server.LightweightPolicy(), myPolicy()},
+//	    server.MiddlewareChain(auditLog(logger), server.LightweightPolicy(), myPolicy()),
 //	    server.WithSigner(caKey, caCert),
 //	    server.WithExtraCerts([]*x509.Certificate{caCert}),
 //	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
 //	    server.WithCertificateLookup(server.CertificateLookupFunc(lookupCertificate)),
 //	)
 //
-// A middleware wraps a [Handler] to reject or pass through requests:
+// A middleware wraps a [Handler] to reject, inspect, or pass through requests:
 //
-//	func myPolicy() server.Middleware {
+//	func myPolicy() func(server.Handler) server.Handler {
 //	    return func(next server.Handler) server.Handler {
 //	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
 //	            if !isAllowed(sender) {
@@ -190,6 +191,21 @@
 //	    }
 //	}
 //
+//	func auditLog(logger *slog.Logger) func(server.Handler) server.Handler {
+//	    return func(next server.Handler) server.Handler {
+//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	            logger.Info("CMP request received", "type", msg.Body.Type, "sender", sender.Sender)
+//	            resp, err := next.HandleCMP(ctx, msg, sender)
+//	            if err != nil {
+//	                logger.Error("CMP request failed", "err", err)
+//	            } else {
+//	                logger.Info("CMP request succeeded")
+//	            }
+//	            return resp, err
+//	        })
+//	    }
+//	}
+//
 // # Multiple CAs
 //
 // Each [Server] serves a single CA. To support multiple CAs, create separate
@@ -198,14 +214,14 @@
 //
 //	mux := http.NewServeMux()
 //	mux.Handle("/.well-known/cmp/p/ca1", server.NewCAServer(ca1,
-//	    []server.Middleware{server.LightweightPolicy()},
+//	    server.LightweightPolicy(),
 //	    server.WithSigner(ca1Key, ca1Cert),
 //	    server.WithExtraCerts([]*x509.Certificate{ca1Cert}),
 //	    server.WithSecretLookup(ca1SecretLookup),
 //	    server.WithCertificateLookup(ca1CertLookup),
 //	))
 //	mux.Handle("/.well-known/cmp/p/ca2", server.NewCAServer(ca2,
-//	    []server.Middleware{server.LightweightPolicy()},
+//	    server.LightweightPolicy(),
 //	    server.WithSigner(ca2Key, ca2Cert),
 //	    server.WithExtraCerts([]*x509.Certificate{ca2Cert}),
 //	    server.WithSecretLookup(ca2SecretLookup),

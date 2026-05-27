@@ -25,7 +25,7 @@ import (
 func TestKURWithMACRejected(t *testing.T) {
 	secret := []byte("kur-secret")
 
-	srv := server.New(server.Chain(&mockHandler{}, server.LightweightPolicy()), server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	srv := server.New(server.LightweightPolicy()(&mockHandler{}), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -45,7 +45,7 @@ func TestKURWithMACRejected(t *testing.T) {
 func TestRAVerifiedPOPRejected(t *testing.T) {
 	secret := []byte("ra-verified")
 
-	srv := server.New(server.Chain(&mockHandler{}, server.LightweightPolicy()), server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	srv := server.New(server.LightweightPolicy()(&mockHandler{}), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -89,7 +89,7 @@ func TestMissingPOPRejected(t *testing.T) {
 		},
 	}
 
-	srv := server.New(server.Chain(handler, server.LightweightPolicy()), server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	srv := server.New(server.LightweightPolicy()(handler), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -135,7 +135,7 @@ func TestKeyEnciphermentPOPRejected(t *testing.T) {
 		},
 	}
 
-	srv := server.New(server.Chain(handler, server.LightweightPolicy()), server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	srv := server.New(server.LightweightPolicy()(handler), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
@@ -183,7 +183,7 @@ func TestMissingSubjectRejected(t *testing.T) {
 		},
 	}
 
-	srv := server.New(server.Chain(handler, server.LightweightPolicy()), server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	srv := server.New(server.LightweightPolicy()(handler), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 

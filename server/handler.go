@@ -24,15 +24,15 @@ func (f HandlerFunc) HandleCMP(ctx context.Context, req *pkicmp.PKIMessage, send
 	return f(ctx, req, sender)
 }
 
-// Middleware wraps a Handler with additional behavior.
-type Middleware func(Handler) Handler
-
-// Chain applies middleware in order. First middleware is outermost.
-func Chain(h Handler, mw ...Middleware) Handler {
-	for i := len(mw) - 1; i >= 0; i-- {
-		h = mw[i](h)
+// MiddlewareChain composes multiple wrapper functions into a single wrapper function.
+// The first wrapper in the list is the outermost.
+func MiddlewareChain(mw ...func(Handler) Handler) func(Handler) Handler {
+	return func(h Handler) Handler {
+		for i := len(mw) - 1; i >= 0; i-- {
+			h = mw[i](h)
+		}
+		return h
 	}
-	return h
 }
 
 // Response is what the Handler returns.

@@ -1,5 +1,7 @@
 # go-pkicmp
 
+[![Go Reference](https://pkg.go.dev/badge/github.com/tsaarni/go-pkicmp.svg)](https://pkg.go.dev/github.com/tsaarni/go-pkicmp)
+
 Go library for the Certificate Management Protocol (CMP).
 The library partially implements:
 - **RFC 9810**: Certificate Management Protocol (CMP)
@@ -80,7 +82,7 @@ Initialize the server framework and run.
 ```go
 myCA := &MyCA{}
 srv := server.NewCAServer(myCA,
-	[]server.Middleware{server.LightweightPolicy()},
+	server.LightweightPolicy(),
 	server.WithSigner(caKey, caCert),
 	server.WithSecretLookup(myCA),
 	server.WithCertificateLookup(myCA),

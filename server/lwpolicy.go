@@ -10,9 +10,9 @@ import (
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
-// LightweightPolicy returns middleware that enforces RFC 9483 Lightweight CMP Profile requirements.
-// This is the default policy used by the server. Users can replace it with their own middleware.
-func LightweightPolicy() Middleware {
+// LightweightPolicy returns a handler wrapper that enforces RFC 9483 Lightweight CMP Profile requirements.
+// This is the default policy used by the server. Users can replace it with their own policy wrappers.
+func LightweightPolicy() func(Handler) Handler {
 	return func(next Handler) Handler {
 		return HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) (*Response, error) {
 			// RFC 9483 §3.1: MAC-protected messages MUST use directoryName in the sender field.

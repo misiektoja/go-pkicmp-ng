@@ -57,7 +57,7 @@ func startMockServer(t *testing.T) int {
 	require.NoError(t, err)
 
 	srv := server.NewCAServer(ca,
-		[]server.Middleware{server.LightweightPolicy()},
+		server.LightweightPolicy(),
 		server.WithSigner(ca.Key(), ca.Cert()),
 		server.WithExtraCerts([]*x509.Certificate{ca.Cert()}),
 		server.WithImplicitConfirm(),

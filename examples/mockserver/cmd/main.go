@@ -40,7 +40,7 @@ func main() {
 	//   - WithSecretLookup: enables MAC (shared-secret) protection for IR/CR.
 	//   - WithCertificateLookup: enables signature protection for KUR/certConf.
 	srv := server.NewCAServer(ca,
-		[]server.Middleware{server.LightweightPolicy()},
+		server.LightweightPolicy(),
 		server.WithSigner(ca.Key(), ca.Cert()),
 		server.WithExtraCerts([]*x509.Certificate{ca.Cert()}),
 		server.WithSecretLookup(ca),
