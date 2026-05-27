@@ -2,8 +2,6 @@
 
 This document outlines the essential workflows and guidelines for contributing to `go-pkicmp`.
 
-## Essential Workflows
-
 Run linters:
 ```bash
 make lint  # Run golangci-lint
