@@ -163,11 +163,12 @@
 //   - Enforces subject presence in certificate templates.
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
-//
-// Add custom authorization policy and logging as additional wrappers using [MiddlewareChain]:
+// Add custom authorization policy and logging using [MiddlewareChain].
+// In this setup, `myPolicy()` runs before `LightweightPolicy()` to quickly reject
+// unauthorized requests before performing verification against lightweight policy:
 //
 //	srv := server.NewCAServer(ca,
-//	    server.MiddlewareChain(auditLog(logger), server.LightweightPolicy(), myPolicy()),
+//	    server.MiddlewareChain(auditLog(logger), myPolicy(), server.LightweightPolicy()),
 //	    server.WithSigner(caKey, caCert),
 //	    server.WithExtraCerts([]*x509.Certificate{caCert}),
 //	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
