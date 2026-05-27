@@ -10,13 +10,11 @@ make lint  # Run golangci-lint
 make fix   # Run go fix
 ```
 
-### 2. Unit Testing
 Unit tests are fast and have no external dependencies:
 ```bash
 make test  # Run all unit tests
 ```
 
-### 3. Integration Testing
 Integration tests verify compatibility against EJBCA, OpenSSL, and the Siemens CMP Test Suite.
 
 > [!IMPORTANT]
