@@ -17,25 +17,11 @@ The library implements:
 
 The library is split into three packages:
 
-*   **[`pkicmp`](./pkicmp/)**: Defines the Go types that map to CMP and CRMF ASN.1 structures. Handles message parsing, serialization, protection, and verification.
-*   **[`client`](./client/)**: A client implementation to request certificates. It handles transaction ID tracking, nonces, polling, and the certificate confirmation round-trip.
-*   **[`server`](./server/)**: A framework to add CMP support to an existing CA. It exposes a CMP endpoint as an `http.Handler` and implements verification, transaction binding, and nonce checking.
+*   **[`pkicmp`](./pkicmp/)**: Core types for CMP and CRMF ASN.1 structures. Handles parsing, serialization, PVNO 2/3, and protection (MAC or X.509 signatures).
+*   **[`client`](./client/)**: Handles IR, CR, KUR, and P10CR enrollment flows, including automatic polling, response verification, and certificate confirmation.
+*   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, and enforces policies via middleware (including the lightweight profile).
 
-## Features
 
-### Core
-- **Protocol Versions**: Supports both PVNO 2 and PVNO 3.
-- **Protection**: Supports shared-secret MAC (PBM/PBMAC1) and X.509 signature protection.
-
-### Client
-- **Enrollment Flows**: Supports Initialization (IR), Certification (CR), Key Update (KUR), and PKCS#10 (P10CR) requests.
-- **Automatic Polling**: Polls the CA automatically during pending enrollments, respecting the CA's wait time.
-
-### Server
-- **Authentication**: Automatically verifies client signatures or shared-secret MACs.
-- **Authorization**: Enforces policies using middleware, with built-in support for the lightweight profile.
-- **Transaction Tracking**: Manages active transactions and binds follow-up requests to the original client credentials.
-- **Asynchronous Issuance**: Supports pending certificate requests and standard polling flows.
 
 ## Usage
 
