@@ -23,11 +23,19 @@ The library is split into three packages:
 
 ## Features
 
-- **Enrollment Flows**: Supports Initialization (IR/IP), Certification (CR/CP), Key Update (KUR/KUP), and PKCS#10 requests (P10CR).
+### Core
 - **Protocol Versions**: Supports both PVNO 2 and PVNO 3.
-- **Polling**: Automatically polls when the CA returns a waiting response, respecting the CA's `checkAfter` interval.
-- **Protection**: Supports shared-secret MAC (PBM/PBMAC1) and X.509 signature-based protection.
-- **Lightweight Profile**: Provides `LightweightPolicy()` middleware to enforce RFC 9483 requirements.
+- **Protection**: Supports shared-secret MAC (PBM/PBMAC1) and X.509 signature protection.
+
+### Client
+- **Enrollment Flows**: Supports Initialization (IR), Certification (CR), Key Update (KUR), and PKCS#10 (P10CR) requests.
+- **Automatic Polling**: Polls the CA automatically during pending enrollments, respecting the CA's wait time.
+
+### Server
+- **Authentication**: Automatically verifies client signatures or shared-secret MACs.
+- **Authorization**: Enforces policies using middleware, with built-in support for the lightweight profile.
+- **Transaction Tracking**: Manages active transactions and binds follow-up requests to the original client credentials.
+- **Asynchronous Issuance**: Supports pending certificate requests and standard polling flows.
 
 ## Usage
 
