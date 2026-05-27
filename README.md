@@ -3,7 +3,7 @@
 Go library for the Certificate Management Protocol (CMP).
 
 > [!NOTE]
-> This codebase is LLM-generated using [IETF protocol specifications](docs/specs).
+> This codebase is LLM-generated using [IETF protocol specifications](docs/specs) as reference context.
 
 ## Standards Compliance
 
