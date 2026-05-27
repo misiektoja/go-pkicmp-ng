@@ -66,10 +66,10 @@ result, err := c.SendKUR(context.Background(), newKey, creds,
 
 ### Server
 
-Use the `server` package to expose a CMP endpoint as a standard `http.Handler`. Implement the `server.CA` interface to integrate with your CA backend:
+Use the `server` package to expose a CMP endpoint as a standard `http.Handler`. 
 
+Implement the `server.CA` interface and credential lookup callbacks.
 ```go
-// 1. Implement the server.CA interface.
 type MyCA struct{}
 
 func (ca *MyCA) IssueCertificate(ctx, reqType, template, sender) {
@@ -81,8 +81,10 @@ func (ca *MyCA) LookupSecret(sender, senderKID) {
 func (ca *MyCA) LookupCertificate(issuer, subject, senderKID) {
 	// Called to verify signature-protected requests. Finds existing cert by DN or Subject Key ID.
 }
+```
 
-// 2. Initialize the server framework and run.
+Initialize the server framework and run.
+```go
 myCA := &MyCA{}
 srv := server.NewCAServer(myCA,
 	[]server.Middleware{server.LightweightPolicy()},
