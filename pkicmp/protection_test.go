@@ -25,13 +25,6 @@ func mustProtectMAC(t *testing.T, msg *pkicmp.PKIMessage, secret []byte) {
 	require.NoError(t, mc.Protect(msg))
 }
 
-func mustProtectMACOpts(t *testing.T, msg *pkicmp.PKIMessage, secret []byte, opts ...pkicmp.MACCredentialOption) {
-	t.Helper()
-	mc, err := pkicmp.NewMACCredentials(secret, opts...)
-	require.NoError(t, err)
-	require.NoError(t, mc.Protect(msg))
-}
-
 func mustProtectSig(t *testing.T, msg *pkicmp.PKIMessage, key crypto.Signer, certs ...*x509.Certificate) {
 	t.Helper()
 	sc, err := pkicmp.NewSignatureCredentials(key, certs[0], certs[1:]...)

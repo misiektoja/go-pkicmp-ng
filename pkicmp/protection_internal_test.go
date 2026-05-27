@@ -10,11 +10,6 @@ import (
 	"golang.org/x/crypto/cryptobyte"
 )
 
-func mustMACCreds(secret []byte) *MACCredentials {
-	c, _ := NewMACCredentials(secret)
-	return c
-}
-
 func TestPBMParameterASN1(t *testing.T) {
 	t.Run("MarshalAndUnmarshal", func(t *testing.T) {
 		p := pbmParameter{

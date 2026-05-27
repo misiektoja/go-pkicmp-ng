@@ -7,7 +7,6 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"encoding/asn1"
-	"encoding/binary"
 	"fmt"
 	"time"
 )
@@ -32,7 +31,7 @@ var (
 	// MAC Algorithms (RFC 9481 §6.1, RFC 9810 §5.1.3.4).
 	oidPasswordBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 13}
 	oidPBMMac_HMACSHA1  = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 8, 1, 2} // Deprecated: SHOULD NOT be used (RFC 9481 §7.1)
-	oidKemBasedMac      = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16}
+	// oidKemBasedMac      = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16} // Unused but reserved for KEM-based MAC (RFC 9810 §5.1.3.4)
 	oidPBMAC1           = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 14}
 
 	// PBKDF2 (RFC 8018 §A.2).
@@ -165,14 +164,7 @@ func ImplicitConfirmInfoValue() InfoTypeAndValue {
 // number of seconds (ASN.1 INTEGER).
 func ConfirmWaitTimeInfoValue(d time.Duration) InfoTypeAndValue {
 	secs := max(int(d.Seconds()), 0)
-	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], uint32(secs))
-	// Trim leading zeros.
-	b := buf[:]
-	for len(b) > 1 && b[0] == 0 {
-		b = b[1:]
-	}
-	val, _ := asn1.Marshal(asn1.RawValue{Class: asn1.ClassUniversal, Tag: asn1.TagInteger, Bytes: b})
+	val, _ := asn1.Marshal(secs)
 	return InfoTypeAndValue{
 		InfoType:  oidConfirmWaitTime,
 		InfoValue: val,
