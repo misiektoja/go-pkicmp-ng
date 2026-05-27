@@ -64,27 +64,36 @@ result, err := c.SendKUR(context.Background(), newKey, creds,
 )
 ```
 
-See the [runnable examples](./examples/) or integration tests for more detailed client usage.
-
 ### Server
 
-Use the `server` package to add a CMP endpoint to an existing CA. Implement the `CA`
-interface and wrap it with `NewCAServer`, which returns a standard `http.Handler`.
+Use the `server` package to expose a CMP endpoint as a standard `http.Handler`. Implement the `server.CA` interface to integrate with your CA backend:
 
-The `CA` interface has one required method:
+```go
+// 1. Implement the server.CA interface.
+type MyCA struct{}
 
-- `IssueCertificate` — called for every enrollment request. Receives a certificate
-  template pre-populated from the CMP request; sign it with your CA backend.
+func (ca *MyCA) IssueCertificate(ctx, reqType, template, sender) {
+	// Called on enrollment requests (IR/CR/KUR). Signs template with CA private key.
+}
+func (ca *MyCA) LookupSecret(sender, senderKID) {
+	// Called to verify MAC-protected requests. Finds pre-shared secret by DN or key ID.
+}
+func (ca *MyCA) LookupCertificate(issuer, subject, senderKID) {
+	// Called to verify signature-protected requests. Finds existing cert by DN or Subject Key ID.
+}
 
-Protection verification is configured separately:
+// 2. Initialize the server framework and run.
+myCA := &MyCA{}
+srv := server.NewCAServer(myCA,
+	[]server.Middleware{server.LightweightPolicy()},
+	server.WithSigner(caKey, caCert),
+	server.WithSecretLookup(myCA),
+	server.WithCertificateLookup(myCA),
+)
 
-- `WithSecretLookup(...)` — provides shared secrets for MAC-protected requests.
-- `WithCertificateLookup(...)` — provides signer certificates for signature-protected requests.
-
-The server handles all protocol mechanics automatically: message parsing, protection
-verification, response construction, nonce and transaction management, and the
-certConf round-trip. See the `server` package documentation for optional interfaces
-such as `PendingChecker` (asynchronous issuance) and `CertificateConfirmer`.
+http.Handle("/cmp", srv)
+http.ListenAndServe(":8080", nil)
+```
 
 ## Runnable Examples
 
