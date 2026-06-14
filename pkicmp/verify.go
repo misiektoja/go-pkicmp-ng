@@ -203,8 +203,18 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 	if err != nil {
 		return nil, err
 	}
+	if !prfHash.Available() {
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("PRF hash %v not available", pbkdf2Params.PRF.Algorithm)}
+	}
 	macHash, err := hmacHashFromOID(pbmac1Params.MessageAuthScheme.Algorithm)
 	if err != nil {
+		return nil, err
+	}
+	if !macHash.Available() {
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", pbmac1Params.MessageAuthScheme.Algorithm)}
+	}
+
+	if err := validatePBKDF2KeyLength(pbkdf2Params.KeyLength, macHash); err != nil {
 		return nil, err
 	}
 
