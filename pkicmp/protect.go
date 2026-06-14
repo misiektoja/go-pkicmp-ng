@@ -139,14 +139,9 @@ func (m *PKIMessage) protectWithMACAlgorithm(secret []byte, alg *AlgorithmIdenti
 		if !params.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
 			return &ParseError{Detail: fmt.Sprintf("unsupported KDF: %v", params.KeyDerivationFunc.Algorithm)}
 		}
-		var kdfParams struct {
-			Salt           []byte
-			IterationCount int
-			KeyLength      int
-			PRF            algorithmIdentifierASN1
-		}
-		if _, err := asn1.Unmarshal(params.KeyDerivationFunc.Parameters.FullBytes, &kdfParams); err != nil {
-			return &ParseError{Detail: "invalid PBKDF2-params: " + err.Error()}
+		kdfParams, err := parsePBKDF2Params(params.KeyDerivationFunc.Parameters.FullBytes)
+		if err != nil {
+			return err
 		}
 		return m.protectWithPBMAC1Options(pbmac1Options{
 			Secret:         secret,
@@ -219,15 +214,21 @@ func (m *PKIMessage) protectWithPBMAC1Options(opts pbmac1Options) error {
 		return err
 	}
 
+	// RFC 8018 §A.5: keyLength is OPTIONAL, and §7.1 ties it to the MAC scheme.
+	// An echoed value reaches this point straight from a peer's message, so it is
+	// bounded here as well as on the verification path.
+	keyLen := opts.KeyLength
+	if keyLen == 0 {
+		keyLen = macHash.Size()
+	}
+	if err := validatePBKDF2KeyLength(keyLen, macHash); err != nil {
+		return err
+	}
+
 	// Generate random salt (RFC 8018 §7.1).
 	salt := make([]byte, defaultPBMSaltLength)
 	if _, err := rand.Read(salt); err != nil {
 		return err
-	}
-
-	keyLen := opts.KeyLength
-	if keyLen == 0 {
-		keyLen = macHash.Size()
 	}
 
 	// Build PBMAC1-params ASN.1 structure (RFC 8018 §A.5).
@@ -290,6 +291,29 @@ func marshalPBMAC1Params(salt []byte, iterCount, keyLen int, prf, mac asn1.Objec
 type algorithmIdentifierASN1 struct {
 	Algorithm  asn1.ObjectIdentifier
 	Parameters asn1.RawValue `asn1:"optional"`
+}
+
+// pbkdf2ParamsASN1 mirrors PBKDF2-params (RFC 8018 §A.5). keyLength is OPTIONAL
+// and prf carries a DEFAULT, so DER omits both when they are not needed.
+type pbkdf2ParamsASN1 struct {
+	Salt           []byte
+	IterationCount int
+	KeyLength      int                     `asn1:"optional"`
+	PRF            algorithmIdentifierASN1 `asn1:"optional"`
+}
+
+// parsePBKDF2Params decodes PBKDF2-params and applies the RFC 8018 §A.5 default for an absent prf.
+func parsePBKDF2Params(der []byte) (*pbkdf2ParamsASN1, error) {
+	var p pbkdf2ParamsASN1
+	if _, err := asn1.Unmarshal(der, &p); err != nil {
+		return nil, &ParseError{Detail: "invalid PBKDF2-params: " + err.Error()}
+	}
+	// prf DEFAULT algid-hmacWithSHA1: DER requires the field to be omitted when it
+	// holds the default, so an absent prf means HMAC-SHA-1 rather than "unspecified".
+	if len(p.PRF.Algorithm) == 0 {
+		p.PRF.Algorithm = oidHMACWithSHA1
+	}
+	return &p, nil
 }
 
 // protectWithSignature signs the message using the given key.
@@ -448,10 +472,6 @@ var (
 	// but no maximum is specified by any RFC. PBKDF2 commonly uses 262144 (2^18).
 	defaultPBMMinIterationCount = 1
 	defaultPBMMaxIterationCount = 500000
-
-	// defaultPBKDF2MinKeyLength is the smallest PBMAC1 derived key length accepted
-	// from an untrusted message. RFC 8018 §A.5 constrains keyLength to (1..MAX).
-	defaultPBKDF2MinKeyLength = 1
 )
 
 func validatePBMIterationCount(iterationCount int) error {
@@ -464,16 +484,21 @@ func validatePBMIterationCount(iterationCount int) error {
 	return nil
 }
 
-// validatePBKDF2KeyLength bounds the PBMAC1 derived key length taken from an untrusted message.
+// validatePBKDF2KeyLength ties the PBMAC1 derived key length to the strength of the MAC it keys.
 func validatePBKDF2KeyLength(keyLength int, macHash crypto.Hash) error {
-	if keyLength < defaultPBKDF2MinKeyLength {
-		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d", keyLength)}
+	// A derived key shorter than the MAC output turns the key length into a
+	// forgery primitive: a peer that asks for a few bytes shrinks the key space
+	// to something searchable, so protection can be forged without ever
+	// learning the shared secret.
+	minKeyLength := macHash.Size()
+	if keyLength < minKeyLength {
+		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d (minimum %d for this MAC)", keyLength, minKeyLength)}
 	}
 	// An HMAC key longer than the hash block size is hashed down to the digest size,
 	// so a longer derived key adds no strength while multiplying PBKDF2 work.
 	maxKeyLength := macHash.New().BlockSize()
 	if keyLength > maxKeyLength {
-		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too large: %d (maximum %d)", keyLength, maxKeyLength)}
+		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too large: %d (maximum %d for this MAC)", keyLength, maxKeyLength)}
 	}
 	return nil
 }
