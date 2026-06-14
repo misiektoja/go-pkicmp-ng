@@ -2,12 +2,15 @@ package pkicmp
 
 import (
 	"crypto"
+	"crypto/hmac"
 	"encoding/asn1"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"golang.org/x/crypto/cryptobyte"
+	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
+	"golang.org/x/crypto/pbkdf2"
 )
 
 func TestPBMParameterASN1(t *testing.T) {
@@ -87,6 +90,25 @@ func TestValidatePBKDF2KeyLength(t *testing.T) {
 		require.ErrorAs(t, err, &pe)
 		assert.Contains(t, pe.Detail, "keyLength too small")
 	})
+	// A key shorter than the MAC output is searchable without the shared secret,
+	// so it must be rejected even though RFC 8018 §A.5 permits keyLength 1.
+	t.Run("ShorterThanMACOutput", func(t *testing.T) {
+		for _, keyLength := range []int{1, 8, crypto.SHA256.Size() - 1} {
+			err := validatePBKDF2KeyLength(keyLength, crypto.SHA256)
+			var pe *ParseError
+			require.ErrorAs(t, err, &pe, "keyLength %d", keyLength)
+			assert.Contains(t, pe.Detail, "keyLength too small")
+		}
+	})
+	// The bounds follow the MAC, so a length that is valid for one hash may not
+	// be valid for a stronger one.
+	t.Run("BoundsFollowMACAlgorithm", func(t *testing.T) {
+		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA1.Size(), crypto.SHA1))
+		err := validatePBKDF2KeyLength(crypto.SHA1.Size(), crypto.SHA512)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "keyLength too small")
+	})
 	t.Run("ExceedsBlockSize", func(t *testing.T) {
 		err := validatePBKDF2KeyLength(crypto.SHA256.New().BlockSize()+1, crypto.SHA256)
 		var pe *ParseError
@@ -100,15 +122,57 @@ func TestValidatePBKDF2KeyLength(t *testing.T) {
 		assert.Contains(t, pe.Detail, "keyLength too large")
 	})
 	t.Run("Valid", func(t *testing.T) {
-		assert.NoError(t, validatePBKDF2KeyLength(1, crypto.SHA256))
 		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA256.Size(), crypto.SHA256))
 		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA256.New().BlockSize(), crypto.SHA256))
 		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA512.Size(), crypto.SHA512))
 	})
 }
 
+// buildPBMAC1Params encodes PBMAC1-params, omitting keyLength when keyLen is 0 and prf when prf is nil.
+func buildPBMAC1Params(t *testing.T, salt []byte, iterCount, keyLen int, prf, mac asn1.ObjectIdentifier) []byte {
+	t.Helper()
+
+	var kdf cryptobyte.Builder
+	kdf.AddASN1(cbasn1.SEQUENCE, func(seq *cryptobyte.Builder) {
+		seq.AddASN1OctetString(salt)
+		seq.AddASN1Int64(int64(iterCount))
+		// RFC 8018 §A.5 marks keyLength OPTIONAL and gives prf a DEFAULT, so a
+		// conforming DER encoder leaves them out when they are not needed.
+		if keyLen != 0 {
+			seq.AddASN1Int64(int64(keyLen))
+		}
+		if prf != nil {
+			seq.AddASN1(cbasn1.SEQUENCE, func(alg *cryptobyte.Builder) {
+				alg.AddASN1ObjectIdentifier(prf)
+			})
+		}
+	})
+	kdfBytes, err := kdf.Bytes()
+	require.NoError(t, err)
+
+	params, err := asn1.Marshal(struct {
+		KeyDerivationFunc algorithmIdentifierASN1
+		MessageAuthScheme algorithmIdentifierASN1
+	}{
+		KeyDerivationFunc: algorithmIdentifierASN1{Algorithm: oidPBKDF2, Parameters: asn1.RawValue{FullBytes: kdfBytes}},
+		MessageAuthScheme: algorithmIdentifierASN1{Algorithm: mac},
+	})
+	require.NoError(t, err)
+	return params
+}
+
+// pbmac1Message builds an unverifiable PBMAC1 message carrying the given parameters.
+func pbmac1Message(params []byte) *PKIMessage {
+	return &PKIMessage{
+		Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
+		Body:       NewPKIConfBody(),
+		Protection: []byte{0x01, 0x02, 0x03},
+	}
+}
+
 // A hostile peer controls the PBKDF2 keyLength, which reaches pbkdf2.Key before
-// the MAC is checked. Out-of-range values must be rejected rather than panic.
+// the MAC is checked. Out-of-range values must be rejected rather than panic,
+// and a key weaker than the MAC it feeds must be rejected outright.
 func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 	for _, tc := range []struct {
 		name      string
@@ -116,21 +180,15 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 		detail    string
 	}{
 		{"Negative", -1, "keyLength too small"},
-		{"Zero", 0, "keyLength too small"},
+		{"OneByteKeySpace", 1, "keyLength too small"},
+		{"ShorterThanMACOutput", crypto.SHA256.Size() - 1, "keyLength too small"},
 		{"ExceedsBlockSize", crypto.SHA256.New().BlockSize() + 1, "keyLength too large"},
 		{"Huge", 1 << 40, "keyLength too large"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			params, err := marshalPBMAC1Params([]byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
-			require.NoError(t, err)
+			params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
 
-			msg := &PKIMessage{
-				Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
-				Body:       NewPKIConfBody(),
-				Protection: []byte{0x01, 0x02, 0x03},
-			}
-
-			_, err = msg.Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
+			_, err := pbmac1Message(params).Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
 			var pe *ParseError
 			require.ErrorAs(t, err, &pe)
 			assert.Contains(t, pe.Detail, tc.detail)
@@ -138,18 +196,94 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 	}
 
 	t.Run("ValidKeyLengthNotRejected", func(t *testing.T) {
-		params, err := marshalPBMAC1Params([]byte("saltsalt"), 1000, crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256)
-		require.NoError(t, err)
+		params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256)
 
-		msg := &PKIMessage{
-			Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
-			Body:       NewPKIConfBody(),
-			Protection: []byte{0x01, 0x02, 0x03},
-		}
-
-		_, err = msg.Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
+		_, err := pbmac1Message(params).Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
 		require.Error(t, err)
 		assert.NotContains(t, err.Error(), "keyLength")
+	})
+}
+
+// RFC 8018 §A.5 marks keyLength OPTIONAL and gives prf a DEFAULT of HMAC-SHA-1.
+// A peer that omits either field is sending a conforming message, so it must
+// verify rather than being rejected as malformed.
+func TestVerifyPBMAC1OptionalKeyLengthAndPRF(t *testing.T) {
+	secret := []byte("shared-secret")
+	salt := []byte("saltsalt")
+	const iterCount = 1000
+
+	for _, tc := range []struct {
+		name    string
+		keyLen  int
+		prf     asn1.ObjectIdentifier
+		mac     asn1.ObjectIdentifier
+		wantPRF crypto.Hash
+		wantMAC crypto.Hash
+	}{
+		{"AllFieldsPresent", crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256, crypto.SHA256, crypto.SHA256},
+		{"KeyLengthOmitted", 0, oidHMACWithSHA256, oidHMACWithSHA256, crypto.SHA256, crypto.SHA256},
+		{"PRFOmittedDefaultsToSHA1", crypto.SHA256.Size(), nil, oidHMACWithSHA256, crypto.SHA1, crypto.SHA256},
+		{"BothOmitted", 0, nil, oidHMACWithSHA256, crypto.SHA1, crypto.SHA256},
+		{"BothOmittedSHA512MAC", 0, nil, oidHMACWithSHA512, crypto.SHA1, crypto.SHA512},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := buildPBMAC1Params(t, salt, iterCount, tc.keyLen, tc.prf, tc.mac)
+			msg := &PKIMessage{
+				Header: PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
+				Body:   NewPKIConfBody(),
+			}
+			require.NoError(t, msg.marshalForProtection())
+			data, err := msg.protectedPart()
+			require.NoError(t, err)
+
+			// Independently derive the MAC the way RFC 8018 says the omitted
+			// fields must be interpreted: HMAC-SHA-1 PRF and a key as long as
+			// the MAC digest.
+			k := pbkdf2.Key(secret, salt, iterCount, tc.wantMAC.Size(), tc.wantPRF.New)
+			h := hmac.New(tc.wantMAC.New, k)
+			h.Write(data)
+			msg.Protection = h.Sum(nil)
+
+			result, err := msg.Verify(VerifyOptions{SharedSecret: secret})
+			require.NoError(t, err)
+			assert.True(t, result.MACVerified)
+		})
+	}
+}
+
+// Echoing a received AlgorithmIdentifier feeds peer-controlled PBKDF2 parameters
+// into the protection path, which must bound them exactly as verification does.
+func TestProtectWithMACAlgorithmRejectsHostileKeyLength(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		keyLength int
+		detail    string
+	}{
+		{"Negative", -1, "keyLength too small"},
+		{"OneByteKeySpace", 1, "keyLength too small"},
+		{"Huge", 1 << 40, "keyLength too large"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
+			alg := &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}
+
+			msg := &PKIMessage{Body: NewPKIConfBody()}
+			err := msg.protectWithMACAlgorithm([]byte("shared-secret"), alg)
+			var pe *ParseError
+			require.ErrorAs(t, err, &pe)
+			assert.Contains(t, pe.Detail, tc.detail)
+		})
+	}
+
+	// An echoed request that omitted the optional fields must still produce a
+	// protected response rather than failing as malformed.
+	t.Run("OptionalFieldsOmitted", func(t *testing.T) {
+		params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, 0, nil, oidHMACWithSHA256)
+		alg := &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}
+
+		msg := &PKIMessage{Body: NewPKIConfBody()}
+		require.NoError(t, msg.protectWithMACAlgorithm([]byte("shared-secret"), alg))
+		assert.NotEmpty(t, msg.Protection)
 	})
 }
 
