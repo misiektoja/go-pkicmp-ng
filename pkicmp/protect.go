@@ -448,6 +448,10 @@ var (
 	// but no maximum is specified by any RFC. PBKDF2 commonly uses 262144 (2^18).
 	defaultPBMMinIterationCount = 1
 	defaultPBMMaxIterationCount = 500000
+
+	// defaultPBKDF2MinKeyLength is the smallest PBMAC1 derived key length accepted
+	// from an untrusted message. RFC 8018 §A.5 constrains keyLength to (1..MAX).
+	defaultPBKDF2MinKeyLength = 1
 )
 
 func validatePBMIterationCount(iterationCount int) error {
@@ -456,6 +460,20 @@ func validatePBMIterationCount(iterationCount int) error {
 	}
 	if iterationCount > defaultPBMMaxIterationCount {
 		return &ParseError{Detail: fmt.Sprintf("PBM iterationCount too large: %d", iterationCount)}
+	}
+	return nil
+}
+
+// validatePBKDF2KeyLength bounds the PBMAC1 derived key length taken from an untrusted message.
+func validatePBKDF2KeyLength(keyLength int, macHash crypto.Hash) error {
+	if keyLength < defaultPBKDF2MinKeyLength {
+		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d", keyLength)}
+	}
+	// An HMAC key longer than the hash block size is hashed down to the digest size,
+	// so a longer derived key adds no strength while multiplying PBKDF2 work.
+	maxKeyLength := macHash.New().BlockSize()
+	if keyLength > maxKeyLength {
+		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too large: %d (maximum %d)", keyLength, maxKeyLength)}
 	}
 	return nil
 }
