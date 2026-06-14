@@ -57,7 +57,8 @@
 //
 // All errors from this package are typed:
 //
-//   - [ParseError]: malformed message or missing required field.
+//   - [ParseError]: malformed message, missing required field, or an algorithm
+//     parameter outside the range this package accepts from an untrusted peer.
 //   - [ProtectionError]: failure applying protection.
 //   - [VerificationError]: bad MAC or signature.
 //
