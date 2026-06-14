@@ -74,6 +74,85 @@ func TestValidatePBMIterationCount(t *testing.T) {
 	})
 }
 
+func TestValidatePBKDF2KeyLength(t *testing.T) {
+	t.Run("Negative", func(t *testing.T) {
+		err := validatePBKDF2KeyLength(-1, crypto.SHA256)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "keyLength too small")
+	})
+	t.Run("Zero", func(t *testing.T) {
+		err := validatePBKDF2KeyLength(0, crypto.SHA256)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "keyLength too small")
+	})
+	t.Run("ExceedsBlockSize", func(t *testing.T) {
+		err := validatePBKDF2KeyLength(crypto.SHA256.New().BlockSize()+1, crypto.SHA256)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "keyLength too large")
+	})
+	t.Run("Huge", func(t *testing.T) {
+		err := validatePBKDF2KeyLength(1<<40, crypto.SHA512)
+		var pe *ParseError
+		require.ErrorAs(t, err, &pe)
+		assert.Contains(t, pe.Detail, "keyLength too large")
+	})
+	t.Run("Valid", func(t *testing.T) {
+		assert.NoError(t, validatePBKDF2KeyLength(1, crypto.SHA256))
+		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA256.Size(), crypto.SHA256))
+		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA256.New().BlockSize(), crypto.SHA256))
+		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA512.Size(), crypto.SHA512))
+	})
+}
+
+// A hostile peer controls the PBKDF2 keyLength, which reaches pbkdf2.Key before
+// the MAC is checked. Out-of-range values must be rejected rather than panic.
+func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		keyLength int
+		detail    string
+	}{
+		{"Negative", -1, "keyLength too small"},
+		{"Zero", 0, "keyLength too small"},
+		{"ExceedsBlockSize", crypto.SHA256.New().BlockSize() + 1, "keyLength too large"},
+		{"Huge", 1 << 40, "keyLength too large"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			params, err := marshalPBMAC1Params([]byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
+			require.NoError(t, err)
+
+			msg := &PKIMessage{
+				Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
+				Body:       NewPKIConfBody(),
+				Protection: []byte{0x01, 0x02, 0x03},
+			}
+
+			_, err = msg.Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
+			var pe *ParseError
+			require.ErrorAs(t, err, &pe)
+			assert.Contains(t, pe.Detail, tc.detail)
+		})
+	}
+
+	t.Run("ValidKeyLengthNotRejected", func(t *testing.T) {
+		params, err := marshalPBMAC1Params([]byte("saltsalt"), 1000, crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256)
+		require.NoError(t, err)
+
+		msg := &PKIMessage{
+			Header:     PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
+			Body:       NewPKIConfBody(),
+			Protection: []byte{0x01, 0x02, 0x03},
+		}
+
+		_, err = msg.Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
+		require.Error(t, err)
+		assert.NotContains(t, err.Error(), "keyLength")
+	})
+}
+
 func TestProtectWithMACErrors(t *testing.T) {
 	t.Run("MissingBody", func(t *testing.T) {
 		msg := &PKIMessage{}
