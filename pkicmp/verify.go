@@ -185,14 +185,9 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 	}
 
 	// Parse PBKDF2-params from keyDerivationFunc.Parameters.
-	var pbkdf2Params struct {
-		Salt           []byte
-		IterationCount int
-		KeyLength      int
-		PRF            algorithmIdentifierASN1
-	}
-	if _, err := asn1.Unmarshal(pbmac1Params.KeyDerivationFunc.Parameters.FullBytes, &pbkdf2Params); err != nil {
-		return nil, &ParseError{Detail: "invalid PBKDF2-params: " + err.Error()}
+	pbkdf2Params, err := parsePBKDF2Params(pbmac1Params.KeyDerivationFunc.Parameters.FullBytes)
+	if err != nil {
+		return nil, err
 	}
 
 	if err := validatePBMIterationCount(pbkdf2Params.IterationCount); err != nil {
@@ -214,6 +209,11 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", pbmac1Params.MessageAuthScheme.Algorithm)}
 	}
 
+	// RFC 8018 §A.5: keyLength is OPTIONAL. When the peer omits it, §7.1 leaves the
+	// length to the MAC scheme, which for HMAC is the digest size.
+	if pbkdf2Params.KeyLength == 0 {
+		pbkdf2Params.KeyLength = macHash.Size()
+	}
 	if err := validatePBKDF2KeyLength(pbkdf2Params.KeyLength, macHash); err != nil {
 		return nil, err
 	}
