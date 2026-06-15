@@ -81,8 +81,8 @@ var (
 
 // GeneralName context-specific tag constants per RFC 5280 §4.2.1.6.
 const (
-	tagRFC822Name     = 1
-	tagDirectoryName  = 4
+	tagRFC822Name    = 1
+	tagDirectoryName = 4
 )
 
 // NewDirectoryName creates a GeneralName of type directoryName from a pkix.Name.
