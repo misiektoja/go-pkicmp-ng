@@ -75,7 +75,10 @@ func mockCMPServer(pki testPKI, respBodyFn func(req *pkicmp.PKIMessage) *pkicmp.
 			}
 		}
 
-		{ _mc, _ := pkicmp.NewMACCredentials(secret); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials(secret)
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -181,7 +184,10 @@ func TestSendCRHappyPath(t *testing.T) {
 				}),
 			}
 		}
-		{ _sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509); _ = _sc.Protect(resp) }
+		{
+			_sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
+			_ = _sc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -235,7 +241,10 @@ func TestSendKURHappyPath(t *testing.T) {
 				}),
 			}
 		}
-		{ _sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509); _ = _sc.Protect(resp) }
+		{
+			_sc, _ := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
+			_ = _sc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -348,7 +357,10 @@ func TestPollingHappyPath(t *testing.T) {
 			}
 		}
 
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -403,7 +415,10 @@ func TestPollingMaxRetries(t *testing.T) {
 			}
 		}
 
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -458,7 +473,10 @@ func TestPollingContextCancellation(t *testing.T) {
 			}
 		}
 
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -557,7 +575,10 @@ func TestServerReturnsErrorBody(t *testing.T) {
 				PKIStatusInfo: pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -708,7 +729,10 @@ func TestServerReturnsRejection(t *testing.T) {
 				}},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -743,7 +767,10 @@ func TestServerReturnsMissingCertifiedKeyPair(t *testing.T) {
 				}},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -780,7 +807,10 @@ func TestServerReturnsUnexpectedBodyType(t *testing.T) {
 				}},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -871,7 +901,10 @@ func TestPollingServerReturnsErrorDuringPoll(t *testing.T) {
 			}
 		}
 
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -930,7 +963,10 @@ func TestSendIRWithRSAKey(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -990,7 +1026,10 @@ func TestSendIRWithP384Key(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1050,7 +1089,10 @@ func TestSendIRWithP521Key(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1090,7 +1132,10 @@ func TestPollingHTTPErrorDuringPoll(t *testing.T) {
 					}},
 				}),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(resp)
+			}
 			der, _ := resp.MarshalBinary()
 			w.Header().Set("Content-Type", "application/pkixcmp")
 			_, _ = w.Write(der)
@@ -1130,7 +1175,10 @@ func TestServerReturnsUnsupportedPVNO(t *testing.T) {
 				}},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1219,7 +1267,10 @@ func TestCertConfServerReturnsError(t *testing.T) {
 				}),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1280,7 +1331,10 @@ func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 				}),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1325,7 +1379,10 @@ func TestCertConfHTTPError(t *testing.T) {
 					}},
 				}),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(resp)
+			}
 			der, _ := resp.MarshalBinary()
 			w.Header().Set("Content-Type", "application/pkixcmp")
 			_, _ = w.Write(der)
@@ -1367,7 +1424,10 @@ func TestServerReturnsEncryptedCert(t *testing.T) {
 				}},
 			}),
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
@@ -1407,7 +1467,10 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 					}},
 				}),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(resp)
+			}
 		} else {
 			// Poll response with wrong transaction ID to trigger verification error
 			resp = &pkicmp.PKIMessage{
@@ -1418,7 +1481,10 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 				},
 				Body: pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}}),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(resp)
+			}
 		}
 
 		der, _ := resp.MarshalBinary()
@@ -1471,7 +1537,10 @@ func TestPollingUnsupportedPVNODuringPoll(t *testing.T) {
 				Body: pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}}),
 			}
 		}
-		{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+		{
+			_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+			_ = _mc.Protect(resp)
+		}
 		der, _ := resp.MarshalBinary()
 		w.Header().Set("Content-Type", "application/pkixcmp")
 		_, _ = w.Write(der)
