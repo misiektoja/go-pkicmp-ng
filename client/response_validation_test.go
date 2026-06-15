@@ -136,11 +136,20 @@ func setupMockServer(cfg mockServerConfig, mutateResp func(req, resp *pkicmp.PKI
 
 		switch cfg.respProtector {
 		case "sig":
-			{ _sc, _ := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert); _ = _sc.Protect(resp) }
+			{
+				_sc, _ := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
+				_ = _sc.Protect(resp)
+			}
 		case "pbm-server-secret":
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("server-secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("server-secret"))
+				_ = _mc.Protect(resp)
+			}
 		default:
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(resp) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(resp)
+			}
 		}
 
 		if cfg.postProtect != nil {
@@ -189,7 +198,10 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 					}},
 				}),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(respMsg) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(respMsg)
+			}
 		} else {
 			respMsg = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
@@ -199,7 +211,10 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 				},
 				Body: pkicmp.NewPKIConfBody(),
 			}
-			{ _mc, _ := pkicmp.NewMACCredentials([]byte("secret")); _ = _mc.Protect(respMsg) }
+			{
+				_mc, _ := pkicmp.NewMACCredentials([]byte("secret"))
+				_ = _mc.Protect(respMsg)
+			}
 		}
 
 		der, _ := respMsg.MarshalBinary()
