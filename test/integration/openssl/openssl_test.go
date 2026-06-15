@@ -27,8 +27,7 @@ func TestOpenSSLInitialize(t *testing.T) {
 		SrvSecret: "enrollment-secret",
 	})
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	key := srv.RspKey
 
 	// OpenSSL mock server only supports PBM, not PBMAC1.
 	creds, err := pkicmp.NewMACCredentials([]byte("enrollment-secret"), pkicmp.WithPBM())
@@ -131,8 +130,7 @@ func TestOpenSSLCertify(t *testing.T) {
 	// No HMAC opts: signature protection only.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{})
 
-	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	newKey := srv.RspKey
 
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
@@ -164,8 +162,7 @@ func TestOpenSSLKeyUpdate(t *testing.T) {
 	// No HMAC opts: signature protection only.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{})
 
-	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	newKey := srv.RspKey
 
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
@@ -199,8 +196,7 @@ func TestOpenSSLInitializeP10CR(t *testing.T) {
 		SrvSecret: "enrollment-secret",
 	})
 
-	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	key := srv.RspKey
 
 	// Create PKCS#10 CSR.
 	template := &x509.CertificateRequest{
@@ -369,8 +365,7 @@ func TestOpenSSLGrantedWithMods(t *testing.T) {
 		PKIStatus: intPtr(int(pkicmp.StatusGrantedWithMods)),
 	})
 
-	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	require.NoError(t, err)
+	newKey := srv.RspKey
 
 	creds, err := pkicmp.NewSignatureCredentials(srv.ClientKey, srv.ClientCert)
 	require.NoError(t, err)
