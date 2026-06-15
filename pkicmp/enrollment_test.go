@@ -258,7 +258,7 @@ func TestCertStatusASN1(t *testing.T) {
 			CertHash:   []byte{0x01, 0x02},
 			CertReqID:  3,
 			StatusInfo: &PKIStatusInfo{Status: StatusAccepted},
-				HashAlg:    &AlgorithmIdentifier{Algorithm: oidSHA256},
+			HashAlg:    &AlgorithmIdentifier{Algorithm: oidSHA256},
 		}
 
 		var b cryptobyte.Builder
