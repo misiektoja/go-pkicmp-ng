@@ -29,8 +29,12 @@ func TestPolling(t *testing.T) {
 	secret := []byte("poll-secret")
 
 	pollCount := 0
+	// The deferred certificate must be issued for the key the request carried,
+	// so the requested key is captured here and used once polling completes.
+	var requestedKey crypto.PublicKey
 	handler := &mockHandler{
 		handleCertRequest: func(ctx context.Context, req *certRequest) (*certResponse, error) {
+			requestedKey = req.PublicKey
 			return &certResponse{
 				Waiting: &server.WaitingResponse{CheckAfter: 1 * time.Second, Reason: "processing"},
 			}, nil
@@ -51,8 +55,7 @@ func TestPolling(t *testing.T) {
 				NotBefore:    time.Now(),
 				NotAfter:     time.Now().Add(24 * time.Hour),
 			}
-			pub, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCertX509, &pub.PublicKey, caKey)
+			certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCertX509, requestedKey, caKey)
 			cert, _ := x509.ParseCertificate(certDER)
 			return &certResponse{Certificate: cert, CACerts: []*x509.Certificate{&caCert}}, nil
 		},
@@ -463,8 +466,10 @@ func TestPollReqWithCertReady(t *testing.T) {
 	caCert, _ := ca.X509Certificate()
 	secret := []byte("poll-ready")
 
+	var requestedKey crypto.PublicKey
 	handler := &mockHandler{
 		handleCertRequest: func(ctx context.Context, req *certRequest) (*certResponse, error) {
+			requestedKey = req.PublicKey
 			return &certResponse{
 				Waiting: &server.WaitingResponse{CheckAfter: 0},
 			}, nil
@@ -479,8 +484,7 @@ func TestPollReqWithCertReady(t *testing.T) {
 				NotBefore:    time.Now(),
 				NotAfter:     time.Now().Add(24 * time.Hour),
 			}
-			pub, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-			certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCertX509, &pub.PublicKey, caKey)
+			certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCertX509, requestedKey, caKey)
 			cert, _ := x509.ParseCertificate(certDER)
 			return &certResponse{Certificate: cert, CACerts: []*x509.Certificate{&caCert}}, nil
 		},
