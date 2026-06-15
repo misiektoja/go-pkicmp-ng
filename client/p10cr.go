@@ -21,5 +21,5 @@ func (c *Client) SendP10CR(ctx context.Context, csrDER []byte, creds pkicmp.Cred
 	}
 
 	body := pkicmp.NewP10CRBody(csr)
-	return c.enroll(ctx, body, pkicmp.BodyTypeCP, creds, ropts)
+	return c.enroll(ctx, body, pkicmp.BodyTypeCP, creds, ropts, csr.PublicKey)
 }
