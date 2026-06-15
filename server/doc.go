@@ -163,6 +163,7 @@
 //   - Enforces subject presence in certificate templates.
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
+//
 // Add custom authorization policy and logging using [MiddlewareChain].
 // In this setup, `myPolicy()` runs before `LightweightPolicy()` to quickly reject
 // unauthorized requests before performing verification against lightweight policy:
