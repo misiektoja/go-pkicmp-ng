@@ -16,7 +16,7 @@ import (
 // enroll performs the full CMP enrollment transaction:
 // request → response → [poll] → certConf → pkiConf
 // (RFC 9810 §5.3.1–§5.3.4, Appendix C.4).
-func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions) (*EnrollResult, error) {
+func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions, requestedKey crypto.PublicKey) (*EnrollResult, error) {
 	if creds == nil {
 		return nil, &Error{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
 	}
@@ -141,6 +141,10 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		if _, err := cert.Verify(verifyOpts); err != nil {
 			return nil, &Error{Op: "verify certificate trust", Err: err}
 		}
+	}
+
+	if err := checkIssuedKey(cert, requestedKey); err != nil {
+		return nil, err
 	}
 
 	var parsedCACerts []*x509.Certificate
@@ -290,6 +294,27 @@ func parseErrorResponse(msg *pkicmp.PKIMessage) error {
 	return errContent.PKIStatusInfo.AsError()
 }
 
+// checkIssuedKey verifies that the issued certificate certifies the public key the client asked for.
+func checkIssuedKey(cert *x509.Certificate, requested crypto.PublicKey) error {
+	if requested == nil {
+		return nil
+	}
+	// The subject is deliberately not compared: RFC 9810 §5.2.3 lets a CA return
+	// grantedWithMods after changing requested fields such as the subject. The
+	// public key is different, because a certificate for a key the client does
+	// not hold is unusable and the mismatch would only surface later, far from
+	// this exchange.
+	type publicKeyComparer interface{ Equal(crypto.PublicKey) bool }
+	issued, ok := cert.PublicKey.(publicKeyComparer)
+	if !ok {
+		return &Error{Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey)}
+	}
+	if !issued.Equal(requested) {
+		return &Error{Op: "issued certificate does not certify the requested public key"}
+	}
+	return nil
+}
+
 func extractCertificate(resp *pkicmp.CertResponse) (*x509.Certificate, error) {
 	if resp.CertifiedKeyPair == nil {
 		return nil, &Error{Op: "missing certifiedKeyPair in response"}
@@ -400,7 +425,22 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		return nil, &Error{Op: "missing protection algorithm in response"}
 	}
 
+	// RFC 9483 §3.1: the same kind of protection must be used for every message of
+	// a PKI management operation, and RFC 9810 §5.2.3 reserves the failInfo bit
+	// wrongIntegrity for a message that arrives "password based instead of
+	// signature or vice versa". Pinning the mechanism to the credentials the
+	// client started with stops a peer from answering a shared-secret request
+	// with a signature from any certificate that chains to a configured anchor.
+	required := pkicmp.ProtectionAny
+	switch creds.(type) {
+	case *pkicmp.MACCredentials:
+		required = pkicmp.ProtectionMAC
+	case *pkicmp.SignatureCredentials:
+		required = pkicmp.ProtectionSignature
+	}
+
 	vr, err := resp.Verify(pkicmp.VerifyOptions{
+		RequiredProtection: required,
 		SharedSecret: func() []byte {
 			type sharedSecreter interface{ SharedSecret() []byte }
 			if ss, ok := creds.(sharedSecreter); ok {
