@@ -98,7 +98,9 @@ func TestSendIRHappyPath(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	// Enroll with the key the mock CA's certificate actually certifies, because
+	// the client now rejects a certificate issued for some other key.
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -135,7 +137,7 @@ func TestSendCRHappyPath(t *testing.T) {
 	// But request is signature-protected.
 	// Actually the mock protects response with MAC using "secret", so we need MAC creds for verification.
 	// Let's use MAC creds for simplicity since the mock always uses MAC.
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
 	require.NoError(t, err)
 
@@ -240,7 +242,7 @@ func TestSendKURHappyPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewSignatureCredentials(sigKey, &sigX509)
 	require.NoError(t, err)
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
@@ -266,7 +268,7 @@ func TestSendP10CRHappyPath(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	csrTemplate := &x509.CertificateRequest{Subject: pkix.Name{CommonName: "test"}}
 	csrDER, _ := x509.CreateCertificateRequest(rand.Reader, csrTemplate, key)
 
@@ -353,7 +355,7 @@ func TestPollingHappyPath(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -587,7 +589,7 @@ func TestWithExtraCertsAndSender(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL,
@@ -619,7 +621,7 @@ func TestWithTemplateExtension(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -678,7 +680,7 @@ func TestServerReturnsGrantedWithMods(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -935,7 +937,7 @@ func TestSendIRWithRSAKey(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -995,7 +997,7 @@ func TestSendIRWithP384Key(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P384(), rand.Reader)
+	key, _ := ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -1055,7 +1057,7 @@ func TestSendIRWithP521Key(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P521(), rand.Reader)
+	key, _ := ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -1163,7 +1165,7 @@ func TestCAPubsWithExistingTrustedCAs(t *testing.T) {
 	}, []byte("secret"))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	trustedCAs := x509.NewCertPool()
@@ -1285,7 +1287,7 @@ func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
@@ -1333,7 +1335,7 @@ func TestCertConfHTTPError(t *testing.T) {
 	}))
 	defer server.Close()
 
-	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	key, _ := pki.ee.PrivateKey()
 	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
