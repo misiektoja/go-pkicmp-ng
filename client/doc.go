@@ -80,6 +80,16 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
+// The protection mechanism is pinned to the credentials the operation started
+// with, as RFC 9483 §3.1 requires. A server that answers a shared-secret request
+// with a signature, or the reverse, is rejected even when [WithTrustedCAs] is
+// also configured. Signature-protected responses must additionally come from a
+// certificate whose subject matches the sender named in the response header.
+//
+// Finally, the issued certificate must certify the public key that was requested.
+// Its subject is not checked, because a CA may return grantedWithMods after
+// changing requested fields such as the subject.
+//
 // # Limits
 //
 // [DefaultMaxResponseBytes] (10 MiB) caps response body size to prevent memory
