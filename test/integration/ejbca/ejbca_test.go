@@ -252,7 +252,7 @@ func TestEJBCAMultipleSequentialEnrollments(t *testing.T) {
 		require.NoError(t, err)
 
 		creds, err := pkicmp.NewMACCredentials([]byte(secret))
-	require.NoError(t, err)
+		require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
@@ -701,7 +701,7 @@ func TestEJBCALargeKeys(t *testing.T) {
 		require.NoError(t, err)
 
 		creds, err := pkicmp.NewMACCredentials([]byte(secret))
-	require.NoError(t, err)
+		require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
@@ -723,7 +723,7 @@ func TestEJBCALargeKeys(t *testing.T) {
 		require.NoError(t, err)
 
 		creds, err := pkicmp.NewMACCredentials([]byte(secret))
-	require.NoError(t, err)
+		require.NoError(t, err)
 
 		c := client.NewClient(admin.Endpoint,
 			client.WithRecipient(admin.CACert.Subject),
