@@ -1,7 +1,6 @@
 package pkicmp
 
 import (
-
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
 )
