@@ -48,6 +48,21 @@
 //
 //	result, err := msg.Verify(pkicmp.VerifyOptions{SharedSecret: []byte("shared-secret")})
 //
+// When both are supplied, the message decides which mechanism is used. Set
+// [VerifyOptions.RequiredProtection] to [ProtectionMAC] or [ProtectionSignature]
+// to pin it instead. RFC 9483 §3.1 requires the same kind of protection for every
+// message of a PKI management operation, so a caller that knows how an operation
+// started should pin the mechanism; otherwise a peer can substitute the one it
+// finds easier to satisfy. The [client] package does this automatically. The zero
+// value accepts either mechanism, which is what a server needs for the first
+// message of an operation.
+//
+// Signature verification also binds the protection certificate to the identity
+// the message claims: when the header sender carries a directory name, it must
+// equal the subject of the certificate that produced the signature (RFC 9483 §3.5).
+// A NULL DN sender, which RFC 4210 §5.1.1 requires when the sender does not know
+// its own name, carries no name to bind and is accepted on the trust chain alone.
+//
 // [VerifyResult.ProtectionParams] captures the algorithm parameters from a verified
 // MAC-protected message. Pass it to [NewMACCredentials] with [WithProtectionAlgorithm]
 // to protect a response with the same algorithm suite (with a fresh salt),
@@ -60,7 +75,8 @@
 //   - [ParseError]: malformed message, missing required field, or an algorithm
 //     parameter outside the range this package accepts from an untrusted peer.
 //   - [ProtectionError]: failure applying protection.
-//   - [VerificationError]: bad MAC or signature.
+//   - [VerificationError]: bad MAC or signature, a protection mechanism the caller
+//     did not require, or a sender that does not match the protection certificate.
 //
 // Each carries an [InvalidReason] for programmatic inspection.
 package pkicmp
