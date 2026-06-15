@@ -5,6 +5,7 @@ import (
 	"crypto/hmac"
 	"crypto/subtle"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
 	"fmt"
 
@@ -12,20 +13,43 @@ import (
 	"golang.org/x/crypto/pbkdf2"
 )
 
+// ProtectionMechanism identifies a class of message protection.
+type ProtectionMechanism int
+
+const (
+	// ProtectionAny accepts whichever mechanism the message carries. A server
+	// needs this to serve both shared-secret and certificate-based clients,
+	// because it cannot know which one a peer will use for the first message.
+	ProtectionAny ProtectionMechanism = iota
+	// ProtectionMAC accepts only shared-secret protection (PasswordBasedMac or PBMAC1).
+	ProtectionMAC
+	// ProtectionSignature accepts only signature-based protection.
+	ProtectionSignature
+)
+
 // VerifyOptions provides trust material for message protection verification.
 //
-// Verification dispatches based on the message's ProtectionAlg OID — not on
-// the credential type. This allows a client to verify responses regardless of
-// which protection mode the server chose:
+// Verification dispatches on the message's ProtectionAlg OID, so a caller that
+// supplies both a shared secret and a trust pool accepts whichever mechanism
+// the peer chose. Set RequiredProtection to pin the mechanism instead.
 //
-//   - MAC-protected response: uses the SharedSecret field.
-//   - Signature-protected response: uses TrustPool for chain verification.
-//
-// Both fields may be populated simultaneously. The verifier ignores whichever
-// is irrelevant for the actual algorithm in the message.
+//   - MAC-protected message: uses the SharedSecret field.
+//   - Signature-protected message: uses TrustPool for chain verification.
 //
 // RFC 9810 §5.1.3.
 type VerifyOptions struct {
+	// RequiredProtection restricts which protection mechanism is accepted.
+	// The zero value, ProtectionAny, accepts either one.
+	//
+	// Within a single PKI management operation the mechanism must not change:
+	// RFC 9483 §3.1 requires "the same kind of protection ... for all messages
+	// of that PKI management operation", and RFC 9810 §5.2.3 reserves the
+	// failInfo bit wrongIntegrity for a message that arrives "password based
+	// instead of signature or vice versa". Callers that know which mechanism
+	// they started an operation with should pin it here, otherwise a peer can
+	// substitute the mechanism it finds easier to satisfy.
+	RequiredProtection ProtectionMechanism
+
 	// SharedSecret is the shared secret for MAC-protected messages.
 	// For signature-protected messages this field is ignored (TrustPool is
 	// used instead). May be nil if only signature verification is needed.
@@ -85,14 +109,22 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 
 	alg := m.Header.ProtectionAlg.Algorithm
 
-	// Dispatch based on algorithm OID.
-	if alg.Equal(oidPasswordBasedMac) {
-		return m.verifyPBM(opts)
-	}
-	if alg.Equal(oidPBMAC1) {
+	// Dispatch based on algorithm OID, after checking it against the mechanism
+	// the caller requires. Without this the peer picks the mechanism, which lets
+	// it substitute one the caller never intended to accept.
+	if alg.Equal(oidPasswordBasedMac) || alg.Equal(oidPBMAC1) {
+		if opts.RequiredProtection == ProtectionSignature {
+			return nil, &VerificationError{Reason: ReasonUnexpectedProtection, Err: fmt.Errorf("message is MAC-protected but signature-based protection is required")}
+		}
+		if alg.Equal(oidPasswordBasedMac) {
+			return m.verifyPBM(opts)
+		}
 		return m.verifyPBMAC1(opts)
 	}
 	if _, err := sigAlgFromOID(alg); err == nil {
+		if opts.RequiredProtection == ProtectionMAC {
+			return nil, &VerificationError{Reason: ReasonUnexpectedProtection, Err: fmt.Errorf("message is signature-protected but MAC-based protection is required")}
+		}
 		return m.verifySignature(opts)
 	}
 
@@ -284,6 +316,11 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		intermediates.AddCert(x509Cert)
 	}
 
+	// senderMismatch records that a candidate was rejected only because it did
+	// not belong to the named sender, so the caller can tell an identity problem
+	// apart from a cryptographic one.
+	senderMismatch := false
+
 	// RFC 9810 §5.1.3.3: Verify the signature using certificates from extraCerts.
 	for _, cert := range opts.ExtraCerts {
 		x509Cert, err := cert.Parse()
@@ -304,11 +341,40 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		if _, err := x509Cert.Verify(verifyOpts); err != nil {
 			continue
 		}
+		// RFC 9483 §3.5: the sender field must match the subject of the CMP
+		// protection certificate. Chaining to a trust anchor only proves the
+		// certificate is trusted, not that it belongs to the claimed sender, so
+		// without this any certificate under any configured anchor would pass.
+		if !senderMatchesCertificate(m.Header.Sender, x509Cert) {
+			senderMismatch = true
+			continue
+		}
 		// Check signature over protected part.
 		if err := x509Cert.CheckSignature(sigAlg, data, m.Protection); err == nil {
 			return &VerifyResult{MACVerified: false}, nil
 		}
 	}
 
+	if senderMismatch {
+		return nil, &VerificationError{Reason: ReasonSenderMismatch}
+	}
 	return nil, &VerificationError{Reason: ReasonSignatureFailed}
+}
+
+// senderMatchesCertificate reports whether the header sender names the subject of the protection certificate.
+func senderMatchesCertificate(sender GeneralName, cert *x509.Certificate) bool {
+	// RFC 4210 §5.1.1 requires a NULL DN when the sender does not know its own
+	// name, and GeneralName has variants other than directoryName. There is no
+	// directory name to compare in those cases, so the binding does not apply
+	// and authenticity rests on the trust chain alone.
+	if len(sender.DirectoryName) == 0 {
+		return true
+	}
+	var subject pkix.RDNSequence
+	if _, err := asn1.Unmarshal(cert.RawSubject, &subject); err != nil {
+		return false
+	}
+	// Compare the decoded forms so that a name encoded as PrintableString in one
+	// place and UTF8String in the other still matches.
+	return sender.DirectoryName.String() == subject.String()
 }
