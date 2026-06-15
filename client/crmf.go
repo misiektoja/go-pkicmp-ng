@@ -81,5 +81,5 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 		return nil, &Error{Op: fmt.Sprintf("unsupported CRMF expected response type %d", expectedRepType)}
 	}
 
-	return c.enroll(ctx, body, expectedRepType, creds, ropts)
+	return c.enroll(ctx, body, expectedRepType, creds, ropts, key.Public())
 }
