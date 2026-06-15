@@ -22,6 +22,13 @@ const (
 	ReasonSignatureFailed
 	// ReasonMissingTrustAnchors indicates no trust anchors were provided for signature verification.
 	ReasonMissingTrustAnchors
+	// ReasonUnexpectedProtection indicates the message used a different protection
+	// mechanism than the caller required. RFC 9810 §5.2.3 defines the matching
+	// failInfo bit wrongIntegrity, "password based instead of signature or vice versa".
+	ReasonUnexpectedProtection
+	// ReasonSenderMismatch indicates the protection certificate subject does not
+	// match the sender named in the header (RFC 9483 §3.5).
+	ReasonSenderMismatch
 )
 
 func (r InvalidReason) String() string {
@@ -38,6 +45,10 @@ func (r InvalidReason) String() string {
 		return "signature verification failed"
 	case ReasonMissingTrustAnchors:
 		return "missing trust anchors"
+	case ReasonUnexpectedProtection:
+		return "unexpected protection mechanism"
+	case ReasonSenderMismatch:
+		return "sender does not match protection certificate subject"
 	default:
 		return "unknown"
 	}
