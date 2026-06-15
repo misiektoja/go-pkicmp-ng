@@ -24,9 +24,9 @@ func TestCertReqMessagesASN1(t *testing.T) {
 				CertReq: CertRequest{
 					CertReqID: 1,
 					CertTemplate: CertTemplate{
-					Subject: GeneralName{DirectoryName: pkix.RDNSequence{
-						{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test"}},
-					}},
+						Subject: GeneralName{DirectoryName: pkix.RDNSequence{
+							{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Test"}},
+						}},
 					},
 				},
 			},
