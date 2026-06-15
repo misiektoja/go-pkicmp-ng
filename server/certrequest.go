@@ -137,4 +137,3 @@ func hasCABasicConstraints(extensions []pkix.Extension) bool {
 	}
 	return false
 }
-
