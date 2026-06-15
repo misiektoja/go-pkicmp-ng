@@ -54,6 +54,12 @@ type opensslCMPServer struct {
 	// Tests assert that the received certificate matches this value.
 	RspCert *x509.Certificate
 
+	// RspKey is the private key of RspCert. Enrollment tests must request a
+	// certificate for this key: the mock server replies with RspCert whatever was
+	// asked for, and the client requires the issued certificate to certify the
+	// requested key.
+	RspKey crypto.Signer
+
 	// ClientCert and ClientKey are a pre-issued ECDSA P-256 cert/key pair.
 	// Use them as the existing credentials in Certify() and KeyUpdate() tests.
 	ClientCert *x509.Certificate
@@ -183,6 +189,9 @@ func newOpenSSLCMPServer(t *testing.T, opts opensslCMPServerOpts) *opensslCMPSer
 	rspCertX509, err := rsp.X509Certificate()
 	require.NoError(t, err)
 
+	rspKey, err := rsp.PrivateKey()
+	require.NoError(t, err)
+
 	clientCertX509, err := client.X509Certificate()
 	require.NoError(t, err)
 
@@ -195,6 +204,7 @@ func newOpenSSLCMPServer(t *testing.T, opts opensslCMPServerOpts) *opensslCMPSer
 		Endpoint:   fmt.Sprintf("http://localhost:%d", port),
 		CACert:     &caCertX509,
 		RspCert:    &rspCertX509,
+		RspKey:     rspKey,
 		ClientCert: &clientCertX509,
 		ClientKey:  clientKey,
 	}
