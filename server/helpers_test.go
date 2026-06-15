@@ -322,5 +322,8 @@ func macMessageOpts() pkicmp.MessageOptions {
 // protectMAC sets senderKID and applies MAC protection to a message.
 func protectMAC(msg *pkicmp.PKIMessage, secret []byte) {
 	msg.Header.SenderKID = []byte(testSender.String())
-	{ _mc, _ := pkicmp.NewMACCredentials(secret); _ = _mc.Protect(msg) }
+	{
+		_mc, _ := pkicmp.NewMACCredentials(secret)
+		_ = _mc.Protect(msg)
+	}
 }
