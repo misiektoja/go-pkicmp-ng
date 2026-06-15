@@ -472,6 +472,11 @@ var (
 	// but no maximum is specified by any RFC. PBKDF2 commonly uses 262144 (2^18).
 	defaultPBMMinIterationCount = 1
 	defaultPBMMaxIterationCount = 500000
+
+	// defaultPBKDF2MinKeyLength is the shortest PBMAC1 derived key accepted from a
+	// peer, in bytes. 128 bits is the conventional floor for a symmetric key and
+	// is well beyond exhaustive search.
+	defaultPBKDF2MinKeyLength = 16
 )
 
 func validatePBMIterationCount(iterationCount int) error {
@@ -484,15 +489,17 @@ func validatePBMIterationCount(iterationCount int) error {
 	return nil
 }
 
-// validatePBKDF2KeyLength ties the PBMAC1 derived key length to the strength of the MAC it keys.
+// validatePBKDF2KeyLength bounds the PBMAC1 derived key length accepted from a peer.
 func validatePBKDF2KeyLength(keyLength int, macHash crypto.Hash) error {
-	// A derived key shorter than the MAC output turns the key length into a
-	// forgery primitive: a peer that asks for a few bytes shrinks the key space
-	// to something searchable, so protection can be forged without ever
-	// learning the shared secret.
-	minKeyLength := macHash.Size()
-	if keyLength < minKeyLength {
-		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d (minimum %d for this MAC)", keyLength, minKeyLength)}
+	// A very short derived key turns the key length into a forgery primitive: a
+	// peer that asks for a few bytes shrinks the key space to something
+	// searchable, so protection can be forged without ever learning the shared
+	// secret. The floor is an absolute key strength requirement rather than the
+	// MAC's digest size, because deriving 32 bytes for every MAC is common
+	// practice, including for HMAC-SHA-384 and HMAC-SHA-512, and rejecting it
+	// would break interoperability without buying any security.
+	if keyLength < defaultPBKDF2MinKeyLength {
+		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d (minimum %d)", keyLength, defaultPBKDF2MinKeyLength)}
 	}
 	// An HMAC key longer than the hash block size is hashed down to the digest size,
 	// so a longer derived key adds no strength while multiplying PBKDF2 work.
