@@ -9,9 +9,11 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -21,6 +23,7 @@ import (
 )
 
 type mockServerConfig struct {
+	ca            *certyaml.Certificate
 	caCert        *x509.Certificate
 	serverKey     crypto.Signer
 	serverCert    *x509.Certificate
@@ -28,6 +31,51 @@ type mockServerConfig struct {
 	otherEECert   *x509.Certificate
 	respProtector string // "pbm" or "sig" or "pbm-server-secret"
 	postProtect   func(req, resp *pkicmp.PKIMessage)
+}
+
+// requestedPublicKey returns the public key carried in an enrollment request.
+func requestedPublicKey(req *pkicmp.PKIMessage) crypto.PublicKey {
+	msgs, err := req.Body.IR()
+	if err != nil || msgs == nil || len(*msgs) == 0 {
+		return nil
+	}
+	pub, err := (*msgs)[0].PublicKey()
+	if err != nil {
+		return nil
+	}
+	return pub
+}
+
+// issueForRequest mints an end-entity certificate for the key the request carried, as a real CA does.
+func issueForRequest(issuer *certyaml.Certificate, subject pkix.Name, req *pkicmp.PKIMessage) *x509.Certificate {
+	pub := requestedPublicKey(req)
+	if pub == nil {
+		return nil
+	}
+	issuerCert, err := issuer.X509Certificate()
+	if err != nil {
+		return nil
+	}
+	issuerKey, err := issuer.PrivateKey()
+	if err != nil {
+		return nil
+	}
+	serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+	tmpl := &x509.Certificate{
+		SerialNumber: serial,
+		Subject:      subject,
+		NotBefore:    time.Now().Add(-time.Hour),
+		NotAfter:     time.Now().Add(24 * time.Hour),
+	}
+	der, err := x509.CreateCertificate(rand.Reader, tmpl, &issuerCert, pub, issuerKey)
+	if err != nil {
+		return nil
+	}
+	cert, err := x509.ParseCertificate(der)
+	if err != nil {
+		return nil
+	}
+	return cert
 }
 
 func setupValidationCerts() mockServerConfig {
@@ -46,6 +94,7 @@ func setupValidationCerts() mockServerConfig {
 	wrongCACert, _ := wrongCA.X509Certificate()
 
 	return mockServerConfig{
+		ca:          ca,
 		caCert:      &caCert,
 		serverKey:   serverTLS.PrivateKey.(crypto.Signer),
 		serverCert:  &serverX509,
@@ -55,12 +104,14 @@ func setupValidationCerts() mockServerConfig {
 }
 
 func setupMockServer(cfg mockServerConfig, mutateResp func(req, resp *pkicmp.PKIMessage)) *httptest.Server {
-	ee := &certyaml.Certificate{Subject: "cn=enrolled-ee"}
-	eeCert, _ := ee.X509Certificate()
-
 	handler := func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
+
+		var eeRaw []byte
+		if eeCert := issueForRequest(cfg.ca, pkix.Name{CommonName: "enrolled-ee"}, req); eeCert != nil {
+			eeRaw = eeCert.Raw
+		}
 
 		resp := &pkicmp.PKIMessage{
 			Header: pkicmp.PKIHeader{
@@ -73,7 +124,7 @@ func setupMockServer(cfg mockServerConfig, mutateResp func(req, resp *pkicmp.PKI
 					CertReqID: 0,
 					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
 					CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
-						CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeCert.Raw}},
+						CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: eeRaw}},
 					},
 				}},
 			}),
@@ -110,8 +161,7 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 	targetCA := &certyaml.Certificate{Subject: "cn=target-ca"}
 	targetCACert, _ := targetCA.X509Certificate()
 
-	ee := &certyaml.Certificate{Subject: "cn=enrolled-ee", Issuer: targetCA}
-	eeCert, _ := ee.X509Certificate()
+	var eeCert *x509.Certificate
 
 	callCount := 0
 	handler := func(w http.ResponseWriter, r *http.Request) {
@@ -121,6 +171,7 @@ func TestCAPubsTrustBootstrap(t *testing.T) {
 
 		var respMsg *pkicmp.PKIMessage
 		if callCount == 1 {
+			eeCert = issueForRequest(targetCA, pkix.Name{CommonName: "enrolled-ee"}, req)
 			respMsg = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
 					PVNO:          req.Header.PVNO,
@@ -263,7 +314,10 @@ func TestResponseValidationRejectsInvalidSignature(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	// Signature credentials, because a client that started the operation with a
+	// shared secret now refuses a signature-protected response outright and would
+	// never reach the signature check.
+	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
 	require.NoError(t, err)
 	trustedCAs := x509.NewCertPool()
 	trustedCAs.AddCert(cfg.caCert)
@@ -304,7 +358,7 @@ func TestResponseValidationRejectsSignatureWithoutTrustedCAs(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
 	require.NoError(t, err)
 	c := client.NewClient(server.URL)
 
@@ -329,9 +383,69 @@ func TestResponseValidationRejectsPBMResponseWithoutSecret(t *testing.T) {
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	// The operation began with signature protection, so the switch to MAC is
+	// refused before the missing shared secret is ever relevant.
 	var ve *pkicmp.VerificationError
 	require.ErrorAs(t, err, &ve)
-	assert.Equal(t, pkicmp.ReasonMissingSharedSecret, ve.Reason)
+	assert.Equal(t, pkicmp.ReasonUnexpectedProtection, ve.Reason)
+}
+
+// A certificate issued for a key the client does not hold is unusable, and the
+// substitution would otherwise surface far away from this exchange.
+func TestResponseValidationRejectsCertificateForDifferentKey(t *testing.T) {
+	cfg := setupValidationCerts()
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	server := setupMockServer(cfg, func(req, resp *pkicmp.PKIMessage) {
+		caCert, _ := cfg.ca.X509Certificate()
+		caKey, _ := cfg.ca.PrivateKey()
+		serial, _ := rand.Int(rand.Reader, big.NewInt(1<<62))
+		tmpl := &x509.Certificate{
+			SerialNumber: serial,
+			Subject:      pkix.Name{CommonName: "enrolled-ee"},
+			NotBefore:    time.Now().Add(-time.Hour),
+			NotAfter:     time.Now().Add(24 * time.Hour),
+		}
+		der, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCert, &otherKey.PublicKey, caKey)
+		ipBody, _ := resp.Body.IP()
+		ipBody.Response[0].CertifiedKeyPair.CertOrEncCert.Certificate = &pkicmp.CMPCertificate{Raw: der}
+	})
+	defer server.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
+
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ce *client.Error
+	require.ErrorAs(t, err, &ce)
+	assert.Contains(t, ce.Op, "does not certify the requested public key")
+}
+
+// A client that authenticates with a shared secret must not silently accept a
+// signature-protected response, even when it also configured trust anchors for
+// validating the issued certificate.
+func TestResponseValidationRejectsProtectionMechanismSwitch(t *testing.T) {
+	cfg := setupValidationCerts()
+	cfg.respProtector = "sig"
+	server := setupMockServer(cfg, nil)
+	defer server.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
+
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonUnexpectedProtection, ve.Reason)
 }
 
 func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
@@ -344,7 +458,7 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 	defer server.Close()
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
 	require.NoError(t, err)
 	trustedCAs := x509.NewCertPool()
 	trustedCAs.AddCert(cfg.caCert)
