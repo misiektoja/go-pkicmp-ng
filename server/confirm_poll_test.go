@@ -544,7 +544,10 @@ func TestCertConfWithDifferentCredentials(t *testing.T) {
 		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	msg.Header.SenderKID = []byte("kid1")
-	{ _mc, _ := pkicmp.NewMACCredentials(secret1); _ = _mc.Protect(msg) }
+	{
+		_mc, _ := pkicmp.NewMACCredentials(secret1)
+		_ = _mc.Protect(msg)
+	}
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -562,7 +565,10 @@ func TestCertConfWithDifferentCredentials(t *testing.T) {
 	confMsg.Header.TransactionID = msg.Header.TransactionID
 	confMsg.Header.RecipNonce = respMsg.Header.SenderNonce
 	confMsg.Header.SenderKID = []byte("kid2")
-	{ _mc, _ := pkicmp.NewMACCredentials(secret2); _ = _mc.Protect(confMsg) }
+	{
+		_mc, _ := pkicmp.NewMACCredentials(secret2)
+		_ = _mc.Protect(confMsg)
+	}
 	confDER, _ := confMsg.MarshalBinary()
 
 	resp2, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(confDER)))
@@ -609,7 +615,10 @@ func TestPollReqWithDifferentCredentials(t *testing.T) {
 		Recipient: pkicmp.NewDirectoryName(pkix.Name{CommonName: "Test CA"}),
 	})
 	msg.Header.SenderKID = []byte("kid1")
-	{ _mc, _ := pkicmp.NewMACCredentials(secret1); _ = _mc.Protect(msg) }
+	{
+		_mc, _ := pkicmp.NewMACCredentials(secret1)
+		_ = _mc.Protect(msg)
+	}
 	msgDER, _ := msg.MarshalBinary()
 
 	resp, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(msgDER)))
@@ -627,7 +636,10 @@ func TestPollReqWithDifferentCredentials(t *testing.T) {
 	pollMsg.Header.TransactionID = msg.Header.TransactionID
 	pollMsg.Header.RecipNonce = respMsg.Header.SenderNonce
 	pollMsg.Header.SenderKID = []byte("kid2")
-	{ _mc, _ := pkicmp.NewMACCredentials(secret2); _ = _mc.Protect(pollMsg) }
+	{
+		_mc, _ := pkicmp.NewMACCredentials(secret2)
+		_ = _mc.Protect(pollMsg)
+	}
 	pollDER, _ := pollMsg.MarshalBinary()
 
 	resp2, _ := http.Post(ts.URL, "application/pkixcmp", strings.NewReader(string(pollDER)))
