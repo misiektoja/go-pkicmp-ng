@@ -90,24 +90,22 @@ func TestValidatePBKDF2KeyLength(t *testing.T) {
 		require.ErrorAs(t, err, &pe)
 		assert.Contains(t, pe.Detail, "keyLength too small")
 	})
-	// A key shorter than the MAC output is searchable without the shared secret,
-	// so it must be rejected even though RFC 8018 §A.5 permits keyLength 1.
-	t.Run("ShorterThanMACOutput", func(t *testing.T) {
-		for _, keyLength := range []int{1, 8, crypto.SHA256.Size() - 1} {
+	// A searchable key space must be rejected even though RFC 8018 §A.5 permits
+	// keyLength 1.
+	t.Run("SearchableKeySpace", func(t *testing.T) {
+		for _, keyLength := range []int{1, 8, defaultPBKDF2MinKeyLength - 1} {
 			err := validatePBKDF2KeyLength(keyLength, crypto.SHA256)
 			var pe *ParseError
 			require.ErrorAs(t, err, &pe, "keyLength %d", keyLength)
 			assert.Contains(t, pe.Detail, "keyLength too small")
 		}
 	})
-	// The bounds follow the MAC, so a length that is valid for one hash may not
-	// be valid for a stronger one.
-	t.Run("BoundsFollowMACAlgorithm", func(t *testing.T) {
-		assert.NoError(t, validatePBKDF2KeyLength(crypto.SHA1.Size(), crypto.SHA1))
-		err := validatePBKDF2KeyLength(crypto.SHA1.Size(), crypto.SHA512)
-		var pe *ParseError
-		require.ErrorAs(t, err, &pe)
-		assert.Contains(t, pe.Detail, "keyLength too small")
+	// Deriving 32 bytes for every MAC is common practice, so it must be accepted
+	// for the larger hashes too even though it is shorter than their digest.
+	t.Run("ThirtyTwoBytesAcceptedForEveryMAC", func(t *testing.T) {
+		for _, macHash := range []crypto.Hash{crypto.SHA1, crypto.SHA224, crypto.SHA256, crypto.SHA384, crypto.SHA512} {
+			assert.NoError(t, validatePBKDF2KeyLength(32, macHash), "MAC %v", macHash)
+		}
 	})
 	t.Run("ExceedsBlockSize", func(t *testing.T) {
 		err := validatePBKDF2KeyLength(crypto.SHA256.New().BlockSize()+1, crypto.SHA256)
@@ -181,7 +179,7 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 	}{
 		{"Negative", -1, "keyLength too small"},
 		{"OneByteKeySpace", 1, "keyLength too small"},
-		{"ShorterThanMACOutput", crypto.SHA256.Size() - 1, "keyLength too small"},
+		{"BelowMinimum", defaultPBKDF2MinKeyLength - 1, "keyLength too small"},
 		{"ExceedsBlockSize", crypto.SHA256.New().BlockSize() + 1, "keyLength too large"},
 		{"Huge", 1 << 40, "keyLength too large"},
 	} {
