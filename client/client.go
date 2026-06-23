@@ -4,17 +4,20 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net/http"
+
+	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 // Client handles CMP message transport and polling.
 type Client struct {
-	endpoint         string
-	httpClient       *http.Client
-	recipient        pkix.Name
-	extraCerts       []*x509.Certificate
-	trustedCAs       *x509.CertPool
-	maxResponseBytes int64
-	maxPolls         int
+	endpoint           string
+	httpClient         *http.Client
+	recipient          pkix.Name
+	extraCerts         []*x509.Certificate
+	trustedCAs         *x509.CertPool
+	responseProtection pkicmp.ProtectionMechanism
+	maxResponseBytes   int64
+	maxPolls           int
 }
 
 const (
@@ -53,8 +56,29 @@ func WithHTTPClient(hc *http.Client) Option {
 }
 
 // WithRecipient sets the expected CA name in the header.
+//
+// Many CAs route on this field and refuse a request that omits it, so set it
+// whenever the CA name is known.
 func WithRecipient(name pkix.Name) Option {
 	return func(c *Client) { c.recipient = name }
+}
+
+// WithResponseProtection requires every response in an operation to use the given protection mechanism.
+//
+// The default, [pkicmp.ProtectionAny], accepts whichever mechanism the server
+// used. RFC 9483 §3.1 asks for one kind of protection throughout a PKI
+// management operation, but deployed CAs answer a shared-secret request with a
+// signature and remain interoperable, and RFC 9810 §5.3.21 requires an error
+// message to be signed regardless of how the request was protected. Pinning the
+// mechanism therefore has to be the caller's decision.
+//
+// Pinning is not what stops a peer from substituting an identity: a response is
+// already bound to the operation by the transaction ID and nonces, a
+// signature-protected response must chain to a configured trust anchor and name
+// its own protection certificate in the sender field, and an issued certificate
+// must certify the requested public key.
+func WithResponseProtection(mechanism pkicmp.ProtectionMechanism) Option {
+	return func(c *Client) { c.responseProtection = mechanism }
 }
 
 // WithExtraCerts sets extra certificates to include in requests.
