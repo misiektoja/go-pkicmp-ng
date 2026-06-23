@@ -89,6 +89,17 @@ type VerifyResult struct {
 	// algorithm suite (fresh salt is generated). Nil for signature-verified messages.
 	// RFC 9810 §5.1.3.
 	ProtectionParams MACCredentialOption
+
+	// ProtectionCertificate is the certificate whose signature was accepted.
+	// Nil for MAC-verified messages.
+	//
+	// A peer is allowed to send extraCerts only on the first message of a PKI
+	// management operation (RFC 9810 §5.1), so a later message in the same
+	// operation can arrive with no candidate signer at all. Callers that keep
+	// this certificate can offer it back through [VerifyOptions.ExtraCerts] to
+	// verify those later messages, which still have to satisfy the chain,
+	// sender and signature checks against it.
+	ProtectionCertificate *x509.Certificate
 }
 
 // Verify verifies the message protection and returns verification metadata.
@@ -298,7 +309,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		if err := opts.TrustedCert.CheckSignature(sigAlg, data, m.Protection); err != nil {
 			return nil, &VerificationError{Reason: ReasonSignatureFailed}
 		}
-		return &VerifyResult{MACVerified: false}, nil
+		return &VerifyResult{MACVerified: false, ProtectionCertificate: opts.TrustedCert}, nil
 	}
 
 	// Chain-based verification using TrustPool and ExtraCerts.
@@ -351,7 +362,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		}
 		// Check signature over protected part.
 		if err := x509Cert.CheckSignature(sigAlg, data, m.Protection); err == nil {
-			return &VerifyResult{MACVerified: false}, nil
+			return &VerifyResult{MACVerified: false, ProtectionCertificate: x509Cert}, nil
 		}
 	}
 
