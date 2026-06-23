@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"fmt"
 	"io"
 	"net/http"
@@ -29,7 +30,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	recipient := pkicmp.GeneralName{}
-	if len(c.recipient.Names) > 0 || len(c.recipient.ExtraNames) > 0 {
+	if !isEmptyName(c.recipient) {
 		recipient = pkicmp.NewDirectoryName(c.recipient)
 	}
 
@@ -65,9 +66,15 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		return nil, &Error{Op: "parse response", Err: err}
 	}
 
-	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs)
+	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs, nil)
 	if err != nil {
 		return nil, &Error{Op: "verify response", Err: err}
+	}
+	// Keep the signer authenticated here so the rest of the operation can still
+	// be verified when the server stops sending extraCerts.
+	var knownSigner *x509.Certificate
+	if vr != nil {
+		knownSigner = vr.ProtectionCertificate
 	}
 
 	if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
@@ -88,9 +95,12 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	if certResp.Status.Status == pkicmp.StatusWaiting {
-		resp, vr, err = c.poll(ctx, msg.Header, resp, creds, certResp.CertReqID)
+		resp, vr, err = c.poll(ctx, msg.Header, resp, creds, certResp.CertReqID, knownSigner)
 		if err != nil {
 			return nil, err
+		}
+		if vr != nil && vr.ProtectionCertificate != nil {
+			knownSigner = vr.ProtectionCertificate
 		}
 		certResp, rep, err = extractCertRespAndRep(resp, expectedRepType)
 		if err != nil {
@@ -134,9 +144,20 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
 	if effectiveTrustPool != nil {
+		// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
+		// path. A CA that issues from an intermediate returns that intermediate
+		// here, so without this pool the chain cannot be completed against a
+		// trust anchor that is the root.
+		intermediates := x509.NewCertPool()
+		for _, extraCert := range resp.ExtraCerts {
+			if parsed, err := extraCert.Parse(); err == nil {
+				intermediates.AddCert(parsed)
+			}
+		}
 		verifyOpts := x509.VerifyOptions{
-			Roots:     effectiveTrustPool,
-			KeyUsages: []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+			Roots:         effectiveTrustPool,
+			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := cert.Verify(verifyOpts); err != nil {
 			return nil, &Error{Op: "verify certificate trust", Err: err}
@@ -206,7 +227,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		return nil, &Error{Op: "parse PKIConf", Err: err}
 	}
 
-	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool); err != nil {
+	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool, knownSigner); err != nil {
 		return nil, &Error{Op: "verify PKIConf", Err: err}
 	}
 
@@ -294,6 +315,24 @@ func parseErrorResponse(msg *pkicmp.PKIMessage) error {
 	return errContent.PKIStatusInfo.AsError()
 }
 
+// isEmptyName reports whether a distinguished name carries no attributes at all.
+func isEmptyName(name pkix.Name) bool {
+	// pkix.Name.Names is populated only when a name is decoded from DER, so a
+	// name a caller built in Go has it empty. Testing it to decide whether a
+	// name was set silently discards every programmatically built name.
+	return len(name.Country) == 0 &&
+		len(name.Organization) == 0 &&
+		len(name.OrganizationalUnit) == 0 &&
+		len(name.Locality) == 0 &&
+		len(name.Province) == 0 &&
+		len(name.StreetAddress) == 0 &&
+		len(name.PostalCode) == 0 &&
+		name.SerialNumber == "" &&
+		name.CommonName == "" &&
+		len(name.Names) == 0 &&
+		len(name.ExtraNames) == 0
+}
+
 // checkIssuedKey verifies that the issued certificate certifies the public key the client asked for.
 func checkIssuedKey(cert *x509.Certificate, requested crypto.PublicKey) error {
 	if requested == nil {
@@ -329,7 +368,7 @@ func extractCertificate(resp *pkicmp.CertResponse) (*x509.Certificate, error) {
 // poll implements the client-side polling state machine (RFC 9810 §5.3.22).
 // It sends pollReq messages and respects the server's checkAfter interval
 // until a final response (ip/cp/kup) or error is received.
-func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp *pkicmp.PKIMessage, creds pkicmp.Credentials, certReqID int64) (*pkicmp.PKIMessage, *pkicmp.VerifyResult, error) {
+func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp *pkicmp.PKIMessage, creds pkicmp.Credentials, certReqID int64, knownSigner *x509.Certificate) (*pkicmp.PKIMessage, *pkicmp.VerifyResult, error) {
 	var waitTime time.Duration
 
 	for i := 0; i < c.maxPolls; i++ {
@@ -373,9 +412,12 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 			return nil, nil, &Error{Op: "parse polled response", Err: err}
 		}
 
-		vr, err := c.verifyResponse(pollMsg, resp, creds, c.trustedCAs)
+		vr, err := c.verifyResponse(pollMsg, resp, creds, c.trustedCAs, knownSigner)
 		if err != nil {
 			return nil, nil, &Error{Op: "verify polled response", Err: err}
+		}
+		if vr != nil && vr.ProtectionCertificate != nil {
+			knownSigner = vr.ProtectionCertificate
 		}
 
 		if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
@@ -403,7 +445,14 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 	return nil, nil, &Error{Op: fmt.Sprintf("polling exceeded max retries (%d)", c.maxPolls)}
 }
 
-func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage, creds pkicmp.Credentials, trustedCAs *x509.CertPool) (*pkicmp.VerifyResult, error) {
+// verifyResponse checks that a response belongs to the request and that its protection verifies.
+//
+// knownSigner, when not nil, is a protection certificate already authenticated
+// earlier in the same operation. It is offered as an additional candidate
+// signer because a server may send extraCerts only on its first message
+// (RFC 9810 §5.1), while the candidate still has to satisfy the same chain,
+// sender and signature checks as one the server supplied.
+func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage, creds pkicmp.Credentials, trustedCAs *x509.CertPool, knownSigner *x509.Certificate) (*pkicmp.VerifyResult, error) {
 	if !bytes.Equal(resp.Header.TransactionID, req.Header.TransactionID) {
 		return nil, &Error{Op: "transaction ID mismatch"}
 	}
@@ -425,22 +474,13 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		return nil, &Error{Op: "missing protection algorithm in response"}
 	}
 
-	// RFC 9483 §3.1: the same kind of protection must be used for every message of
-	// a PKI management operation, and RFC 9810 §5.2.3 reserves the failInfo bit
-	// wrongIntegrity for a message that arrives "password based instead of
-	// signature or vice versa". Pinning the mechanism to the credentials the
-	// client started with stops a peer from answering a shared-secret request
-	// with a signature from any certificate that chains to a configured anchor.
-	required := pkicmp.ProtectionAny
-	switch creds.(type) {
-	case *pkicmp.MACCredentials:
-		required = pkicmp.ProtectionMAC
-	case *pkicmp.SignatureCredentials:
-		required = pkicmp.ProtectionSignature
+	candidates := resp.ExtraCerts
+	if knownSigner != nil {
+		candidates = append(append([]pkicmp.CMPCertificate(nil), candidates...), pkicmp.CMPCertificate{Raw: knownSigner.Raw})
 	}
 
 	vr, err := resp.Verify(pkicmp.VerifyOptions{
-		RequiredProtection: required,
+		RequiredProtection: c.responseProtection,
 		SharedSecret: func() []byte {
 			type sharedSecreter interface{ SharedSecret() []byte }
 			if ss, ok := creds.(sharedSecreter); ok {
@@ -449,7 +489,7 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 			return nil
 		}(),
 		TrustPool:  trustedCAs,
-		ExtraCerts: resp.ExtraCerts,
+		ExtraCerts: candidates,
 		SenderKID:  resp.Header.SenderKID,
 	})
 	if err != nil {
