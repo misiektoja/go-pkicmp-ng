@@ -261,18 +261,21 @@ func (m *PKIMessage) protectWithPBMAC1Options(opts pbmac1Options) error {
 // marshalPBMAC1Params builds the PBMAC1-params ASN.1 structure.
 // RFC 8018 §A.5.
 func marshalPBMAC1Params(salt []byte, iterCount, keyLen int, prf, mac asn1.ObjectIdentifier) ([]byte, error) {
-	// PBKDF2-params: SEQUENCE { salt, iterationCount, keyLength, prf }
-	pbkdf2Params, err := asn1.Marshal(struct {
-		Salt           []byte
-		IterationCount int
-		KeyLength      int
-		PRF            algorithmIdentifierASN1
-	}{
+	// PBKDF2-params: SEQUENCE { salt, iterationCount, keyLength, prf }.
+	// Encoding through the same struct the parser uses keeps the two symmetric.
+	params := pbkdf2ParamsASN1{
 		Salt:           salt,
 		IterationCount: iterCount,
 		KeyLength:      keyLen,
-		PRF:            algorithmIdentifierASN1{Algorithm: prf},
-	})
+	}
+	// RFC 8018 §A.2 gives prf the default algid-hmacWithSHA1, and X.690 §11.5
+	// forbids encoding a component that holds its default value. Leaving the
+	// field zero makes encoding/asn1 omit it, which is what a peer that sent no
+	// prf gets back when its parameters are echoed.
+	if !prf.Equal(oidHMACWithSHA1) {
+		params.PRF = algorithmIdentifierASN1{Algorithm: prf}
+	}
+	pbkdf2Params, err := asn1.Marshal(params)
 	if err != nil {
 		return nil, err
 	}
@@ -338,11 +341,16 @@ func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certific
 		m.Header.SenderKID = cert.SubjectKeyId
 	}
 
-	// Append cert and chain to ExtraCerts.
-	m.ExtraCerts = append(m.ExtraCerts, CMPCertificate{Raw: cert.Raw})
+	// RFC 9483 §3.3 requires the CMP protection certificate to be the first
+	// element of extraCerts, followed by its chain, so anything the caller
+	// already placed there moves behind them.
+	ordered := make([]CMPCertificate, 0, len(m.ExtraCerts)+len(chain)+1)
+	ordered = append(ordered, CMPCertificate{Raw: cert.Raw})
 	for _, c := range chain {
-		m.ExtraCerts = append(m.ExtraCerts, CMPCertificate{Raw: c.Raw})
+		ordered = append(ordered, CMPCertificate{Raw: c.Raw})
 	}
+	ordered = append(ordered, m.ExtraCerts...)
+	m.ExtraCerts = dedupeCertificates(ordered)
 
 	// Marshal header+body and compute signature.
 	if err := m.marshalForProtection(); err != nil {
@@ -375,6 +383,20 @@ func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certific
 	}
 	m.Protection = sig
 	return nil
+}
+
+// dedupeCertificates keeps the first occurrence of each certificate and drops later repeats.
+func dedupeCertificates(certs []CMPCertificate) []CMPCertificate {
+	seen := make(map[string]struct{}, len(certs))
+	out := make([]CMPCertificate, 0, len(certs))
+	for _, c := range certs {
+		if _, dup := seen[string(c.Raw)]; dup {
+			continue
+		}
+		seen[string(c.Raw)] = struct{}{}
+		out = append(out, c)
+	}
+	return out
 }
 
 // marshalForProtection marshals header and body into rawHeader/rawBody for
