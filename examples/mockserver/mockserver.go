@@ -228,8 +228,10 @@ func generateSelfSignedCA() (*ecdsa.PrivateKey, *x509.Certificate, error) {
 		NotAfter:              time.Now().Add(10 * 365 * 24 * time.Hour),
 		IsCA:                  true,
 		BasicConstraintsValid: true,
-		KeyUsage:              x509.KeyUsageCertSign | x509.KeyUsageCRLSign,
-		SubjectKeyId:          ski,
+		// digitalSignature is required because this same certificate is the CMP
+		// protection certificate passed to server.WithSigner (RFC 9483 §3.5).
+		KeyUsage:     x509.KeyUsageCertSign | x509.KeyUsageCRLSign | x509.KeyUsageDigitalSignature,
+		SubjectKeyId: ski,
 	}
 
 	der, err := x509.CreateCertificate(rand.Reader, tmpl, tmpl, &key.PublicKey, key)
