@@ -15,35 +15,29 @@ import (
 func LightweightPolicy() func(Handler) Handler {
 	return func(next Handler) Handler {
 		return HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) (*Response, error) {
-			// RFC 9483 §3.1: MAC-protected messages MUST use directoryName in the sender field.
-			if sender.MACVerified && len(msg.Header.Sender.DirectoryName) == 0 {
+			// RFC 9483 §3.1 wants a MAC-protected message to name the shared
+			// secret in the sender commonName, but RFC 4210 §5.1.1 requires the
+			// opposite of an end entity that does not yet know its own name: a
+			// NULL-DN sender with the reference number in senderKID, which is
+			// what a bootstrapping enrollment normally is. Either form
+			// identifies the secret, so only the absence of both is rejected
+			// here. WithStrictProfileValidation applies the profile rule.
+			if sender.MACVerified && len(msg.Header.Sender.DirectoryName) == 0 && len(msg.Header.SenderKID) == 0 {
 				return nil, &Error{
 					Status:      pkicmp.StatusRejection,
 					FailureInfo: pkicmp.FailBadMessageCheck,
-					StatusText:  "MAC protection requires directoryName sender",
+					StatusText:  "MAC protection requires a sender name or senderKID",
 				}
 			}
 
-			// RFC 9483 §3.3: Signature-protected messages MUST include extraCerts.
-			if !sender.MACVerified && len(msg.ExtraCerts) == 0 {
-				return nil, &Error{
-					Status:      pkicmp.StatusRejection,
-					FailureInfo: pkicmp.FailBadMessageCheck,
-					StatusText:  "signature protection without extraCerts",
-				}
-			}
-
-			// RFC 9483 §3.5: For initial requests, extraCerts MUST contain the
-			// complete certificate chain (signer cert + issuing CA certs).
-			if !sender.MACVerified && isInitialRequest(msg.Body.Type) {
-				if err := validateExtraCertsChain(msg.ExtraCerts); err != nil {
-					return nil, &Error{
-						Status:      pkicmp.StatusRejection,
-						FailureInfo: pkicmp.FailBadMessageCheck,
-						StatusText:  "incomplete certificate chain in extraCerts",
-					}
-				}
-			}
+			// The RFC 9483 §3.3 rules on extraCerts, that it is present for
+			// signature-based protection and that the CMP protection certificate
+			// comes first, are enforced only under WithStrictProfileValidation.
+			// They exist so a recipient can resolve and validate the signer from
+			// the message, and this server never does that: it authenticates
+			// through CertificateLookup against its own store. Enforcing them by
+			// default would reject deployed clients over a field the server
+			// ignores. Outgoing responses always follow §3.3.
 
 			// Only validate cert requests further.
 			if !isCertRequest(msg.Body.Type) {
