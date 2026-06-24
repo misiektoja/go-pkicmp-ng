@@ -159,10 +159,16 @@
 //
 //   - Verifies Proof-of-Possession (POP) on CRMF requests.
 //   - Requires KUR to use signature protection (not MAC).
-//   - Validates that extraCerts contains a complete chain for signature-protected requests.
+//   - Requires a MAC-protected message to identify its shared secret through
+//     either the sender name or senderKID.
 //   - Enforces subject presence in certificate templates.
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
+//
+// Some RFC 9483 rules govern how a peer must construct a message rather than
+// how this server authenticates it, and widely deployed clients break them.
+// Those are off by default and enabled together with
+// [WithStrictProfileValidation], which is documented on the option.
 //
 // Add custom authorization policy and logging using [MiddlewareChain].
 // In this setup, `myPolicy()` runs before `LightweightPolicy()` to quickly reject
