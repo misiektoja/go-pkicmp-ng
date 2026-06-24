@@ -86,8 +86,49 @@ const (
 )
 
 // NewDirectoryName creates a GeneralName of type directoryName from a pkix.Name.
+//
+// pkix.Name.ToRDNSequence only emits the attributes that have a typed field,
+// so a name parsed from a certificate loses everything else, such as the UID
+// and domainComponent attributes EJBCA puts in its CA subject. Those attributes
+// survive parsing only in Names, and this reconstructs them the same way
+// pkix.Name.String does, which keeps the encoded name and its string form in
+// agreement. Use NewDirectoryNameFromRawDER when the original bytes must be
+// preserved exactly, for example to echo a peer's own name back to it.
 func NewDirectoryName(name pkix.Name) GeneralName {
-	return GeneralName{DirectoryName: name.ToRDNSequence()}
+	return GeneralName{DirectoryName: toFullRDNSequence(name)}
+}
+
+// toFullRDNSequence encodes a pkix.Name including the attributes ToRDNSequence drops.
+func toFullRDNSequence(name pkix.Name) pkix.RDNSequence {
+	var rdns pkix.RDNSequence
+	// ExtraNames is the caller's explicit encoding instruction, and
+	// ToRDNSequence already appends it, so Names is only consulted otherwise.
+	if name.ExtraNames == nil {
+		for _, atv := range name.Names {
+			if isTypedNameAttribute(atv.Type) {
+				continue
+			}
+			// Attributes are placed ahead of the typed ones so they read last
+			// in the string form, matching pkix.Name.String.
+			rdns = append(rdns, pkix.RelativeDistinguishedNameSET{atv})
+		}
+	}
+	return append(rdns, name.ToRDNSequence()...)
+}
+
+// isTypedNameAttribute reports whether ToRDNSequence already emits the attribute from a typed pkix.Name field.
+func isTypedNameAttribute(t asn1.ObjectIdentifier) bool {
+	if len(t) != 4 || t[0] != 2 || t[1] != 5 || t[2] != 4 {
+		return false
+	}
+	switch t[3] {
+	// commonName, serialNumber, countryName, localityName, stateOrProvinceName,
+	// organizationName, organizationalUnitName, streetAddress, postalCode.
+	case 3, 5, 6, 7, 8, 9, 10, 11, 17:
+		return true
+	default:
+		return false
+	}
 }
 
 // NewDirectoryNameFromRawDER creates a GeneralName of type directoryName from
