@@ -80,15 +80,23 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
-// The protection mechanism is pinned to the credentials the operation started
-// with, as RFC 9483 §3.1 requires. A server that answers a shared-secret request
-// with a signature, or the reverse, is rejected even when [WithTrustedCAs] is
-// also configured. Signature-protected responses must additionally come from a
-// certificate whose subject matches the sender named in the response header.
+// By default a response may use either protection mechanism, whichever the
+// server chose, because a CA that authenticates clients by shared secret and
+// signs every response is a common and interoperable configuration. Use
+// [WithResponseProtection] to require one mechanism throughout the operation, as
+// RFC 9483 §3.1 asks for.
 //
-// Finally, the issued certificate must certify the public key that was requested.
-// Its subject is not checked, because a CA may return grantedWithMods after
-// changing requested fields such as the subject.
+// Signature-protected responses must come from a certificate whose subject
+// matches the sender named in the response header. A server may send extraCerts
+// only on its first response, so the protection certificate authenticated
+// earlier in the operation is retained and tried for later messages, which still
+// have to satisfy the same chain, sender and signature checks against it.
+//
+// The issued certificate must certify the public key that was requested, and is
+// validated against the configured trust anchors using any certificates the
+// response carried in extraCerts to complete the path. Its subject is not
+// checked, because a CA may return grantedWithMods after changing requested
+// fields such as the subject.
 //
 // # Limits
 //
