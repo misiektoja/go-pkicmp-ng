@@ -50,12 +50,10 @@
 //
 // When both are supplied, the message decides which mechanism is used. Set
 // [VerifyOptions.RequiredProtection] to [ProtectionMAC] or [ProtectionSignature]
-// to pin it instead. RFC 9483 §3.1 requires the same kind of protection for every
-// message of a PKI management operation, so a caller that knows how an operation
-// started should pin the mechanism; otherwise a peer can substitute the one it
-// finds easier to satisfy. The [client] package does this automatically. The zero
-// value accepts either mechanism, which is what a server needs for the first
-// message of an operation.
+// to pin it instead, which RFC 9483 §3.1 asks for within one PKI management
+// operation. The zero value accepts either mechanism. That is what a server needs
+// for the first message of an operation, and what a client needs to talk to a CA
+// that authenticates by shared secret and signs its responses.
 //
 // Signature verification also binds the protection certificate to the identity
 // the message claims: when the header sender carries a directory name, it must
