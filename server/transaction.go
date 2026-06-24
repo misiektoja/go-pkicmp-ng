@@ -88,7 +88,7 @@ type transactionEntry struct {
 	cert              *x509.Certificate
 	issueRef          any                        // opaque CA reference for CertificateConfirmer
 	issuedSenderNonce []byte                     // server's senderNonce from the issued response
-	clientSenderNonce []byte                     // client's original senderNonce from the cert request
+	clientSenderNonce []byte                     // client's senderNonce from the cert request
 	protectionParams  pkicmp.MACCredentialOption // decoded protection parameters for echo-back
 }
 
@@ -242,10 +242,25 @@ func (t *transactionTracker) getIssued(credentialID, transactionID []byte) (*tra
 // window (RFC 9483 §3.5).
 func (t *transactionTracker) setCompleted(credentialID, transactionID []byte) {
 	key := makeKey(credentialID, transactionID)
-	if v, ok := t.transactions.Load(key); ok {
-		entry := v.(*transactionEntry)
-		entry.state = stateCompleted
-		entry.lastActivity = time.Now()
+
+	// Like every other transition, publish a fresh entry with CompareAndSwap.
+	// cleanupExpired reads lastActivity concurrently, and a multi-word
+	// time.Time updated in place can be read torn. Retry on a lost race so a
+	// concurrent transition cannot leave the transaction uncompleted.
+	for {
+		old, ok := t.transactions.Load(key)
+		if !ok {
+			return
+		}
+		oldEntry := old.(*transactionEntry)
+
+		newEntry := *oldEntry
+		newEntry.state = stateCompleted
+		newEntry.lastActivity = time.Now()
+
+		if t.transactions.CompareAndSwap(key, old, &newEntry) {
+			return
+		}
 	}
 }
 
