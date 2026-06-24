@@ -44,6 +44,9 @@ var (
 	oidHMACWithSHA384 = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 10}
 	oidHMACWithSHA512 = asn1.ObjectIdentifier{1, 2, 840, 113549, 2, 11}
 
+	// X.509 extensions (RFC 5280 §4.2.1.3).
+	oidExtensionKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 15}
+
 	// CMP InfoType OIDs (RFC 9810 §5.1.1).
 	oidConfirmWaitTime = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 4, 14}
 	oidImplicitConfirm = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 4, 13}
@@ -159,14 +162,35 @@ func ImplicitConfirmInfoValue() InfoTypeAndValue {
 	}
 }
 
-// ConfirmWaitTimeInfoValue returns an InfoTypeAndValue for the confirmWaitTime
-// info type (RFC 9810 §5.1.1). The duration is encoded as a 32-bit integer
-// number of seconds (ASN.1 INTEGER).
+// ConfirmWaitTimeInfoValue returns an InfoTypeAndValue for the confirmWaitTime info type.
+//
+// RFC 9810 §5.1.1.2 defines ConfirmWaitTimeValue as a GeneralizedTime, so the
+// value is the absolute instant by which the certConf is expected, not the
+// duration itself.
 func ConfirmWaitTimeInfoValue(d time.Duration) InfoTypeAndValue {
-	secs := max(int(d.Seconds()), 0)
-	val, _ := asn1.Marshal(secs)
+	if d < 0 {
+		d = 0
+	}
+	deadline := time.Now().Add(d).UTC().Truncate(time.Second)
+	val, _ := asn1.MarshalWithParams(deadline, "generalized")
 	return InfoTypeAndValue{
 		InfoType:  oidConfirmWaitTime,
 		InfoValue: val,
 	}
+}
+
+// ParseConfirmWaitTime returns the deadline carried by a confirmWaitTime info value.
+func ParseConfirmWaitTime(itav InfoTypeAndValue) (time.Time, error) {
+	if !itav.InfoType.Equal(oidConfirmWaitTime) {
+		return time.Time{}, &ParseError{Detail: "not a confirmWaitTime info value"}
+	}
+	var deadline time.Time
+	rest, err := asn1.UnmarshalWithParams(itav.InfoValue, &deadline, "generalized")
+	if err != nil {
+		return time.Time{}, &ParseError{Detail: "invalid confirmWaitTime: " + err.Error()}
+	}
+	if len(rest) != 0 {
+		return time.Time{}, &ParseError{Detail: "trailing data after confirmWaitTime"}
+	}
+	return deadline, nil
 }
