@@ -122,6 +122,23 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 		return resp
 	}
 
+	if s.cfg.strictProfile {
+		if err := validateProfileSender(msg, sender); err != nil {
+			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+				Status:       pkicmp.StatusRejection,
+				FailInfo:     pkicmp.FailBadMessageCheck,
+				StatusString: pkicmp.PKIFreeText{err.Error()},
+			})
+		}
+		if err := validateProfileExtraCerts(msg, sender); err != nil {
+			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+				Status:       pkicmp.StatusRejection,
+				FailInfo:     pkicmp.FailBadMessageCheck,
+				StatusString: pkicmp.PKIFreeText{err.Error()},
+			})
+		}
+	}
+
 	// RFC 9483 §4.1: Validate header fields.
 	if err := s.validateHeader(msg, sender); err != nil {
 		var srvErr *Error
@@ -261,30 +278,50 @@ func isInitialRequest(bodyType pkicmp.BodyType) bool {
 	}
 }
 
-// validateExtraCertsChain verifies that extraCerts contains a complete certificate
-// chain: the signer cert must chain to a self-signed root CA via certificates
-// present in extraCerts. Per RFC 9483 §3.5, the chain must be complete for
-// signature-protected initial request messages.
-func validateExtraCertsChain(extraCerts []pkicmp.CMPCertificate) error {
-	if len(extraCerts) < 2 {
-		return errors.New("chain too short")
+// validateProfileSender applies the RFC 9483 §3.1 rule that a MAC-protected message names the shared secret in the sender field.
+func validateProfileSender(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
+	if sender == nil || !sender.MACVerified {
+		return nil
+	}
+	if len(msg.Header.Sender.DirectoryName) == 0 {
+		return errors.New("MAC protection requires directoryName sender")
+	}
+	return nil
+}
+
+// validateProfileExtraCerts applies the RFC 9483 §3.3 extraCerts rules to a signature-protected request.
+func validateProfileExtraCerts(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
+	if sender == nil || sender.MACVerified {
+		return nil
+	}
+	// §3.3 allows extraCerts to be omitted in certConf, PKIConf, pollReq and pollRep.
+	if !isInitialRequest(msg.Body.Type) {
+		return nil
+	}
+	if len(msg.ExtraCerts) == 0 {
+		return errors.New("signature protection without extraCerts")
 	}
 
-	certs := make([]*x509.Certificate, 0, len(extraCerts))
-	for _, ec := range extraCerts {
-		c, err := ec.Parse()
+	certs := make([]*x509.Certificate, 0, len(msg.ExtraCerts))
+	for _, ec := range msg.ExtraCerts {
+		parsed, err := ec.Parse()
 		if err != nil {
-			return err
+			return errors.New("undecodable certificate in extraCerts")
 		}
-		certs = append(certs, c)
+		certs = append(certs, parsed)
 	}
-
-	// Check that at least one certificate in extraCerts is self-signed (root CA).
-	for _, c := range certs {
-		if err := c.CheckSignatureFrom(c); err == nil {
-			return nil
+	if sender.Certificate != nil && !certs[0].Equal(sender.Certificate) {
+		return errors.New("first certificate in extraCerts is not the CMP protection certificate")
+	}
+	for i := 0; i < len(certs)-1; i++ {
+		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
+			return errors.New("extraCerts is not an ordered certificate chain")
 		}
 	}
-
-	return errors.New("no self-signed root CA in extraCerts")
+	// The chain is only complete once it reaches a self-issued certificate.
+	last := certs[len(certs)-1]
+	if err := last.CheckSignatureFrom(last); err != nil {
+		return errors.New("incomplete certificate chain in extraCerts")
+	}
+	return nil
 }
