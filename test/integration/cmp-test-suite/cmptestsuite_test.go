@@ -58,6 +58,10 @@ func startMockServer(t *testing.T) int {
 
 	srv := server.NewCAServer(ca,
 		server.LightweightPolicy(),
+		// The suite asserts the RFC 9483 message construction rules that
+		// deployed clients break, so it needs the strict receiver behaviour
+		// rather than the interoperable default.
+		server.WithStrictProfileValidation(),
 		server.WithSigner(ca.Key(), ca.Cert()),
 		server.WithExtraCerts([]*x509.Certificate{ca.Cert()}),
 		server.WithImplicitConfirm(),
