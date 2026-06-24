@@ -68,6 +68,7 @@ type serverConfig struct {
 	implicitConfirm              bool
 	maxTransactions              int
 	maxTransactionsPerCredential int
+	strictProfile                bool
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
 }
 
@@ -123,6 +124,34 @@ func WithConfirmWaitTime(d time.Duration) Option {
 func WithImplicitConfirm() Option {
 	return func(c *serverConfig) {
 		c.implicitConfirm = true
+	}
+}
+
+// WithStrictProfileValidation enforces the RFC 9483 message construction rules
+// that a receiver can check but does not need in order to authenticate a peer.
+//
+// It adds four rejections:
+//
+//   - a MAC-protected message whose sender is not a directoryName naming the
+//     shared secret (§3.1),
+//   - a signature-protected request that carries no extraCerts (§3.3),
+//   - a signature-protected request whose extraCerts do not lead with the CMP
+//     protection certificate followed by its issuer chain (§3.3),
+//   - a certConf whose senderNonce repeats one already used in the same
+//     transaction (§3.1).
+//
+// It is off by default because deployed clients fail all four. Nokia's
+// ssh-cmpclient sends the RFC 4210 §5.1.1 NULL-DN sender with the reference
+// number in senderKID, omits its own certificate from extraCerts and reuses the
+// request senderNonce in certConf, and openssl cmp sends only the end entity
+// certificate when the issuer is a self-signed root, which §3.3 itself says to
+// omit. None of the four affects authentication here, because the server
+// identifies the credential from senderKID or CertificateLookup and binds the
+// transaction with recipNonce. Turn it on to run a conformance suite or when
+// every client is known to follow the profile.
+func WithStrictProfileValidation() Option {
+	return func(c *serverConfig) {
+		c.strictProfile = true
 	}
 }
 
