@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"fmt"
+	"time"
 
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/pbkdf2"
@@ -74,6 +75,16 @@ type VerifyOptions struct {
 	// SenderKID filters candidate signer certificates by SubjectKeyId
 	// (typically msg.Header.SenderKID).
 	SenderKID []byte
+
+	// RequireDigitalSignatureKeyUsage rejects a CMP protection certificate that
+	// carries a keyUsage extension without the digitalSignature bit, as
+	// RFC 9483 §3.5 requires.
+	//
+	// It is off by default because deployed CAs do not follow the rule. Nokia
+	// NCM 26.7 protects its CMP responses with the issuing CA certificate, whose
+	// keyUsage is keyCertSign and cRLSign only, so enabling this rejects every
+	// response from that server. Turn it on when every peer is known to conform.
+	RequireDigitalSignatureKeyUsage bool
 }
 
 // VerifyResult is returned on successful verification.
@@ -306,6 +317,16 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 
 	// Direct verification against a pre-trusted certificate (server-side lookup).
 	if opts.TrustedCert != nil {
+		// The chain path gets expiry checking from x509.Verify. This path does
+		// not, so without this an expired certificate left in the verifier's
+		// database would keep authenticating forever.
+		now := time.Now()
+		if now.Before(opts.TrustedCert.NotBefore) || now.After(opts.TrustedCert.NotAfter) {
+			return nil, &VerificationError{Reason: ReasonCertificateExpired}
+		}
+		if opts.RequireDigitalSignatureKeyUsage && !permittedToSign(opts.TrustedCert) {
+			return nil, &VerificationError{Reason: ReasonKeyUsageNotPermitted}
+		}
 		if err := opts.TrustedCert.CheckSignature(sigAlg, data, m.Protection); err != nil {
 			return nil, &VerificationError{Reason: ReasonSignatureFailed}
 		}
@@ -329,8 +350,10 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 
 	// senderMismatch records that a candidate was rejected only because it did
 	// not belong to the named sender, so the caller can tell an identity problem
-	// apart from a cryptographic one.
+	// apart from a cryptographic one. keyUsageRejected does the same for a
+	// certificate that is trusted and correctly named but not allowed to sign.
 	senderMismatch := false
+	keyUsageRejected := false
 
 	// RFC 9810 §5.1.3.3: Verify the signature using certificates from extraCerts.
 	for _, cert := range opts.ExtraCerts {
@@ -344,10 +367,14 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 				continue
 			}
 		}
-		// Verify trust chain.
+		// Verify trust chain. ExtKeyUsageAny is required because an empty
+		// KeyUsages makes crypto/x509 demand serverAuth, which no CMP
+		// specification asks for and which rejects the RFC 9810 §4.5
+		// certificates id-kp-cmcCA, id-kp-cmcRA and id-kp-cmKGA.
 		verifyOpts := x509.VerifyOptions{
 			Roots:         opts.TrustPool,
 			Intermediates: intermediates,
+			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := x509Cert.Verify(verifyOpts); err != nil {
 			continue
@@ -360,6 +387,10 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 			senderMismatch = true
 			continue
 		}
+		if opts.RequireDigitalSignatureKeyUsage && !permittedToSign(x509Cert) {
+			keyUsageRejected = true
+			continue
+		}
 		// Check signature over protected part.
 		if err := x509Cert.CheckSignature(sigAlg, data, m.Protection); err == nil {
 			return &VerifyResult{MACVerified: false, ProtectionCertificate: x509Cert}, nil
@@ -369,7 +400,24 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 	if senderMismatch {
 		return nil, &VerificationError{Reason: ReasonSenderMismatch}
 	}
+	if keyUsageRejected {
+		return nil, &VerificationError{Reason: ReasonKeyUsageNotPermitted}
+	}
 	return nil, &VerificationError{Reason: ReasonSignatureFailed}
+}
+
+// permittedToSign reports whether a CMP protection certificate may sign, per the RFC 9483 §3.5 digitalSignature rule.
+func permittedToSign(cert *x509.Certificate) bool {
+	// The requirement is conditional on the extension being present, so a
+	// certificate without keyUsage is unconstrained and remains acceptable.
+	// crypto/x509 reports KeyUsage as zero in both cases, so the extension list
+	// is what distinguishes "absent" from "present and empty".
+	for _, ext := range cert.Extensions {
+		if ext.Id.Equal(oidExtensionKeyUsage) {
+			return cert.KeyUsage&x509.KeyUsageDigitalSignature != 0
+		}
+	}
+	return true
 }
 
 // senderMatchesCertificate reports whether the header sender names the subject of the protection certificate.
