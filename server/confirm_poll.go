@@ -107,21 +107,22 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 		})
 	}
 
-	// RFC 9483 §3.5: senderNonce MUST be fresh (different from previous messages).
-	if bytes.Equal(msg.Header.SenderNonce, entry.issuedSenderNonce) {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
-			Status:       pkicmp.StatusRejection,
-			FailInfo:     pkicmp.FailBadSenderNonce,
-			StatusString: pkicmp.PKIFreeText{"senderNonce reused"},
-		})
-	}
-	// Also reject if the client reuses their original senderNonce from the cert request.
-	if len(entry.clientSenderNonce) > 0 && bytes.Equal(msg.Header.SenderNonce, entry.clientSenderNonce) {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
-			Status:       pkicmp.StatusRejection,
-			FailInfo:     pkicmp.FailBadSenderNonce,
-			StatusString: pkicmp.PKIFreeText{"senderNonce reused"},
-		})
+	// A repeated senderNonce is only rejected under WithStrictProfileValidation.
+	// RFC 9483 §3.1 tells the sender to generate a fresh nonce, but the
+	// receiver-side checks §3.5 requires are just that senderNonce is present
+	// and long enough and that recipNonce matches, both enforced above.
+	// Rejecting a repeat by default would discard an already-issued certificate
+	// over a peer-side generation defect that deployed clients exhibit.
+	if s.cfg.strictProfile {
+		repeatsServerNonce := bytes.Equal(msg.Header.SenderNonce, entry.issuedSenderNonce)
+		repeatsOwnNonce := len(entry.clientSenderNonce) > 0 && bytes.Equal(msg.Header.SenderNonce, entry.clientSenderNonce)
+		if repeatsServerNonce || repeatsOwnNonce {
+			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+				Status:       pkicmp.StatusRejection,
+				FailInfo:     pkicmp.FailBadSenderNonce,
+				StatusString: pkicmp.PKIFreeText{"senderNonce reused"},
+			})
+		}
 	}
 
 	// certConf MUST NOT be signed with the newly issued certificate (security best practice).
