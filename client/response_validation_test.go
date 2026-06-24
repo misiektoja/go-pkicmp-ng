@@ -398,8 +398,32 @@ func TestResponseValidationRejectsPBMResponseWithoutSecret(t *testing.T) {
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
-	// The operation began with signature protection, so the switch to MAC is
-	// refused before the missing shared secret is ever relevant.
+	// The client holds no shared secret, so there is nothing to verify the MAC with.
+	var ve *pkicmp.VerificationError
+	require.ErrorAs(t, err, &ve)
+	assert.Equal(t, pkicmp.ReasonMissingSharedSecret, ve.Reason)
+}
+
+// A caller that pins signature protection refuses a MAC-protected response
+// before the missing shared secret is ever relevant.
+func TestResponseValidationRejectsMACResponseWhenSignaturePinned(t *testing.T) {
+	cfg := setupValidationCerts()
+	cfg.respProtector = "pbm-server-secret"
+	server := setupMockServer(cfg, nil)
+	defer server.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(cfg.caCert)
+	creds, err := pkicmp.NewSignatureCredentials(cfg.serverKey, cfg.serverCert)
+	require.NoError(t, err)
+	c := client.NewClient(
+		server.URL,
+		client.WithTrustedCAs(trustedCAs),
+		client.WithResponseProtection(pkicmp.ProtectionSignature),
+	)
+
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ve *pkicmp.VerificationError
 	require.ErrorAs(t, err, &ve)
 	assert.Equal(t, pkicmp.ReasonUnexpectedProtection, ve.Reason)
@@ -441,9 +465,9 @@ func TestResponseValidationRejectsCertificateForDifferentKey(t *testing.T) {
 	assert.Contains(t, ce.Op, "does not certify the requested public key")
 }
 
-// A client that authenticates with a shared secret must not silently accept a
-// signature-protected response, even when it also configured trust anchors for
-// validating the issued certificate.
+// A caller that pins MAC protection must not accept a signature-protected
+// response, even when it also configured trust anchors for validating the
+// issued certificate.
 func TestResponseValidationRejectsProtectionMechanismSwitch(t *testing.T) {
 	cfg := setupValidationCerts()
 	cfg.respProtector = "sig"
@@ -455,12 +479,51 @@ func TestResponseValidationRejectsProtectionMechanismSwitch(t *testing.T) {
 	require.NoError(t, err)
 	trustedCAs := x509.NewCertPool()
 	trustedCAs.AddCert(cfg.caCert)
-	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
+	c := client.NewClient(
+		server.URL,
+		client.WithTrustedCAs(trustedCAs),
+		client.WithResponseProtection(pkicmp.ProtectionMAC),
+	)
 
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ve *pkicmp.VerificationError
 	require.ErrorAs(t, err, &ve)
 	assert.Equal(t, pkicmp.ReasonUnexpectedProtection, ve.Reason)
+}
+
+// A CA may authenticate a shared-secret request and answer with a signature,
+// which is a supported configuration in deployed CAs, so the default must not
+// reject it.
+func TestResponseValidationAcceptsSignedResponseToMACRequestByDefault(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "cn=mixed-protection-ca"}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	cmpSigner := &certyaml.Certificate{Subject: "cn=cmp-signer", Issuer: ca}
+	cmpSignerCert, err := cmpSigner.X509Certificate()
+	require.NoError(t, err)
+	cmpSignerTLS, err := cmpSigner.TLSCertificate()
+	require.NoError(t, err)
+
+	exchange := &enrollmentExchange{
+		issuer:              ca,
+		sender:              pkix.Name{CommonName: "cmp-signer"},
+		extraCertsOnIP:      []*x509.Certificate{&cmpSignerCert},
+		extraCertsOnPKIConf: []*x509.Certificate{&cmpSignerCert},
+		protect:             signatureProtector(cmpSignerTLS.PrivateKey.(crypto.Signer), &cmpSignerCert),
+	}
+	server := exchange.start(t)
+
+	trustedCAs := x509.NewCertPool()
+	trustedCAs.AddCert(&caCert)
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustedCAs))
+
+	result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.NoError(t, err)
+	require.NotNil(t, result.Certificate)
 }
 
 func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
