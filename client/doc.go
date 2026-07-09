@@ -76,7 +76,9 @@
 //     the only bound that covers the whole operation rather than a single wait.
 //   - [WithMaxPolls]: give up after a fixed number of poll attempts (default 60).
 //   - [WithCheckAfterLimits]: bound each individual wait (default 1 second to
-//     60 seconds).
+//     1 hour). The ceiling is a guard against an unusable value rather than a
+//     normal-operation bound, because RFC 9810 Section 5.3.22 asks the client to
+//     wait at least the interval the CA sent.
 //
 // # Response verification
 //
@@ -125,7 +127,7 @@
 //
 // [DefaultMaxResponseBytes] (10 MiB) caps response body size to prevent memory
 // exhaustion. [DefaultMaxPolls] (60) caps polling attempts.
-// [DefaultMinCheckAfter] (1 second) and [DefaultMaxCheckAfter] (60 seconds) cap
+// [DefaultMinCheckAfter] (1 second) and [DefaultMaxCheckAfter] (1 hour) cap
 // each wait between them. Override with [WithMaxResponseBytes], [WithMaxPolls]
 // and [WithCheckAfterLimits].
 //
