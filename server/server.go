@@ -6,6 +6,7 @@ import (
 	"crypto/x509/pkix"
 	"errors"
 	"io"
+	"mime"
 	"net/http"
 	"time"
 
@@ -15,7 +16,7 @@ import (
 // MaxRequestBodySize limits the size of incoming CMP request bodies to prevent DoS.
 var MaxRequestBodySize int64 = 1 << 20 // 1 MiB
 
-// Server implements http.Handler for the CMP protocol (RFC 6712 §3).
+// Server implements http.Handler for CMP over HTTP as specified by RFC 9811 Section 3.
 type Server struct {
 	handler Handler
 	cfg     serverConfig
@@ -45,16 +46,22 @@ func New(handler Handler, opts ...Option) *Server {
 	return s
 }
 
-// ServeHTTP implements http.Handler per RFC 6712 §3.
+// isCMPMediaType reports whether a Content-Type value identifies the CMP media type.
+func isCMPMediaType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && mediaType == "application/pkixcmp"
+}
+
+// ServeHTTP implements http.Handler according to RFC 9811 Section 3.
 func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
-	// RFC 6712 §3: Only POST is allowed.
+	// RFC 9811 Section 3.1: Only POST is allowed.
 	if r.Method != http.MethodPost {
 		http.Error(w, "Method Not Allowed", http.StatusMethodNotAllowed)
 		return
 	}
 
-	// RFC 6712 §3: Content-Type must be application/pkixcmp.
-	if ct := r.Header.Get("Content-Type"); ct != "application/pkixcmp" {
+	// RFC 9811 Section 3.2: Content-Type must identify application/pkixcmp.
+	if ct := r.Header.Get("Content-Type"); !isCMPMediaType(ct) {
 		http.Error(w, "Unsupported Media Type", http.StatusUnsupportedMediaType)
 		return
 	}
