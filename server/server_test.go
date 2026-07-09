@@ -34,15 +34,41 @@ func TestHTTPMethodRejection(t *testing.T) {
 	}
 }
 
+// TestHTTPContentTypeRejection verifies that unrelated and malformed media types are rejected.
 func TestHTTPContentTypeRejection(t *testing.T) {
 	srv := server.New(&mockHandler{}, server.WithSecretLookup(&staticMACLookup{secret: []byte("secret")}))
 	ts := httptest.NewServer(srv)
 	defer ts.Close()
 
-	resp, err := http.Post(ts.URL, "application/json", strings.NewReader("{}"))
+	for _, contentType := range []string{"application/json", "application/pkixcmp; charset"} {
+		resp, err := http.Post(ts.URL, contentType, strings.NewReader("{}"))
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode)
+		resp.Body.Close()
+	}
+}
+
+// TestHTTPContentTypeVariants verifies that case-insensitive CMP media types with parameters are accepted.
+func TestHTTPContentTypeVariants(t *testing.T) {
+	secret := []byte("media-type-secret")
+	srv := server.New(&mockHandler{}, server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	msg := pkicmp.NewPKIMessage(pkicmp.NewPKIConfBody(), macMessageOpts())
+	protectMAC(msg, secret)
+	msgDER, err := msg.MarshalBinary()
 	require.NoError(t, err)
-	assert.Equal(t, http.StatusUnsupportedMediaType, resp.StatusCode)
-	resp.Body.Close()
+
+	for _, contentType := range []string{
+		"Application/PKIXCMP",
+		"application/pkixcmp; charset=binary",
+	} {
+		resp, err := http.Post(ts.URL, contentType, strings.NewReader(string(msgDER)))
+		require.NoError(t, err)
+		assert.Equal(t, http.StatusOK, resp.StatusCode)
+		resp.Body.Close()
+	}
 }
 
 func TestHTTPBadBody(t *testing.T) {
