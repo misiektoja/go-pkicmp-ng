@@ -61,8 +61,10 @@
 //     internal polling loop.
 //  2. The client sleeps for the duration the CA specified in checkAfter before
 //     sending the next PollReq.
-//  3. Once the certificate is issued the client automatically sends certConf.
-//  4. The Send* method returns only after the full exchange completes.
+//  3. The final response may identify either the last PollReq or the original
+//     request whose processing was delayed, as RFC 9483 Section 4.4 requires.
+//  4. Once the certificate is issued the client automatically sends certConf.
+//  5. The Send* method returns only after the full exchange completes.
 //
 // Control the blocking behavior with:
 //   - A [context.Context] with a deadline or timeout — the method returns the
@@ -79,6 +81,10 @@
 //     via [WithTrustedCAs]. The client rejects the response if no trusted CAs
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
+//
+// CMP responses carried by HTTP 4xx or 5xx errors are parsed and verified
+// before their status is returned. Authenticated failure bits remain available
+// through [pkicmp.HasFailure] while the error also retains the HTTP status.
 //
 // By default a response may use either protection mechanism, whichever the
 // server chose, because a CA that authenticates clients by shared secret and
