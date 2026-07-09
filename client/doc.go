@@ -9,7 +9,9 @@
 //
 // # Initial enrollment with MAC protection
 //
-//	// Create the client.
+//	// Create the client. A bootstrapping device has no trust anchor yet, so
+//	// none is configured here and caPubs from the response supplies the first
+//	// one. Add client.WithTrustedCAs wherever an anchor is already available.
 //	c := client.NewClient("http://ca.example.com/.well-known/cmp/p/ca/")
 //
 //	// Generate a key for the new certificate.
@@ -60,7 +62,9 @@
 //  1. If the CA replies with a waiting status, the Send* method enters an
 //     internal polling loop.
 //  2. The client sleeps for the duration the CA specified in checkAfter before
-//     sending the next PollReq.
+//     sending the next PollReq, clamped into the range set by
+//     [WithCheckAfterLimits] so that a peer cannot park the operation
+//     indefinitely or drive polling as fast as the network allows.
 //  3. The final response may identify either the last PollReq or the original
 //     request whose processing was delayed, as RFC 9483 Section 4.4 requires.
 //  4. Once the certificate is issued the client automatically sends certConf.
@@ -68,8 +72,11 @@
 //
 // Control the blocking behavior with:
 //   - A [context.Context] with a deadline or timeout — the method returns the
-//     context error if it expires while polling.
+//     context error if it expires while polling. Set one on every call: it is
+//     the only bound that covers the whole operation rather than a single wait.
 //   - [WithMaxPolls]: give up after a fixed number of poll attempts (default 60).
+//   - [WithCheckAfterLimits]: bound each individual wait (default 1 second to
+//     60 seconds).
 //
 // # Response verification
 //
@@ -82,9 +89,19 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
+// A shared-secret enrollment completes without [WithTrustedCAs], and a device
+// that holds only an initial authentication key normally has no anchor to
+// configure. Set the pool wherever one is available even so: RFC 4210 §5.3.21
+// and RFC 9810 §5.3.21 both require a CA to sign an error message however the
+// request was protected, so without a pool a rejection such as
+// transactionIdInUse cannot be authenticated. That message is not discarded, its
+// claimed status is reported as an [UnverifiedStatusError], which is safe to log
+// but must not be acted on.
+//
 // CMP responses carried by HTTP 4xx or 5xx errors are parsed and verified
 // before their status is returned. Authenticated failure bits remain available
 // through [pkicmp.HasFailure] while the error also retains the HTTP status.
+// [pkicmp.HasFailure] never reports bits from an unverified message.
 //
 // By default a response may use either protection mechanism, whichever the
 // server chose, because a CA that authenticates clients by shared secret and
@@ -107,8 +124,10 @@
 // # Limits
 //
 // [DefaultMaxResponseBytes] (10 MiB) caps response body size to prevent memory
-// exhaustion. [DefaultMaxPolls] (60) caps polling attempts. Override with
-// [WithMaxResponseBytes] and [WithMaxPolls].
+// exhaustion. [DefaultMaxPolls] (60) caps polling attempts.
+// [DefaultMinCheckAfter] (1 second) and [DefaultMaxCheckAfter] (60 seconds) cap
+// each wait between them. Override with [WithMaxResponseBytes], [WithMaxPolls]
+// and [WithCheckAfterLimits].
 //
 // # Stateless design
 //
