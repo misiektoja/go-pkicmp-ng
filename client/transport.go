@@ -8,6 +8,7 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 	"io"
+	"mime"
 	"net/http"
 	"time"
 
@@ -315,6 +316,12 @@ func supportsCMPResponse(statusCode int) bool {
 	return statusClass == 2 || statusClass == 4 || statusClass == 5
 }
 
+// isCMPMediaType reports whether a Content-Type value identifies the CMP media type.
+func isCMPMediaType(value string) bool {
+	mediaType, _, err := mime.ParseMediaType(value)
+	return err == nil && mediaType == "application/pkixcmp"
+}
+
 // newHTTPStatusError returns an operational error for an HTTP response without usable CMP content.
 func newHTTPStatusError(statusCode int) error {
 	return &Error{Op: fmt.Sprintf("HTTP %d: %s", statusCode, http.StatusText(statusCode))}
@@ -352,7 +359,7 @@ func (c *Client) sendHTTP(ctx context.Context, reqDER []byte) (*rawHTTPResponse,
 	}
 
 	// RFC 9811 Section 3.2: Response Content-Type MUST be application/pkixcmp.
-	if ct := resp.Header.Get("Content-Type"); ct != "application/pkixcmp" {
+	if ct := resp.Header.Get("Content-Type"); !isCMPMediaType(ct) {
 		if resp.StatusCode != http.StatusOK {
 			return nil, newHTTPStatusError(resp.StatusCode)
 		}
