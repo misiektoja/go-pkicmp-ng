@@ -6,6 +6,7 @@ import (
 	"crypto"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"fmt"
 	"io"
 	"mime"
@@ -70,7 +71,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs, nil)
 	if err != nil {
-		return nil, cmpResp.wrapError(&Error{Op: "verify response", Err: err})
+		return nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify response", Err: err}))
 	}
 	// Keep the signer authenticated here so the rest of the operation can still
 	// be verified when the server stops sending extraCerts.
@@ -232,7 +233,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	confResp := confCMPResp.message
 
 	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool, knownSigner); err != nil {
-		return nil, confCMPResp.wrapError(&Error{Op: "verify PKIConf", Err: err})
+		return nil, confCMPResp.wrapError(withUnverifiedStatus(confResp, &Error{Op: "verify PKIConf", Err: err}))
 	}
 
 	if confResp.Body.Type == pkicmp.BodyTypeError {
@@ -431,6 +432,27 @@ func extractCertificate(resp *pkicmp.CertResponse) (*x509.Certificate, error) {
 	return cert.Parse()
 }
 
+// clampCheckAfter converts a server-provided checkAfter, in seconds, into a wait within the configured limits
+func (c *Client) clampCheckAfter(seconds int64) time.Duration {
+	if seconds <= 0 {
+		return c.minCheckAfter
+	}
+	// The comparison is made in seconds because converting first overflows
+	// time.Duration for anything past about 292 years, and a negative duration
+	// makes the wait elapse immediately.
+	if seconds >= int64(c.maxCheckAfter/time.Second)+1 {
+		return c.maxCheckAfter
+	}
+	wait := time.Duration(seconds) * time.Second
+	if wait < c.minCheckAfter {
+		return c.minCheckAfter
+	}
+	if wait > c.maxCheckAfter {
+		return c.maxCheckAfter
+	}
+	return wait
+}
+
 // poll implements the client-side polling state machine (RFC 9810 §5.3.22).
 // It sends pollReq messages and respects the server's checkAfter interval
 // until a final response (ip/cp/kup) or error is received.
@@ -487,7 +509,7 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 		}
 		vr, err := c.verifyResponse(pollMsg, resp, creds, c.trustedCAs, knownSigner, delayedRequestNonce)
 		if err != nil {
-			return nil, nil, cmpResp.wrapError(&Error{Op: "verify polled response", Err: err})
+			return nil, nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify polled response", Err: err}))
 		}
 		if vr != nil && vr.ProtectionCertificate != nil {
 			knownSigner = vr.ProtectionCertificate
@@ -507,7 +529,7 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 				return nil, nil, err
 			}
 			if len(*pollRep) > 0 {
-				waitTime = time.Duration((*pollRep)[0].CheckAfter) * time.Second
+				waitTime = c.clampCheckAfter((*pollRep)[0].CheckAfter)
 			}
 			lastResp = resp
 			continue
@@ -570,6 +592,13 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		SenderKID:  resp.Header.SenderKID,
 	})
 	if err != nil {
+		// The bare reason reads as an internal detail on a shared-secret client,
+		// which is exactly the client that meets a signed error message without a
+		// pool to check it against, so name the configuration that is missing.
+		var verifyErr *pkicmp.VerificationError
+		if trustedCAs == nil && errors.As(err, &verifyErr) && verifyErr.Reason == pkicmp.ReasonMissingTrustAnchors {
+			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: the response is signature-protected and no trusted CAs are configured, which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)", err)}
+		}
 		return nil, &Error{Op: "verify protection", Err: err}
 	}
 
