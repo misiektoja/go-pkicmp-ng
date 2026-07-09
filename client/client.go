@@ -37,15 +37,27 @@ const (
 
 	// DefaultMinCheckAfter is the shortest interval the client waits between poll
 	// attempts, however short an interval the server asks for in checkAfter.
+	//
+	// RFC 9810 §5.3.22 asks an end entity to wait at least the interval the
+	// server sent, so a floor only ever waits longer than it was told to.
 	DefaultMinCheckAfter = 1 * time.Second
 
 	// DefaultMaxCheckAfter is the longest interval the client waits between poll
 	// attempts, however long an interval the server asks for in checkAfter.
 	//
-	// Together with [DefaultMaxPolls] it bounds an unattended enrollment to about
-	// an hour. Raise it with [WithCheckAfterLimits] for a CA that issues after a
-	// slow out-of-band approval, and set a context deadline that matches.
-	DefaultMaxCheckAfter = 60 * time.Second
+	// RFC 9810 §5.3.22 tells an end entity to wait at least the number of seconds
+	// the server sent and notes that the value depends heavily on the deployment,
+	// because issuance may be delayed by backend load, by an offline transfer
+	// between PKI management entities or by an RA operator approving by hand. A
+	// ceiling that cuts a server's interval down therefore polls sooner than the
+	// CA asked for. The default sits far above any interval a CA is expected to
+	// request, so that it guards only against a value large enough to park an
+	// operation indefinitely or, once past what a duration can hold, wrap into no
+	// wait at all.
+	//
+	// Polling can take up to [DefaultMaxPolls] such intervals, so a context
+	// deadline remains the only bound covering a whole operation.
+	DefaultMaxCheckAfter = 60 * time.Minute
 )
 
 // Option is a functional option for configuring a Client.
@@ -153,6 +165,10 @@ func WithMaxPolls(n int) Option {
 // it exceeds what a duration can hold, collapses into no wait at all and turns
 // polling into a tight request loop. The defaults are [DefaultMinCheckAfter] and
 // [DefaultMaxCheckAfter].
+//
+// A maximum below the interval a CA asks for makes the client poll sooner than
+// RFC 9810 §5.3.22 tells it to wait, so lower it only for a deployment whose CA
+// is known to issue quickly.
 //
 // A negative bound is treated as zero, and a maximum below the minimum is raised
 // to it, which polls at a fixed interval. Setting both to zero polls as fast as
