@@ -37,7 +37,9 @@ Initialization Request (IR) with Shared Secret
 key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 creds, _ := pkicmp.NewMACCredentials([]byte("my-shared-secret"))
 
-// Create a client and send the Initialization Request.
+// Create a client and send the Initialization Request. A bootstrapping device
+// has no trust anchor yet, so none is set here. Add client.WithTrustedCAs
+// wherever one is already available, so that a signed rejection can be verified.
 c := client.NewClient("http://localhost:8080/cmp")
 result, err := c.SendIR(context.Background(), key, creds,
 	client.WithSenderKID([]byte("my-device")),
