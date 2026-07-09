@@ -8,11 +8,14 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -477,4 +480,213 @@ func TestPollingRejectsDelayedNonceOnPollRep(t *testing.T) {
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "recipient nonce mismatch")
+}
+
+// signedErrorExchange answers every request with a signature-protected error message.
+type signedErrorExchange struct {
+	// sender names the signer in the header, which is the only hint to the
+	// protection certificate once senderKID is omitted.
+	sender pkix.Name
+	// extraCerts carries the protection certificate to the client.
+	extraCerts []*x509.Certificate
+	// protect applies signature protection to the error message.
+	protect func(*pkicmp.PKIMessage)
+}
+
+func (e *signedErrorExchange) start(t *testing.T) *httptest.Server {
+	t.Helper()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		req, err := pkicmp.ParsePKIMessage(body)
+		require.NoError(t, err)
+
+		resp := &pkicmp.PKIMessage{
+			Header: pkicmp.PKIHeader{
+				PVNO:          req.Header.PVNO,
+				TransactionID: req.Header.TransactionID,
+				RecipNonce:    req.Header.SenderNonce,
+				Sender:        pkicmp.NewDirectoryName(e.sender),
+			},
+			Body: pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
+				PKIStatusInfo: pkicmp.PKIStatusInfo{
+					Status:       pkicmp.StatusRejection,
+					StatusString: pkicmp.PKIFreeText{signedErrorStatusString},
+					FailInfo:     pkicmp.FailTransactionIdInUse,
+				},
+			}),
+		}
+		for _, cert := range e.extraCerts {
+			resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: cert.Raw})
+		}
+		e.protect(resp)
+		der, err := resp.MarshalBinary()
+		require.NoError(t, err)
+
+		w.Header().Set("Content-Type", "application/pkixcmp")
+		_, _ = w.Write(der)
+	}))
+	t.Cleanup(server.Close)
+	return server
+}
+
+const signedErrorStatusString = "transaction id already in use"
+
+// newSignedErrorExchange returns an exchange signed by a fresh CA, with that CA in a trust pool.
+func newSignedErrorExchange(t *testing.T) (*signedErrorExchange, *x509.CertPool) {
+	t.Helper()
+	ca := &certyaml.Certificate{Subject: "cn=signed-error-ca"}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	signer := &certyaml.Certificate{Subject: "cn=signed-error-cmp-signer", Issuer: ca}
+	signerCert, err := signer.X509Certificate()
+	require.NoError(t, err)
+	signerTLS, err := signer.TLSCertificate()
+	require.NoError(t, err)
+
+	trustPool := x509.NewCertPool()
+	trustPool.AddCert(&caCert)
+
+	return &signedErrorExchange{
+		sender:     pkix.Name{CommonName: "signed-error-cmp-signer"},
+		extraCerts: []*x509.Certificate{&signerCert},
+		protect:    signatureProtector(signerTLS.PrivateKey.(crypto.Signer), &signerCert),
+	}, trustPool
+}
+
+// A CA signs an error message however the request was protected, so a client
+// holding only a shared secret cannot authenticate a rejection. It must still
+// learn what the peer claimed, clearly marked as unauthenticated.
+func TestSignedErrorStatusReportedWithoutTrustAnchors(t *testing.T) {
+	exchange, _ := newSignedErrorExchange(t)
+	server := exchange.start(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL)
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.Error(t, err)
+
+	var unverified *client.UnverifiedStatusError
+	require.ErrorAs(t, err, &unverified)
+	assert.Equal(t, pkicmp.StatusRejection, unverified.Status)
+	assert.Equal(t, pkicmp.FailTransactionIdInUse, unverified.FailInfo)
+	assert.Equal(t, signedErrorStatusString, unverified.StatusString)
+
+	// The status is attacker-controlled here, so it must not reach the checks a
+	// caller uses to act on an authenticated failure, and the peer's free text
+	// must not be formatted into a message headed for a log.
+	assert.False(t, pkicmp.HasFailure(err, pkicmp.FailTransactionIdInUse))
+	assert.NotContains(t, err.Error(), signedErrorStatusString)
+
+	// The remedy has to be visible to whoever reads the failure.
+	assert.Contains(t, err.Error(), "no trusted CAs are configured")
+}
+
+// The same rejection is authenticated, and actionable, once the client is given
+// the trust anchors the signed error message needs.
+func TestSignedErrorAuthenticatedWithTrustAnchors(t *testing.T) {
+	exchange, trustPool := newSignedErrorExchange(t)
+	server := exchange.start(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL, client.WithTrustedCAs(trustPool))
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.Error(t, err)
+
+	assert.True(t, pkicmp.HasFailure(err, pkicmp.FailTransactionIdInUse))
+	var unverified *client.UnverifiedStatusError
+	assert.False(t, errors.As(err, &unverified))
+}
+
+// The peer chooses checkAfter. Left unclamped, a value past what a duration can
+// hold collapses into no wait at all and turns polling into a tight request
+// loop, while a merely large one parks the operation for years.
+func TestPollingClampsCheckAfter(t *testing.T) {
+	tests := []struct {
+		name        string
+		checkAfter  int64
+		minInterval time.Duration
+		maxInterval time.Duration
+		wantAtLeast time.Duration
+	}{
+		{name: "overflowing value waits the configured maximum", checkAfter: math.MaxInt64, minInterval: 0, maxInterval: 200 * time.Millisecond, wantAtLeast: 200 * time.Millisecond},
+		{name: "zero waits the configured minimum", checkAfter: 0, minInterval: 150 * time.Millisecond, maxInterval: time.Second, wantAtLeast: 150 * time.Millisecond},
+		{name: "negative value waits the configured minimum", checkAfter: -1, minInterval: 150 * time.Millisecond, maxInterval: time.Second, wantAtLeast: 150 * time.Millisecond},
+		{name: "value within the limits is honored", checkAfter: 1, minInterval: 0, maxInterval: 5 * time.Second, wantAtLeast: time.Second},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var calls atomic.Int32
+			var pollRepAt, finalAt atomic.Int64
+
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				body, err := io.ReadAll(r.Body)
+				require.NoError(t, err)
+				req, err := pkicmp.ParsePKIMessage(body)
+				require.NoError(t, err)
+
+				resp := &pkicmp.PKIMessage{
+					Header: pkicmp.PKIHeader{
+						PVNO:          req.Header.PVNO,
+						TransactionID: req.Header.TransactionID,
+						RecipNonce:    req.Header.SenderNonce,
+					},
+				}
+				switch calls.Add(1) {
+				case 1:
+					resp.Body = pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+						Response: []pkicmp.CertResponse{{
+							CertReqID: 0,
+							Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusWaiting},
+						}},
+					})
+				case 2:
+					pollRepAt.Store(time.Now().UnixNano())
+					resp.Body = pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: tt.checkAfter}})
+				default:
+					finalAt.Store(time.Now().UnixNano())
+					resp.Body = pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
+						PKIStatusInfo: pkicmp.PKIStatusInfo{
+							Status:   pkicmp.StatusRejection,
+							FailInfo: pkicmp.FailSystemFailure,
+						},
+					})
+				}
+				macProtector("secret")(resp)
+				der, err := resp.MarshalBinary()
+				require.NoError(t, err)
+
+				w.Header().Set("Content-Type", "application/pkixcmp")
+				_, _ = w.Write(der)
+			}))
+			t.Cleanup(server.Close)
+
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+			require.NoError(t, err)
+
+			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+			defer cancel()
+
+			c := client.NewClient(server.URL, client.WithCheckAfterLimits(tt.minInterval, tt.maxInterval))
+			_, err = c.SendIR(ctx, key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+			require.Error(t, err)
+			assert.True(t, pkicmp.HasFailure(err, pkicmp.FailSystemFailure))
+			require.EqualValues(t, 3, calls.Load())
+
+			waited := time.Duration(finalAt.Load() - pollRepAt.Load())
+			assert.GreaterOrEqual(t, waited, tt.wantAtLeast)
+			assert.Less(t, waited, 10*time.Second, "the wait must stay inside the configured maximum")
+		})
+	}
 }
