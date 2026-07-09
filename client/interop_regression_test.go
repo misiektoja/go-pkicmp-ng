@@ -11,6 +11,7 @@ import (
 	"io"
 	"net/http"
 	"net/http/httptest"
+	"sync/atomic"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -256,4 +257,169 @@ func TestPKIConfRejectsSignerThatDidNotProtectEarlierMessage(t *testing.T) {
 	var ce *client.Error
 	require.ErrorAs(t, err, &ce)
 	assert.Equal(t, "verify PKIConf", ce.Op)
+}
+
+// TestAuthenticatedCMPErrorOnHTTPErrorStatus verifies that protected CMP failure details survive an HTTP error status.
+func TestAuthenticatedCMPErrorOnHTTPErrorStatus(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		req, err := pkicmp.ParsePKIMessage(body)
+		require.NoError(t, err)
+
+		resp := &pkicmp.PKIMessage{
+			Header: pkicmp.PKIHeader{
+				PVNO:          req.Header.PVNO,
+				TransactionID: req.Header.TransactionID,
+				RecipNonce:    req.Header.SenderNonce,
+			},
+			Body: pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
+				PKIStatusInfo: pkicmp.PKIStatusInfo{
+					Status:   pkicmp.StatusRejection,
+					FailInfo: pkicmp.FailTransactionIdInUse,
+				},
+			}),
+		}
+		macProtector("secret")(resp)
+		der, err := resp.MarshalBinary()
+		require.NoError(t, err)
+
+		w.Header().Set("Content-Type", "application/pkixcmp")
+		w.WriteHeader(http.StatusBadRequest)
+		_, _ = w.Write(der)
+	}))
+	t.Cleanup(server.Close)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL)
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.Error(t, err)
+	assert.True(t, pkicmp.HasFailure(err, pkicmp.FailTransactionIdInUse))
+	assert.Contains(t, err.Error(), "HTTP 400: Bad Request")
+}
+
+// TestPollingAcceptsDelayedResponseNonce verifies that a final response may refer to the request whose processing was delayed.
+func TestPollingAcceptsDelayedResponseNonce(t *testing.T) {
+	issuer := &certyaml.Certificate{Subject: "cn=delayed-response-ca"}
+	var calls atomic.Int32
+	var originalRequest *pkicmp.PKIMessage
+	var originalNonce []byte
+	var pollNonce []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		req, err := pkicmp.ParsePKIMessage(body)
+		require.NoError(t, err)
+
+		count := calls.Add(1)
+		resp := &pkicmp.PKIMessage{
+			Header: pkicmp.PKIHeader{
+				PVNO:          req.Header.PVNO,
+				TransactionID: req.Header.TransactionID,
+				RecipNonce:    req.Header.SenderNonce,
+			},
+		}
+		switch count {
+		case 1:
+			originalRequest = req
+			originalNonce = append([]byte(nil), req.Header.SenderNonce...)
+			resp.Body = pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+				Response: []pkicmp.CertResponse{{
+					CertReqID: 0,
+					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusWaiting},
+				}},
+			})
+		case 2:
+			pollNonce = append([]byte(nil), req.Header.SenderNonce...)
+			issuedCert := issueForRequest(issuer, pkix.Name{CommonName: "enrolled-ee"}, originalRequest)
+			require.NotNil(t, issuedCert)
+			resp.Header.RecipNonce = originalNonce
+			resp.Body = pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+				Response: []pkicmp.CertResponse{{
+					CertReqID: 0,
+					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
+					CertifiedKeyPair: &pkicmp.CertifiedKeyPair{
+						CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: issuedCert.Raw}},
+					},
+				}},
+			})
+		default:
+			resp.Body = pkicmp.NewPKIConfBody()
+		}
+
+		macProtector("secret")(resp)
+		der, err := resp.MarshalBinary()
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/pkixcmp")
+		_, _ = w.Write(der)
+	}))
+	t.Cleanup(server.Close)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL)
+	result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.NoError(t, err)
+	require.NotNil(t, result.Certificate)
+	assert.Equal(t, int32(3), calls.Load())
+	assert.NotEqual(t, originalNonce, pollNonce)
+}
+
+// TestPollingRejectsDelayedNonceOnPollRep verifies that a poll response remains bound to its poll request.
+func TestPollingRejectsDelayedNonceOnPollRep(t *testing.T) {
+	var calls atomic.Int32
+	var originalNonce []byte
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		body, err := io.ReadAll(r.Body)
+		require.NoError(t, err)
+		req, err := pkicmp.ParsePKIMessage(body)
+		require.NoError(t, err)
+
+		resp := &pkicmp.PKIMessage{
+			Header: pkicmp.PKIHeader{
+				PVNO:          req.Header.PVNO,
+				TransactionID: req.Header.TransactionID,
+				RecipNonce:    req.Header.SenderNonce,
+			},
+		}
+		if calls.Add(1) == 1 {
+			originalNonce = append([]byte(nil), req.Header.SenderNonce...)
+			resp.Body = pkicmp.NewIPBody(&pkicmp.CertRepMessage{
+				Response: []pkicmp.CertResponse{{
+					CertReqID: 0,
+					Status:    pkicmp.PKIStatusInfo{Status: pkicmp.StatusWaiting},
+				}},
+			})
+		} else {
+			require.NotEqual(t, originalNonce, req.Header.SenderNonce)
+			resp.Header.RecipNonce = originalNonce
+			resp.Body = pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}})
+		}
+
+		macProtector("secret")(resp)
+		der, err := resp.MarshalBinary()
+		require.NoError(t, err)
+		w.Header().Set("Content-Type", "application/pkixcmp")
+		_, _ = w.Write(der)
+	}))
+	t.Cleanup(server.Close)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL)
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "recipient nonce mismatch")
 }
