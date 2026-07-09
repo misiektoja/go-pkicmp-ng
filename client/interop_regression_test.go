@@ -33,6 +33,8 @@ type enrollmentExchange struct {
 	extraCertsOnPKIConf []*x509.Certificate
 	// protect applies message protection to each response.
 	protect func(*pkicmp.PKIMessage)
+	// responseContentType overrides the default CMP response media type.
+	responseContentType string
 
 	// recipientSeen records the recipient the client put in its first request.
 	recipientSeen pkicmp.GeneralName
@@ -86,7 +88,11 @@ func (e *enrollmentExchange) start(t *testing.T) *httptest.Server {
 
 		der, err := resp.MarshalBinary()
 		require.NoError(t, err)
-		w.Header().Set("Content-Type", "application/pkixcmp")
+		contentType := e.responseContentType
+		if contentType == "" {
+			contentType = "application/pkixcmp"
+		}
+		w.Header().Set("Content-Type", contentType)
 		_, _ = w.Write(der)
 	}
 	server := httptest.NewServer(http.HandlerFunc(handler))
@@ -141,6 +147,55 @@ func TestRequestCarriesProgrammaticallyBuiltRecipient(t *testing.T) {
 
 	require.NotEmpty(t, exchange.recipientSeen.DirectoryName, "recipient must not be dropped")
 	assert.Equal(t, recipient.String(), exchange.recipientSeen.DirectoryName.String())
+}
+
+// TestClientAcceptsCMPMediaTypeVariants verifies case-insensitive media types with optional parameters.
+func TestClientAcceptsCMPMediaTypeVariants(t *testing.T) {
+	for _, contentType := range []string{
+		"Application/PKIXCMP",
+		"application/pkixcmp; charset=binary",
+	} {
+		t.Run(contentType, func(t *testing.T) {
+			ca := &certyaml.Certificate{Subject: "cn=media-type-ca"}
+			exchange := &enrollmentExchange{
+				issuer:              ca,
+				protect:             macProtector("secret"),
+				responseContentType: contentType,
+			}
+			server := exchange.start(t)
+
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+			require.NoError(t, err)
+
+			c := client.NewClient(server.URL)
+			result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+			require.NoError(t, err)
+			require.NotNil(t, result.Certificate)
+		})
+	}
+}
+
+// TestClientRejectsMalformedCMPMediaType verifies that invalid media type parameters fail closed.
+func TestClientRejectsMalformedCMPMediaType(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "cn=media-type-ca"}
+	exchange := &enrollmentExchange{
+		issuer:              ca,
+		protect:             macProtector("secret"),
+		responseContentType: "application/pkixcmp; charset",
+	}
+	server := exchange.start(t)
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	require.NoError(t, err)
+
+	c := client.NewClient(server.URL)
+	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "unexpected Content-Type")
 }
 
 // A CA that issues from an intermediate returns that intermediate in
