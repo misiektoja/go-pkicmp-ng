@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net/http"
+	"time"
 
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
@@ -18,6 +19,8 @@ type Client struct {
 	responseProtection pkicmp.ProtectionMechanism
 	maxResponseBytes   int64
 	maxPolls           int
+	minCheckAfter      time.Duration
+	maxCheckAfter      time.Duration
 }
 
 const (
@@ -31,6 +34,18 @@ const (
 	// server-provided checkAfter values can vary greatly and total polling time is
 	// maxPolls multiplied by those intervals.
 	DefaultMaxPolls = 60
+
+	// DefaultMinCheckAfter is the shortest interval the client waits between poll
+	// attempts, however short an interval the server asks for in checkAfter.
+	DefaultMinCheckAfter = 1 * time.Second
+
+	// DefaultMaxCheckAfter is the longest interval the client waits between poll
+	// attempts, however long an interval the server asks for in checkAfter.
+	//
+	// Together with [DefaultMaxPolls] it bounds an unattended enrollment to about
+	// an hour. Raise it with [WithCheckAfterLimits] for a CA that issues after a
+	// slow out-of-band approval, and set a context deadline that matches.
+	DefaultMaxCheckAfter = 60 * time.Second
 )
 
 // Option is a functional option for configuring a Client.
@@ -43,6 +58,8 @@ func NewClient(endpoint string, opts ...Option) *Client {
 		httpClient:       http.DefaultClient,
 		maxResponseBytes: DefaultMaxResponseBytes,
 		maxPolls:         DefaultMaxPolls,
+		minCheckAfter:    DefaultMinCheckAfter,
+		maxCheckAfter:    DefaultMaxCheckAfter,
 	}
 	for _, opt := range opts {
 		opt(c)
@@ -90,11 +107,25 @@ func WithExtraCerts(certs []*x509.Certificate) Option {
 // verification and issued certificate validation.
 //
 // Required for signature-protected responses (RFC 9810 §8.9): the client
-// rejects responses whose signer does not chain to a trusted CA.
+// rejects a response whose signer does not chain to a trusted CA.
 //
-// Not required for PBM-protected responses: the MAC provides authenticity,
-// and caPubs from the response may be directly trusted as root CAs
-// (RFC 9810 §5.3.2).
+// A successful shared-secret enrollment does not need the pool. The MAC
+// provides authenticity, and caPubs from the response may be trusted directly
+// as root CAs (RFC 9810 §5.3.2), which is how a device holding only an initial
+// authentication key obtains its first anchor.
+//
+// Configure it anyway wherever an anchor is already available, for two reasons
+// that apply even to a shared-secret client. A CA must sign an error message
+// however the request was protected (RFC 4210 §5.3.21 and RFC 9810 §5.3.21), so
+// without a pool a rejection such as transactionIdInUse cannot be verified, and
+// that is the message a caller most needs to act on. Some CAs are also
+// configured to sign every response, not only errors, and a shared-secret client
+// cannot complete an operation with one of those at all.
+//
+// A client with no anchor yet is a supported configuration, not a
+// misconfiguration. The status of an error message it cannot verify is still
+// reported, as an [UnverifiedStatusError] the caller may log but must not act
+// on.
 func WithTrustedCAs(trustedCAs *x509.CertPool) Option {
 	return func(c *Client) { c.trustedCAs = trustedCAs }
 }
@@ -112,6 +143,32 @@ func WithMaxResponseBytes(n int64) Option {
 // maxPolls multiplied by those intervals.
 func WithMaxPolls(n int) Option {
 	return func(c *Client) { c.maxPolls = n }
+}
+
+// WithCheckAfterLimits sets the interval range the client clamps a
+// server-provided checkAfter value into while polling.
+//
+// checkAfter is an unbounded integer chosen by the peer, so an unclamped value
+// either parks the operation far past any interval an operator intended or, once
+// it exceeds what a duration can hold, collapses into no wait at all and turns
+// polling into a tight request loop. The defaults are [DefaultMinCheckAfter] and
+// [DefaultMaxCheckAfter].
+//
+// A negative bound is treated as zero, and a maximum below the minimum is raised
+// to it, which polls at a fixed interval. Setting both to zero polls as fast as
+// the server asks and leaves [WithMaxPolls] and the context deadline as the only
+// bound on the operation.
+func WithCheckAfterLimits(minimum, maximum time.Duration) Option {
+	return func(c *Client) {
+		if minimum < 0 {
+			minimum = 0
+		}
+		if maximum < minimum {
+			maximum = minimum
+		}
+		c.minCheckAfter = minimum
+		c.maxCheckAfter = maximum
+	}
 }
 
 // EnrollResult holds the result of a successful enrollment.
