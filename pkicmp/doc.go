@@ -66,6 +66,64 @@
 // to protect a response with the same algorithm suite (with a fresh salt),
 // as required by RFC 9483 §3.2.
 //
+// # Caller responsibilities
+//
+// This package verifies message protection and parses CMP on the wire. It does
+// not implement a full enrollment client or CA policy. Integrators remain
+// responsible for the checks below.
+//
+// Pin the protection mechanism per message. [VerifyOptions.RequiredProtection]
+// defaults to [ProtectionAny], which accepts whichever mechanism the received
+// message carries. That is appropriate when the peer's mechanism is genuinely
+// unknown, such as a server seeing the first message of an operation. When you
+// supply both a shared secret and trust anchors, or when you already know which
+// mechanism the peer must use for this message, pin [RequiredProtection] to that
+// mechanism instead. Pin to the mechanism you expect on the message being
+// verified, not necessarily the one you use when sending: a client that enrolls
+// with a shared secret but receives signature-protected CA responses should pin
+// [ProtectionSignature] when verifying those responses. Leaving the default while
+// holding both kinds of trust material lets an attacker satisfy verification
+// with whichever mechanism is easier to forge.
+//
+// Retain the protection certificate across a transaction. A CA may send
+// [extraCerts] only on its first response (RFC 9810 §5.1). Later messages such
+// as [pkiConf] can arrive with no candidate signer in the message itself.
+// [VerifyResult.ProtectionCertificate] is the certificate whose signature was
+// accepted; offer it back through [VerifyOptions.ExtraCerts] or
+// [VerifyOptions.TrustedCert] when verifying later messages in the same
+// operation.
+//
+// Bind the issued certificate to the request. After a successful issuance
+// response, compare the returned certificate's public key to the key you
+// requested. This package does not perform that check. A CA may legitimately
+// change the subject under [StatusGrantedWithMods]; comparing subjects is a
+// policy choice left to the caller.
+//
+// Treat [VerifyResult.MACVerified] as authoritative for [caPubs]. RFC 9810
+// §5.3.2 allows an end entity to trust CA certificates carried in [caPubs] only
+// when the message was MAC-verified. Do not treat [caPubs] from a
+// signature-verified message as automatically trustworthy without your own
+// anchor and policy.
+//
+// Bound polling yourself when you implement deferred issuance. [PollRepContent]
+// carries [checkAfter] as an integer seconds value chosen by the peer. This
+// package parses it as sent; clamping abusive values before sleeping is the
+// caller's responsibility.
+//
+// Optional strictness knobs. [VerifyOptions.RequireDigitalSignatureKeyUsage]
+// rejects a protection certificate whose keyUsage extension omits
+// digitalSignature, as RFC 9483 §3.5 requires. It is off by default because
+// deployed CAs often protect CMP with a CA certificate that sets only keyCertSign
+// and cRLSign. Enable it only when every peer is known to conform.
+//
+// Status text and failure bits. [PKIStatusInfo.AsError] joins server-supplied
+// free text into [PKIStatusError.StatusString] without validating UTF-8 or
+// stripping control characters. Treat it as diagnostic input from an
+// authenticated peer at most, and do not log it verbatim in security-sensitive
+// contexts without sanitization. [PKIFailureInfo] parsing does not fully
+// validate BIT STRING unused-bits encoding; do not rely on rare failure bits
+// without treating ambiguous parses as absent.
+//
 // # Errors
 //
 // All errors from this package are typed:
