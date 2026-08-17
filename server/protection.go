@@ -3,6 +3,7 @@ package server
 import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
@@ -62,11 +63,18 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSignerNotTrusted, StatusText: "unknown sender"}
 	}
 
-	// Verify signature directly against the looked-up certificate.
-	// No chain validation needed — the server trusts this certificate
-	// because it came from its own database.
+	// Verify the signature directly against the looked-up certificate. No chain
+	// validation is needed, because the certificate came from the server's own
+	// database, but the message must still name that certificate's subject as
+	// its sender. SenderIdentity carries both to the CA, and a CA that
+	// authorizes on the name would otherwise be handed a name the peer chose
+	// alongside a certificate the server itself vouched for.
 	_, err = msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert})
 	if err != nil {
+		var verr *pkicmp.VerificationError
+		if errors.As(err, &verr) && verr.Reason == pkicmp.ReasonSenderMismatch {
+			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "sender does not match the certificate that signed the message"}
+		}
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSignerNotTrusted, StatusText: "signature verification failed"}
 	}
 
