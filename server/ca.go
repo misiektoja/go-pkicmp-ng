@@ -128,6 +128,14 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	var pubKey any
 	var extensions []pkix.Extension
 
+	// Proof of possession is checked before anything reaches the CA, because a
+	// server may be built without a policy wrapper and a certificate issued for
+	// a key the requester does not hold is an authorization failure rather than
+	// a matter of site policy.
+	if err := enforceProofOfPossession(msg); err != nil {
+		return nil, err
+	}
+
 	switch msg.Body.Type {
 	case pkicmp.BodyTypeP10CR:
 		csr, err := msg.Body.P10CR()
@@ -141,6 +149,13 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 			return nil, err
 		}
 		subject, pubKey, extensions = crmf.subject, crmf.publicKey, crmf.extensions
+	}
+
+	// An extension that cannot be decoded must not travel on to the CA in
+	// ExtraExtensions, where a signer outside this process would interpret bytes
+	// no check here has understood.
+	if _, err := decodeBasicConstraints(extensions); err != nil {
+		return nil, err
 	}
 
 	// Compute SubjectKeyIdentifier from public key per RFC 5280 §4.2.1.2.
