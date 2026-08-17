@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 
 	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
@@ -84,6 +85,56 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 	return result, nil
 }
 
+// enforceProofOfPossession rejects a certificate request that does not prove possession of the requested private key.
+//
+// RFC 4211 §4 and RFC 9483 §5.1.1 require the proof, and without it a requester
+// can obtain a certificate for a public key belonging to someone else. It is
+// applied in the issuance path itself rather than only in a policy wrapper,
+// because a server built without one still issues certificates. [LightweightPolicy]
+// applies the same rule, so a request usually passes it once in the policy and
+// once here, which costs one extra public key operation and keeps either layer
+// correct on its own.
+func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
+	switch msg.Body.Type {
+	case pkicmp.BodyTypeP10CR:
+		csr, err := msg.Body.P10CR()
+		if err != nil {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+		}
+		// For PKCS#10 the self-signature over the request is the proof.
+		if err := csr.CheckSignature(); err != nil {
+			if errors.Is(err, x509.ErrUnsupportedAlgorithm) {
+				return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "unsupported signature algorithm"}
+			}
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: err.Error()}
+		}
+		return nil
+
+	case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR:
+		crmf, err := parseCRMFMsg(msg)
+		if err != nil {
+			return err
+		}
+		if err := verifyPOPMsg(msg); err != nil {
+			failInfo := pkicmp.FailBadPOP
+			// RFC 9810 §5.2.8.1: An end entity MUST NOT use raVerified.
+			var parseErr *pkicmp.ParseError
+			if errors.As(err, &parseErr) && parseErr.Detail == "raVerified POP not supported" {
+				failInfo = pkicmp.FailNotAuthorized
+			}
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: failInfo, StatusText: err.Error()}
+		}
+		// A signature-capable key must carry the signature proof. Without this
+		// a request that simply omits popo would be accepted, since there is
+		// then nothing for verifyPOPMsg to check.
+		if crmf.popRequired && crmf.popMissing {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: "POP required for signature key"}
+		}
+		return nil
+	}
+	return nil
+}
+
 // verifyPOPMsg verifies the Proof of Possession for CRMF requests.
 // RFC 4211 §4: Delegates to pkicmp.VerifyPOP.
 func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
@@ -117,23 +168,70 @@ func isSignatureCapableKey(pub crypto.PublicKey) bool {
 	}
 }
 
-// hasCABasicConstraints checks if extensions contain BasicConstraints with cA=true.
-// Handlers can use this to reject CA certificate requests as a policy decision.
-func hasCABasicConstraints(extensions []pkix.Extension) bool {
-	// OID for BasicConstraints: 2.5.29.19
-	oidBasicConstraints := asn1.ObjectIdentifier{2, 5, 29, 19}
+// oidBasicConstraints identifies the RFC 5280 §4.2.1.9 BasicConstraints extension.
+var oidBasicConstraints = asn1.ObjectIdentifier{2, 5, 29, 19}
 
+// basicConstraints is the RFC 5280 §4.2.1.9 extension value.
+//
+// pathLenConstraint carries no DEFAULT, so an absent one decodes as zero rather
+// than as the -1 crypto/x509 uses. Nothing here distinguishes the two, because a
+// path length only constrains a CA certificate and those are rejected outright.
+type basicConstraints struct {
+	IsCA       bool `asn1:"optional"`
+	MaxPathLen int  `asn1:"optional"`
+}
+
+// decodeBasicConstraints returns every BasicConstraints extension in the list, and an error if any one of them is malformed.
+func decodeBasicConstraints(extensions []pkix.Extension) ([]basicConstraints, error) {
+	var out []basicConstraints
 	for _, ext := range extensions {
-		if ext.Id.Equal(oidBasicConstraints) {
-			// BasicConstraints ::= SEQUENCE { cA BOOLEAN DEFAULT FALSE, ... }
-			var bc struct {
-				IsCA       bool `asn1:"optional"`
-				MaxPathLen int  `asn1:"optional"`
+		if !ext.Id.Equal(oidBasicConstraints) {
+			continue
+		}
+		// A decode failure must not be read as "the extension is absent". Go's
+		// encoding/asn1 accepts only 00 and FF for a BOOLEAN, so a one-byte
+		// change such as 01 01 01 makes cA undecodable, and treating that as
+		// absence lets a request for a CA certificate past the checks below
+		// while the extension itself travels on to the CA unchanged.
+		var bc basicConstraints
+		rest, err := asn1.Unmarshal(ext.Value, &bc)
+		if err != nil || len(rest) != 0 {
+			return nil, &Error{
+				Status:      pkicmp.StatusRejection,
+				FailureInfo: pkicmp.FailBadCertTemplate,
+				StatusText:  "malformed BasicConstraints",
 			}
-			if _, err := asn1.Unmarshal(ext.Value, &bc); err == nil && bc.IsCA {
-				return true
+		}
+		out = append(out, bc)
+	}
+	return out, nil
+}
+
+// checkBasicConstraints rejects a malformed BasicConstraints extension, an invalid path length and any request for a CA certificate.
+func checkBasicConstraints(extensions []pkix.Extension) error {
+	all, err := decodeBasicConstraints(extensions)
+	if err != nil {
+		return err
+	}
+	for _, bc := range all {
+		// RFC 5280 §4.2.1.9: pathLenConstraint is meaningful only when cA is
+		// true, and it is never negative.
+		if bc.MaxPathLen < 0 || (!bc.IsCA && bc.MaxPathLen != 0) {
+			return &Error{
+				Status:      pkicmp.StatusRejection,
+				FailureInfo: pkicmp.FailBadCertTemplate,
+				StatusText:  "invalid path-length in BasicConstraints",
 			}
 		}
 	}
-	return false
+	for _, bc := range all {
+		if bc.IsCA {
+			return &Error{
+				Status:      pkicmp.StatusRejection,
+				FailureInfo: pkicmp.FailNotAuthorized,
+				StatusText:  "CA certificates not allowed",
+			}
+		}
+	}
+	return nil
 }
