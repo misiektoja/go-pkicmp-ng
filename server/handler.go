@@ -58,6 +58,12 @@ type SenderIdentity struct {
 	Certificate *x509.Certificate
 	// Sender is the DN from the PKIHeader sender field. May be empty (NULL-DN)
 	// for initial enrollment with MAC protection.
+	//
+	// For a signature-protected request this is the subject of Certificate,
+	// because RFC 9483 §3.5 requires the two to agree and verification rejects
+	// the message otherwise. A CA may therefore authorize on this name. For a
+	// MAC-protected request the name is whatever resolved the shared secret,
+	// so authorize on SenderKID or on the name the secret is registered to.
 	Sender pkix.Name
 	// SenderKID is the reference number from MAC-protected requests.
 	SenderKID []byte
