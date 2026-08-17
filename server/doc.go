@@ -25,6 +25,15 @@
 // it must set SerialNumber and validity, and may enforce policy, override
 // the subject, add or strip extensions, or reject the request outright.
 //
+// The extensions in template.ExtraExtensions are the ones the requester asked
+// for, and nothing has vetted them. [x509.CreateCertificate] gives an extension
+// in ExtraExtensions precedence over the matching typed field, so assigning
+// template.KeyUsage does not override a requested keyUsage extension: the
+// assignment is silently discarded and the requested value is issued instead.
+// The same applies to ExtKeyUsage, BasicConstraints and the other typed fields.
+// A CA that means to decide an extension itself must drop it from
+// ExtraExtensions first, as the example below does for keyUsage.
+//
 // # Basic example
 //
 //	type myCA struct {
@@ -38,6 +47,11 @@
 //	    tmpl.SerialNumber = big.NewInt(time.Now().UnixNano())
 //	    tmpl.NotBefore = time.Now()
 //	    tmpl.NotAfter = time.Now().Add(365 * 24 * time.Hour)
+//
+//	    // Drop a requested keyUsage, otherwise it would override the one set below.
+//	    oidKeyUsage := asn1.ObjectIdentifier{2, 5, 29, 15}
+//	    tmpl.ExtraExtensions = slices.DeleteFunc(tmpl.ExtraExtensions,
+//	        func(e pkix.Extension) bool { return e.Id.Equal(oidKeyUsage) })
 //	    tmpl.KeyUsage = x509.KeyUsageDigitalSignature
 //
 //	    der, err := x509.CreateCertificate(rand.Reader, tmpl, c.cert, tmpl.PublicKey, c.key)
