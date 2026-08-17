@@ -72,9 +72,7 @@ func TestCleanupExpiredConcurrentWithImplicitConfirm(t *testing.T) {
 	stop := make(chan struct{})
 	var reapers sync.WaitGroup
 	for range 4 {
-		reapers.Add(1)
-		go func() {
-			defer reapers.Done()
+		reapers.Go(func() {
 			for {
 				select {
 				case <-stop:
@@ -83,18 +81,16 @@ func TestCleanupExpiredConcurrentWithImplicitConfirm(t *testing.T) {
 					srv.CleanupExpired()
 				}
 			}
-		}()
+		})
 	}
 
 	var clients sync.WaitGroup
 	for range 16 {
-		clients.Add(1)
-		go func() {
-			defer clients.Done()
+		clients.Go(func() {
 			for range 40 {
 				enrollOnce(t)
 			}
-		}()
+		})
 	}
 	clients.Wait()
 	close(stop)
