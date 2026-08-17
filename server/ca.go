@@ -165,7 +165,15 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	}
 	ski := sha1.Sum(pubDER) // #nosec G401 -- SHA-1 hash of SPKI for SKI (opaque identifier, collision resistance not required)
 
-	// Build template with data from the request only. CA sets serial, validity, key usage, etc.
+	// Build template with data from the request only. The CA sets serial and
+	// validity, and decides what else to honor.
+	//
+	// ExtraExtensions carries the extensions the requester asked for, still
+	// unvetted. [x509.CreateCertificate] gives an extension here precedence over
+	// the matching typed field, so assigning template.KeyUsage does not override
+	// a requested keyUsage extension: it is silently dropped in favor of the
+	// requested one. A CA that means to control an extension must remove it from
+	// ExtraExtensions before signing. See [CA.IssueCertificate].
 	template := &x509.Certificate{
 		Subject:         subject,
 		PublicKey:       pubKey,
