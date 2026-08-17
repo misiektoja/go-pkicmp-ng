@@ -66,6 +66,10 @@ type VerifyOptions struct {
 	// certificate without chain validation. This is used when the verifier has
 	// already resolved the sender's certificate from its own database.
 	// Takes precedence over TrustPool/ExtraCerts.
+	//
+	// The certificate still has to be within its validity period and to be the
+	// subject the header names, so resolving one by a key identifier alone does
+	// not let a peer attach any sender name it likes to it.
 	TrustedCert *x509.Certificate
 
 	// ExtraCerts provides candidate signer certificates (typically from
@@ -323,6 +327,14 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		now := time.Now()
 		if now.Before(opts.TrustedCert.NotBefore) || now.After(opts.TrustedCert.NotAfter) {
 			return nil, &VerificationError{Reason: ReasonCertificateExpired}
+		}
+		// RFC 9483 §3.5: the sender must be the subject of the protection
+		// certificate. Resolving a certificate from a database proves only that
+		// the verifier knows it, not that the message came from the identity the
+		// header claims, so a lookup keyed on senderKID alone would otherwise
+		// pair a genuine certificate with any sender name the peer chose.
+		if !senderMatchesCertificate(m.Header.Sender, opts.TrustedCert) {
+			return nil, &VerificationError{Reason: ReasonSenderMismatch}
 		}
 		if opts.RequireDigitalSignatureKeyUsage && !permittedToSign(opts.TrustedCert) {
 			return nil, &VerificationError{Reason: ReasonKeyUsageNotPermitted}
