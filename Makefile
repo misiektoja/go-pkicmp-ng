@@ -1,18 +1,36 @@
 CMP_TEST_SUITE_DIR := test/integration/cmp-test-suite/testdata/cmp-test-suite
 CMP_TEST_SUITE_COMMIT := d35c9de4516924b0a9a96176b3c8692660e57a8c
 
-.PHONY: test lint fix test-integration test-integration-ejbca \
+# FUZZTIME bounds each fuzz target. Raise it to hunt for new inputs locally,
+# for example: make fuzz FUZZTIME=10m
+FUZZTIME ?= 30s
+
+.PHONY: test fuzz lint fmt-check fix test-integration test-integration-ejbca \
 	test-integration-openssl test-integration-cmp-test-suite \
 	setup setup-ejbca setup-cmp-test-suite teardown teardown-ejbca clean help  \
 	docs
 
 # Testing
 
-test: ## Run unit tests
-	go test -v ./...
+test: ## Run unit tests under the race detector
+	go test -race -v ./...
+
+fuzz: ## Run each fuzz target for FUZZTIME (default 30s)
+	@for target in $$(go test -list '^Fuzz' ./pkicmp/ | awk '/^Fuzz/ {print $$1}'); do \
+		echo "==> $$target"; \
+		go test -run "^$$target$$" -fuzz "^$$target$$" -fuzztime $(FUZZTIME) ./pkicmp/ || exit 1; \
+	done
 
 lint: ## Run linters (govet, staticcheck, gosec)
 	go tool -modfile=tools/go.mod golangci-lint run
+
+fmt-check: ## Fail if any tracked Go file is not gofmt-formatted
+	@files=$$(git ls-files '*.go'); \
+	if [ -z "$$files" ]; then echo "no Go files tracked"; exit 1; fi; \
+	unformatted=$$(gofmt -l $$files); \
+	if [ -n "$$unformatted" ]; then \
+		echo "not gofmt-formatted:"; echo "$$unformatted"; exit 1; \
+	fi
 
 fix: ## Modernize code to use newer Go APIs
 	go fix ./...
