@@ -24,6 +24,9 @@ jobs:
           go-version: 'stable'
           cache: true
 
+      - name: Check formatting
+        run: make fmt-check
+
       - name: Run linter
         run: make lint
 
@@ -65,6 +68,13 @@ jobs:
 
       - name: Run unit tests
         run: make test
+
+      # Every parser here consumes bytes chosen by a peer, and protection is
+      # verified before anything establishes who that peer is. A short run on
+      # each push will not exhaust the space, but it catches a regression that
+      # reintroduces a crash on a nearby input.
+      - name: Run fuzz targets
+        run: make fuzz
 
       - name: Run OpenSSL integration tests
         run: make test-integration-openssl
