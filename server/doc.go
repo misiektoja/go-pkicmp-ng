@@ -149,11 +149,22 @@
 //
 // # Middleware
 //
-// [NewCAServer] requires a handler wrapper that implements authorization and
+// [NewCAServer] takes a handler wrapper that implements authorization and
 // request validation. The server handles authentication (verifying protection)
 // but delegates authorization and other cross-cutting concerns (like audit logging,
 // metrics tracking, or rate limiting) to wrappers. Without validation wrappers,
-// any authenticated client could request any certificate.
+// any authenticated client could request any certificate for any name.
+//
+// Two checks are not delegated, because they establish that a request is what it
+// claims to be rather than whether a site wants to grant it, and a server built
+// with a nil policy would otherwise skip them:
+//
+//   - Proof of possession, so that a certificate is never issued for a public
+//     key the requester did not prove holding (RFC 4211 §4, RFC 9483 §5.1.1).
+//     For a p10cr this is the CSR self-signature.
+//   - Rejection of a BasicConstraints extension that cannot be decoded, so that
+//     no extension reaches [CA.IssueCertificate] that the checks above did not
+//     understand.
 //
 // [LightweightPolicy] enforces the RFC 9483 Lightweight CMP Profile:
 //
