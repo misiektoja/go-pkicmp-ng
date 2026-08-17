@@ -463,7 +463,10 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 		if i > 0 {
 			select {
 			case <-ctx.Done():
-				return nil, nil, ctx.Err()
+				// Naming the wait keeps a deadline that expires between polls
+				// distinguishable from one that expires during a request, while
+				// the wrapped context error stays available to errors.Is.
+				return nil, nil, &Error{Op: fmt.Sprintf("waiting %s before poll %d", waitTime, i+1), Err: ctx.Err()}
 			case <-time.After(waitTime):
 			}
 		}
