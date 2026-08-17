@@ -74,6 +74,54 @@ func TestVerifySignatureBindsSenderToCertificate(t *testing.T) {
 	})
 }
 
+// A certificate resolved from the verifier's own database is trusted, which
+// still says nothing about who sent the message. RFC 9483 §3.5 applies to this
+// path exactly as it does to the chain-building one.
+func TestVerifyTrustedCertBindsSenderToCertificate(t *testing.T) {
+	trustedCertMessage := func(t *testing.T, sender pkicmp.GeneralName) (*pkicmp.PKIMessage, *x509.Certificate) {
+		t.Helper()
+		_, _, signerKey, signerCert := generateCAAndSigner(t)
+
+		msg := pkicmp.NewPKIMessage(pkicmp.NewPKIConfBody(), pkicmp.MessageOptions{Sender: sender})
+		mustProtectSig(t, msg, signerKey, signerCert)
+
+		der, err := msg.MarshalBinary()
+		require.NoError(t, err)
+		parsed, err := pkicmp.ParsePKIMessage(der)
+		require.NoError(t, err)
+		return parsed, signerCert
+	}
+
+	t.Run("SenderMatchesSubject", func(t *testing.T) {
+		msg, signerCert := trustedCertMessage(t, pkicmp.NewDirectoryName(pkix.Name{CommonName: "Signer"}))
+
+		vr, err := msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert})
+		require.NoError(t, err)
+		assert.Equal(t, signerCert, vr.ProtectionCertificate)
+	})
+
+	// A lookup keyed on senderKID alone returns the right certificate for the
+	// wrong claimed identity, which is the case this check exists for.
+	t.Run("SenderNamesDifferentIdentity", func(t *testing.T) {
+		msg, signerCert := trustedCertMessage(t, pkicmp.NewDirectoryName(pkix.Name{CommonName: "privileged-service"}))
+
+		_, err := msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert})
+		var ve *pkicmp.VerificationError
+		require.ErrorAs(t, err, &ve)
+		assert.Equal(t, pkicmp.ReasonSenderMismatch, ve.Reason)
+	})
+
+	// RFC 4210 §5.1.1 NULL DN carries no name to bind, and the certificate the
+	// verifier resolved is what authenticates the message.
+	t.Run("NullDNSenderStillVerifies", func(t *testing.T) {
+		msg, signerCert := trustedCertMessage(t, pkicmp.GeneralName{})
+
+		vr, err := msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert})
+		require.NoError(t, err)
+		assert.Equal(t, signerCert, vr.ProtectionCertificate)
+	})
+}
+
 // RFC 9483 §3.1 requires the same kind of protection for every message of a PKI
 // management operation, and RFC 9810 §5.2.3 gives the mismatch its own failInfo
 // bit. A verifier that pins the mechanism must not accept the other one.
