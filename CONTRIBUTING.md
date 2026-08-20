@@ -1,6 +1,6 @@
-# Contributing to go-pkicmp
+# Contributing to go-pkicmp-ng
 
-This document outlines the essential workflows and guidelines for contributing to `go-pkicmp`.
+This document outlines the essential workflows and guidelines for contributing to `go-pkicmp-ng`.
 
 Run linters:
 ```bash
