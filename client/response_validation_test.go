@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
-	"github.com/tsaarni/go-pkicmp/client"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 type mockServerConfig struct {

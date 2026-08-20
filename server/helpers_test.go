@@ -11,10 +11,10 @@ import (
 	"math/big"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/tsaarni/certyaml"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
-	"github.com/tsaarni/go-pkicmp/server"
 )
 
 // requestType identifies the CMP operation type (test-only equivalent of the removed server.RequestType).

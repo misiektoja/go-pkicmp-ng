@@ -7,7 +7,7 @@ import (
 	"crypto/x509"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // buildResponse creates a protected response message with proper header management.

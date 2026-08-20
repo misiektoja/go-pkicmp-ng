@@ -4,9 +4,9 @@ import (
 	"encoding/asn1"
 	"testing"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 var (

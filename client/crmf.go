@@ -7,7 +7,7 @@ import (
 	"encoding/asn1"
 	"fmt"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // SendIR performs an Initialization Request (RFC 9810 §5.3.1).

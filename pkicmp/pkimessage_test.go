@@ -9,9 +9,9 @@ import (
 	"os"
 	"testing"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 func TestP10CRRoundTrip(t *testing.T) {

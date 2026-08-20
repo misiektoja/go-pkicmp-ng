@@ -7,8 +7,8 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/examples/mockserver"
-	"github.com/tsaarni/go-pkicmp/server"
+	"github.com/misiektoja/go-pkicmp-ng/examples/mockserver"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 func main() {

@@ -1,4 +1,4 @@
-module github.com/tsaarni/go-pkicmp
+module github.com/misiektoja/go-pkicmp-ng
 
 go 1.26.1
 

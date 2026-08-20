@@ -3,7 +3,7 @@ package server
 import (
 	"fmt"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // Error can be returned by Handler to control the CMP error response.

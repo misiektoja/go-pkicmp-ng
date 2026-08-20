@@ -5,7 +5,7 @@ import (
 	"crypto/x509"
 	"testing"
 
-	"github.com/tsaarni/go-pkicmp/server"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 type issueOnlyCA struct{}

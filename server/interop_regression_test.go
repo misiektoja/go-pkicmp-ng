@@ -15,11 +15,11 @@ import (
 	"testing"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
-	"github.com/tsaarni/go-pkicmp/server"
 )
 
 // postCMP sends a CMP message and returns the parsed response.

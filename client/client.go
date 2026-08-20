@@ -6,7 +6,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // Client handles CMP message transport and polling.

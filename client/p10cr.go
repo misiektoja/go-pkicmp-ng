@@ -4,7 +4,7 @@ import (
 	"context"
 	"crypto/x509"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // SendP10CR sends a PKCS#10 CSR to the CA (RFC 9810 §5.3.3).

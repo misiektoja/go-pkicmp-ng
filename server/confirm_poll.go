@@ -6,7 +6,7 @@ import (
 	"crypto"
 	"crypto/x509"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // issuedInfoContextKey passes issuance details to the handler during certConf.

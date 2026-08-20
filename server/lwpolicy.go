@@ -3,7 +3,7 @@ package server
 import (
 	"context"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // LightweightPolicy returns a handler wrapper that enforces RFC 9483 Lightweight CMP Profile requirements.

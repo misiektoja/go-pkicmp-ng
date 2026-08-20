@@ -4,7 +4,7 @@ import (
 	"crypto/x509/pkix"
 	"fmt"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 func ExampleNewPKIMessage() {

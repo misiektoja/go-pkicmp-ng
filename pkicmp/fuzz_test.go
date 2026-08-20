@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // Every parser in this package consumes bytes chosen by a peer, and protection

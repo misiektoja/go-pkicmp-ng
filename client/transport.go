@@ -13,7 +13,7 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // enroll performs the full CMP enrollment transaction:

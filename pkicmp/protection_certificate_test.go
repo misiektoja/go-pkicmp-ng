@@ -11,9 +11,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 // RFC 9810 §4.5 extended key usages for CMP entities.

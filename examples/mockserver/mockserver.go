@@ -24,7 +24,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"github.com/tsaarni/go-pkicmp/server"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // oidKeyUsage identifies the RFC 5280 §4.2.1.3 keyUsage extension.

@@ -5,9 +5,9 @@ import (
 	"crypto/x509/pkix"
 	"testing"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/pkicmp"
 )
 
 // signedMessage returns a parsed, signature-protected message with the given sender.

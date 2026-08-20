@@ -14,9 +14,9 @@ import (
 	"testing"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/examples/mockserver"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/require"
-	"github.com/tsaarni/go-pkicmp/examples/mockserver"
-	"github.com/tsaarni/go-pkicmp/server"
 )
 
 const sharedSecret = "test-shared-secret"
