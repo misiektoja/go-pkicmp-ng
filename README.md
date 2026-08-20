@@ -1,6 +1,6 @@
-# go-pkicmp
+# go-pkicmp-ng
 
-[![Go Reference](https://pkg.go.dev/badge/github.com/tsaarni/go-pkicmp.svg)](https://pkg.go.dev/github.com/tsaarni/go-pkicmp)
+[![Go Reference](https://pkg.go.dev/badge/github.com/misiektoja/go-pkicmp-ng.svg)](https://pkg.go.dev/github.com/misiektoja/go-pkicmp-ng)
 
 Go library for the Certificate Management Protocol (CMP).
 The library partially implements:
@@ -11,18 +11,39 @@ The library partially implements:
 
 Compliance is verified via integration tests: client against [EJBCA](https://docs.keyfactor.com/ejbca/latest/cmp) and [OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html); server against [Siemens CMP Test Suite](https://github.com/siemens/cmp-test-suite).
 
-> [!NOTE]
-> This codebase is LLM-generated using [IETF protocol specifications](docs/specs) as reference context.
+## Credits and relationship to go-pkicmp
 
-## Package Structure
+This project began as a fork of [tsaarni/go-pkicmp](https://github.com/tsaarni/go-pkicmp) by
+[@tsaarni](https://github.com/tsaarni). That original work contributed the package layout, the ASN.1
+types and the client and server designs this library still follows and it is what made everything
+here possible. It is Apache-2.0 licensed and the credit for the foundation belongs to its author.
+
+Development continued here because the changes are security relevant and were needed on a faster
+cycle than waiting for review allowed. They are offered upstream in
+[tsaarni/go-pkicmp#3](https://github.com/tsaarni/go-pkicmp/pull/3), which is still open.
+
+What this fork adds, in short: response verification that binds a signature to the sender it claims,
+a check that an issued certificate really certifies the key that was requested, bounded PBKDF2
+parameters and poll intervals taken from untrusted messages, correct CMP media type and
+CMP-over-HTTP error handling, distinguished names that survive a round trip through a real CA, and
+interoperability fixes against EJBCA, OpenSSL and vendor CMP clients. The
+[release notes](RELEASE_NOTES.md) list the changes in full.
+
+The API is pre-v1 and may change.
+
+## Install
+
+```bash
+go get github.com/misiektoja/go-pkicmp-ng
+```
+
+## Package structure
 
 The library is split into three packages:
 
 *   **[`pkicmp`](./pkicmp/)**: Core types for CMP and CRMF ASN.1 structures. Handles parsing, serialization, PVNO 2/3, and protection (MAC or X.509 signatures).
 *   **[`client`](./client/)**: Handles IR, CR, KUR, and P10CR enrollment flows, including automatic polling, response verification, and certificate confirmation.
 *   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, and enforces policies via middleware (including the lightweight profile).
-
-
 
 ## Usage
 
@@ -63,7 +84,7 @@ result, err := c.SendKUR(context.Background(), newKey, creds,
 
 ### Server
 
-Use the `server` package to expose a CMP endpoint as a standard `http.Handler`. 
+Use the `server` package to expose a CMP endpoint as a standard `http.Handler`.
 
 Implement the `server.CA` interface and credential lookup callbacks.
 ```go
@@ -94,7 +115,7 @@ http.Handle("/cmp", srv)
 http.ListenAndServe(":8080", nil)
 ```
 
-## Runnable Examples
+## Runnable examples
 
 For a complete, runnable demonstration of both client and server packages, check out the [examples](./examples/) directory. It contains:
 - **[Mock Server](./examples/mockserver/)**: A simple HTTP server implementing the `server.CA` interface.
@@ -113,3 +134,6 @@ go run ./examples/mockclient/cmd
 
 Please refer to the [Contributing Guide](CONTRIBUTING.md).
 
+## License
+
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
