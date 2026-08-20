@@ -1,6 +1,6 @@
 # Release Notes
 
-Notable changes to go-pkicmp. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
+Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
 ## v0.0.2 - TBD
 
