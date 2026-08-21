@@ -2,7 +2,7 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
-## v0.0.2 - TBD
+## v0.0.2 - 2026-08-21
 
 Security and interoperability release. Response verification is stricter, shared-secret protection is safer against hostile input, and enrollment works reliably against common CAs and vendor CMP clients.
 
