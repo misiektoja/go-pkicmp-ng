@@ -54,6 +54,10 @@
 //	    client.WithTemplateSubject(oldCert.Subject),
 //	)
 //
+// SendKUR automatically identifies oldCert through the CRMF oldCertID control
+// when newCreds is a [pkicmp.SignatureCredentials]. Custom credential types can
+// provide the certificate with [WithOldCertificate].
+//
 // # Asynchronous enrollment and polling
 //
 // When a CA cannot issue immediately it replies with a "waiting" status. The
