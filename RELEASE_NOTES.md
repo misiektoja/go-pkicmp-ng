@@ -2,6 +2,22 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.0.3 - 2026-08-25
+
+Interoperability and server-validation release. Repeated key updates can identify the exact certificate being replaced, while CMP servers can enforce a deployment-specific freshness window for protected requests.
+
+### `pkicmp`
+
+* **CRMF `CertRequest.controls` are parsed and serialized**, with **`NewOldCertIDControl`** encoding the existing certificate issuer and serial exactly as required by RFC 4211. Controls are covered by CRMF proof of possession, so changing one invalidates the POP signature.
+
+### `client`
+
+* **KUR includes the recommended `oldCertID` control automatically** when signature credentials expose the existing certificate. This disambiguates repeated same-key renewal on servers that cannot infer which of several certificates is being updated. Custom credentials can supply it with **`WithOldCertificate`**.
+
+### `server`
+
+* **`WithMessageTimeTolerance` optionally rejects stale or excessively future-dated protected messages with `badTime`**. Validation is disabled by default because RFC 9483 leaves the allowed difference to local policy. A missing `messageTime` remains accepted.
+
 ## v0.0.2 - 2026-08-21
 
 Security and interoperability release. Response verification is stricter, shared-secret protection is safer against hostile input, and enrollment works reliably against common CAs and vendor CMP clients.
