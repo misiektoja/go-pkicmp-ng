@@ -1,6 +1,7 @@
 package client
 
 import (
+	"crypto/x509"
 	"crypto/x509/pkix"
 )
 
@@ -9,6 +10,7 @@ type requestOptions struct {
 	senderKID       []byte
 	templateSubject *pkix.Name
 	templateExts    []pkix.Extension
+	oldCertificate  *x509.Certificate
 }
 
 // RequestOption configures a specific enrollment request.
@@ -35,4 +37,9 @@ func WithTemplateSubject(subject pkix.Name) RequestOption {
 // WithTemplateExtension adds an extension to the CRMF CertTemplate.
 func WithTemplateExtension(ext pkix.Extension) RequestOption {
 	return func(o *requestOptions) { o.templateExts = append(o.templateExts, ext) }
+}
+
+// WithOldCertificate overrides the certificate identified by the oldCertID control in a KUR.
+func WithOldCertificate(certificate *x509.Certificate) RequestOption {
+	return func(o *requestOptions) { o.oldCertificate = certificate }
 }
