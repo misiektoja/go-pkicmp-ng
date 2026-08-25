@@ -195,6 +195,12 @@
 // Those are off by default and enabled together with
 // [WithStrictProfileValidation], which is documented on the option.
 //
+// RFC 9483 also requires a present messageTime to be close to reliable
+// receiver time when local policy selects that check. Configure the
+// use-case-specific window with [WithMessageTimeTolerance]. It is independent
+// of [WithStrictProfileValidation] because the RFC does not define one default
+// tolerance that is safe for every deployment.
+//
 // Add custom authorization policy and logging using [MiddlewareChain].
 // In this setup, `myPolicy()` runs before `LightweightPolicy()` to quickly reject
 // unauthorized requests before performing verification against lightweight policy:
