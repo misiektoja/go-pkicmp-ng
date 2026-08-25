@@ -69,6 +69,7 @@ type serverConfig struct {
 	maxTransactions              int
 	maxTransactionsPerCredential int
 	strictProfile                bool
+	messageTimeTolerance         time.Duration
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
 }
 
@@ -152,6 +153,19 @@ func WithImplicitConfirm() Option {
 func WithStrictProfileValidation() Option {
 	return func(c *serverConfig) {
 		c.strictProfile = true
+	}
+}
+
+// WithMessageTimeTolerance rejects a present messageTime outside the allowed difference from server time.
+//
+// RFC 9483 Section 3.5 requires this check with failInfo badTime when the
+// receiver has reliable system time and local policy selects the validation.
+// The threshold varies by use case, so validation is disabled by default and a
+// non-positive duration also disables it. This option does not require
+// messageTime to be present.
+func WithMessageTimeTolerance(tolerance time.Duration) Option {
+	return func(c *serverConfig) {
+		c.messageTimeTolerance = tolerance
 	}
 }
 
