@@ -322,7 +322,7 @@ func TestMACRequestWithoutSenderOrSenderKIDIsRejected(t *testing.T) {
 	assert.Equal(t, pkicmp.BodyTypeError, resp.Body.Type)
 }
 
-// WithStrictProfileValidation restores the three RFC 9483 construction checks
+// WithStrictProfileValidation restores the four RFC 9483 construction checks
 // that are relaxed by default, so a conformance suite can be run against it.
 func TestStrictProfileValidation(t *testing.T) {
 	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
@@ -439,6 +439,60 @@ func TestStrictProfileValidation(t *testing.T) {
 		resp := postCMP(t, ts, confMsg)
 		assert.Equal(t, pkicmp.BodyTypeError, resp.Body.Type)
 	})
+}
+
+// TestMessageTimeTolerance enforces badTime only when local policy configures a reliable clock window.
+func TestMessageTimeTolerance(t *testing.T) {
+	now := time.Now().UTC().Truncate(time.Second)
+	tests := []struct {
+		name        string
+		tolerance   time.Duration
+		messageTime time.Time
+		wantBadTime bool
+	}{
+		{name: "disabled by default", messageTime: now.Add(-24 * time.Hour)},
+		{name: "current time accepted", tolerance: time.Minute, messageTime: now},
+		{name: "absent time accepted", tolerance: time.Minute},
+		{name: "old time rejected", tolerance: time.Minute, messageTime: now.Add(-2 * time.Minute), wantBadTime: true},
+		{name: "future time rejected", tolerance: time.Minute, messageTime: now.Add(2 * time.Minute), wantBadTime: true},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			ca := &certyaml.Certificate{Subject: "CN=Test CA"}
+			caCert, err := ca.X509Certificate()
+			require.NoError(t, err)
+			secret := []byte("message-time-secret")
+			handler := &mockHandler{handleCertRequest: func(_ context.Context, request *certRequest) (*certResponse, error) {
+				return &certResponse{Certificate: issueCert(ca, request), CACerts: []*x509.Certificate{&caCert}}, nil
+			}}
+			options := []server.Option{server.WithSecretLookup(&staticMACLookup{secret: secret})}
+			if test.tolerance != 0 {
+				options = append(options, server.WithMessageTimeTolerance(test.tolerance))
+			}
+			testServer := httptest.NewServer(server.New(handler, options...))
+			defer testServer.Close()
+
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			message := pkicmp.NewPKIMessage(
+				pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, test.name)}),
+				macMessageOpts(),
+			)
+			message.Header.MessageTime = test.messageTime
+			protectMAC(message, secret)
+			response := postCMP(t, testServer, message)
+
+			if !test.wantBadTime {
+				assert.Equal(t, pkicmp.BodyTypeIP, response.Body.Type)
+				return
+			}
+			assert.Equal(t, pkicmp.BodyTypeError, response.Body.Type)
+			errorContent, err := response.Body.Error()
+			require.NoError(t, err)
+			assert.NotZero(t, errorContent.PKIStatusInfo.FailInfo&pkicmp.FailBadTime)
+		})
+	}
 }
 
 // An expired certificate left in the CA's store must stop authenticating.
