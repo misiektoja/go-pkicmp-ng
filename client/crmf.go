@@ -59,6 +59,21 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 		CertReqID:    0,
 		CertTemplate: tmpl,
 	}
+	if expectedRepType == pkicmp.BodyTypeKUP {
+		oldCertificate := ropts.oldCertificate
+		if oldCertificate == nil {
+			if provider, ok := creds.(interface{ Certificate() *x509.Certificate }); ok {
+				oldCertificate = provider.Certificate()
+			}
+		}
+		if oldCertificate != nil {
+			control, err := pkicmp.NewOldCertIDControl(oldCertificate)
+			if err != nil {
+				return nil, &Error{Op: "encode oldCertID", Err: err}
+			}
+			certReq.Controls = []pkicmp.AttributeTypeAndValue{control}
+		}
+	}
 
 	certReqMsg := pkicmp.CertReqMsg{
 		CertReq: certReq,
