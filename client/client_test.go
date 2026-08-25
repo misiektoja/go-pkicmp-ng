@@ -7,7 +7,9 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"io"
+	"math/big"
 	"net/http"
 	"net/http/httptest"
 	"sync/atomic"
@@ -208,6 +210,7 @@ func TestSendKURHappyPath(t *testing.T) {
 
 	trustedCAs := x509.NewCertPool()
 	trustedCAs.AddCert(pki.caCert)
+	controlsCh := make(chan []pkicmp.AttributeTypeAndValue, 1)
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
@@ -224,6 +227,12 @@ func TestSendKURHappyPath(t *testing.T) {
 				Body: pkicmp.NewPKIConfBody(),
 			}
 		} else {
+			requests, parseErr := req.Body.KUR()
+			var controls []pkicmp.AttributeTypeAndValue
+			if parseErr == nil && requests != nil && len(*requests) == 1 {
+				controls = (*requests)[0].CertReq.Controls
+			}
+			controlsCh <- controls
 			resp = &pkicmp.PKIMessage{
 				Header: pkicmp.PKIHeader{
 					PVNO:          req.Header.PVNO,
@@ -259,6 +268,18 @@ func TestSendKURHappyPath(t *testing.T) {
 	result, err := c.SendKUR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)
 	assert.Equal(t, pki.eeCert.SerialNumber, result.Certificate.SerialNumber)
+	controls := <-controlsCh
+	require.Len(t, controls, 1)
+	control := controls[0]
+	assert.Equal(t, "1.3.6.1.5.5.7.5.1.5", control.Type.String())
+	var oldCertID struct {
+		Issuer       asn1.RawValue
+		SerialNumber *big.Int
+	}
+	rest, err := asn1.Unmarshal(control.Value, &oldCertID)
+	require.NoError(t, err)
+	assert.Empty(t, rest)
+	assert.Equal(t, sigX509.SerialNumber, oldCertID.SerialNumber)
 }
 
 func TestSendP10CRHappyPath(t *testing.T) {
