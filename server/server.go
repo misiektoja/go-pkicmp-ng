@@ -248,6 +248,16 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "senderNonce too short"}
 	}
 
+	// RFC 9483 §3.5: a present messageTime must be close to reliable receiver
+	// time when local policy enables the check. The profile leaves the threshold
+	// to the use case.
+	if s.cfg.messageTimeTolerance > 0 && !msg.Header.MessageTime.IsZero() {
+		now := time.Now()
+		if msg.Header.MessageTime.Before(now.Add(-s.cfg.messageTimeTolerance)) || msg.Header.MessageTime.After(now.Add(s.cfg.messageTimeTolerance)) {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadTime, StatusText: "messageTime outside allowed tolerance"}
+		}
+	}
+
 	// Determine if this is a first message (starts a new transaction).
 	isFirstMessage := isInitialRequest(msg.Body.Type)
 
