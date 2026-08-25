@@ -75,7 +75,8 @@ Key Update Request (KUR) with Signature Protection
 creds, _ := pkicmp.NewSignatureCredentials(existingKey, existingCert)
 c := client.NewClient("http://localhost:8080/cmp", client.WithTrustedCAs(trustedCAs))
 
-// Send Key Update Request.
+// Send Key Update Request. SignatureCredentials lets SendKUR identify
+// existingCert by issuer and serial in the recommended CRMF oldCertID control.
 result, err := c.SendKUR(context.Background(), newKey, creds,
 	client.WithSender(existingCert.Subject),
 	client.WithTemplateSubject(existingCert.Subject),
@@ -109,6 +110,8 @@ srv := server.NewCAServer(myCA,
 	server.WithSigner(caKey, caCert),
 	server.WithSecretLookup(myCA),
 	server.WithCertificateLookup(myCA),
+	// A present messageTime outside this local tolerance is rejected as badTime.
+	server.WithMessageTimeTolerance(5*time.Minute),
 )
 
 http.Handle("/cmp", srv)
