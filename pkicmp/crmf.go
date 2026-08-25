@@ -12,6 +12,8 @@ import (
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
 )
 
+var oidRegCtrlOldCertID = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 7, 5, 1, 5}
+
 // CertReqMessages per RFC 4211 §3.
 //
 //	CertReqMessages ::= SEQUENCE SIZE (1..MAX) OF CertReqMsg
@@ -184,6 +186,8 @@ type CertRequest struct {
 	CertReqID int64
 	// CertTemplate describes subject, key, and extension preferences.
 	CertTemplate CertTemplate
+	// Controls contains registration controls that affect certificate issuance.
+	Controls []AttributeTypeAndValue
 	// Raw contains the DER encoding of this CertRequest, preserved during parsing
 	// for use in POP verification. Set automatically by unmarshal; ignored during marshal.
 	Raw []byte
@@ -193,6 +197,13 @@ func (r *CertRequest) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1Int64(r.CertReqID)
 		r.CertTemplate.marshal(mctx, b)
+		if len(r.Controls) > 0 {
+			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+				for i := range r.Controls {
+					r.Controls[i].marshal(mctx, b)
+				}
+			})
+		}
 	})
 }
 
@@ -212,7 +223,91 @@ func (r *CertRequest) unmarshal(s *cryptobyte.String) error {
 	if !seq.ReadASN1Integer(&r.CertReqID) {
 		return &ParseError{Detail: "invalid certReqId"}
 	}
-	return r.CertTemplate.unmarshal(&seq)
+	if err := r.CertTemplate.unmarshal(&seq); err != nil {
+		return err
+	}
+	if seq.Empty() {
+		return nil
+	}
+
+	var controls cryptobyte.String
+	if !seq.ReadASN1(&controls, cbasn1.SEQUENCE) || controls.Empty() {
+		return &ParseError{Detail: "invalid Controls sequence"}
+	}
+	for !controls.Empty() {
+		var control AttributeTypeAndValue
+		if err := control.unmarshal(&controls); err != nil {
+			return err
+		}
+		r.Controls = append(r.Controls, control)
+	}
+	if !seq.Empty() {
+		return &ParseError{Detail: "trailing data in CertRequest"}
+	}
+	return nil
+}
+
+// AttributeTypeAndValue carries one typed CRMF registration control value.
+type AttributeTypeAndValue struct {
+	// Type selects how Value should be interpreted.
+	Type asn1.ObjectIdentifier
+	// Value contains the complete DER encoding of the required control value.
+	Value []byte
+}
+
+// NewOldCertIDControl identifies the certificate being updated by issuer and serial number.
+func NewOldCertIDControl(certificate *x509.Certificate) (AttributeTypeAndValue, error) {
+	if certificate == nil {
+		return AttributeTypeAndValue{}, fmt.Errorf("pkicmp: oldCertID certificate is nil")
+	}
+	if certificate.SerialNumber == nil {
+		return AttributeTypeAndValue{}, fmt.Errorf("pkicmp: oldCertID certificate serial number is nil")
+	}
+
+	issuer := NewDirectoryName(certificate.Issuer)
+	if len(certificate.RawIssuer) > 0 {
+		issuer = NewDirectoryNameFromRawDER(certificate.RawIssuer)
+	}
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		issuer.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
+		b.AddASN1BigInt(certificate.SerialNumber)
+	})
+	value, err := b.Bytes()
+	if err != nil {
+		return AttributeTypeAndValue{}, fmt.Errorf("pkicmp: encode oldCertID: %w", err)
+	}
+	return AttributeTypeAndValue{Type: oidRegCtrlOldCertID, Value: value}, nil
+}
+
+// marshal encodes one AttributeTypeAndValue.
+func (a *AttributeTypeAndValue) marshal(_ *marshalContext, b *cryptobyte.Builder) {
+	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		b.AddASN1ObjectIdentifier(a.Type)
+		if len(a.Value) == 0 {
+			b.SetError(fmt.Errorf("pkicmp: attribute type and value is empty"))
+			return
+		}
+		b.AddBytes(a.Value)
+	})
+}
+
+// unmarshal decodes one AttributeTypeAndValue.
+func (a *AttributeTypeAndValue) unmarshal(s *cryptobyte.String) error {
+	var seq cryptobyte.String
+	if !s.ReadASN1(&seq, cbasn1.SEQUENCE) {
+		return &ParseError{Detail: "invalid AttributeTypeAndValue sequence"}
+	}
+	if !seq.ReadASN1ObjectIdentifier(&a.Type) {
+		return &ParseError{Detail: "invalid AttributeTypeAndValue OID"}
+	}
+	var value cryptobyte.String
+	var tag cbasn1.Tag
+	if !seq.ReadAnyASN1Element(&value, &tag) || !seq.Empty() {
+		return &ParseError{Detail: "invalid AttributeTypeAndValue value"}
+	}
+	a.Value = value
+	return nil
 }
 
 // CertTemplate per RFC 4211 §2.
