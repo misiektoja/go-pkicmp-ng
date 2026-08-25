@@ -8,6 +8,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -68,6 +69,7 @@ func TestCertReqMsgGeneratePOP(t *testing.T) {
 			CertTemplate: CertTemplate{
 				PublicKey: pubBytes,
 			},
+			Controls: []AttributeTypeAndValue{{Type: oidRegCtrlOldCertID, Value: []byte{0x05, 0x00}}},
 		},
 	}
 
@@ -91,6 +93,16 @@ func TestCertReqMsgGeneratePOP(t *testing.T) {
 		tamperedDigest := mustPOPSignatureDigest(t, tamperedReq, req.Popo.Signature)
 		valid := ecdsa.VerifyASN1(&key.PublicKey, tamperedDigest, req.Popo.Signature.Signature)
 		assert.False(t, valid, "tampered request must fail POP signature verification")
+	})
+
+	t.Run("negative validation with tampered control", func(t *testing.T) {
+		tamperedReq := req.CertReq
+		tamperedReq.Controls = append([]AttributeTypeAndValue(nil), req.CertReq.Controls...)
+		tamperedReq.Controls[0].Value = []byte{0x01, 0x01, 0xff}
+
+		tamperedDigest := mustPOPSignatureDigest(t, tamperedReq, req.Popo.Signature)
+		valid := ecdsa.VerifyASN1(&key.PublicKey, tamperedDigest, req.Popo.Signature.Signature)
+		assert.False(t, valid, "tampered control must fail POP signature verification")
 	})
 
 	t.Run("negative validation with wrong key", func(t *testing.T) {
@@ -148,6 +160,59 @@ func TestCertRequestASN1(t *testing.T) {
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
+
+	t.Run("EmptyControls", func(t *testing.T) {
+		var b cryptobyte.Builder
+		b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+			b.AddASN1Int64(0)
+			(&CertTemplate{}).marshal(&marshalContext{MinRequiredPVNO: PVNO2}, b)
+			b.AddASN1(cbasn1.SEQUENCE, func(_ *cryptobyte.Builder) {})
+		})
+		marshaled, err := b.Bytes()
+		require.NoError(t, err)
+		s := cryptobyte.String(marshaled)
+		var unmarshaled CertRequest
+		assert.Error(t, unmarshaled.unmarshal(&s))
+	})
+}
+
+// TestOldCertIDControlASN1 verifies the recommended KUR control preserves the certificate issuer and serial.
+func TestOldCertIDControlASN1(t *testing.T) {
+	rawIssuer, err := asn1.Marshal(pkix.RDNSequence{{{Type: asn1.ObjectIdentifier{2, 5, 4, 3}, Value: "Issuer"}}})
+	require.NoError(t, err)
+	certificate := &x509.Certificate{RawIssuer: rawIssuer, SerialNumber: big.NewInt(42)}
+
+	control, err := NewOldCertIDControl(certificate)
+	require.NoError(t, err)
+	assert.True(t, control.Type.Equal(oidRegCtrlOldCertID))
+
+	request := CertRequest{CertReqID: 7, CertTemplate: CertTemplate{}, Controls: []AttributeTypeAndValue{control}}
+	var b cryptobyte.Builder
+	request.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
+	encoded, err := b.Bytes()
+	require.NoError(t, err)
+	var decoded CertRequest
+	s := cryptobyte.String(encoded)
+	require.NoError(t, decoded.unmarshal(&s))
+	require.Len(t, decoded.Controls, 1)
+	assert.Equal(t, control.Type, decoded.Controls[0].Type)
+	assert.Equal(t, control.Value, decoded.Controls[0].Value)
+
+	value := cryptobyte.String(control.Value)
+	var oldCertID cryptobyte.String
+	require.True(t, value.ReadASN1(&oldCertID, cbasn1.SEQUENCE))
+	var issuer GeneralName
+	require.NoError(t, issuer.unmarshal(&oldCertID))
+	var serial big.Int
+	require.True(t, oldCertID.ReadASN1Integer(&serial))
+	assert.True(t, oldCertID.Empty())
+	assert.Equal(t, NewDirectoryNameFromRawDER(rawIssuer).Raw, issuer.Raw)
+	assert.Equal(t, int64(42), serial.Int64())
+
+	_, err = NewOldCertIDControl(nil)
+	assert.Error(t, err)
+	_, err = NewOldCertIDControl(&x509.Certificate{})
+	assert.Error(t, err)
 }
 
 // RFC 4211 §2 (CertTemplate ASN.1 tests)
