@@ -43,8 +43,20 @@ func New(handler Handler, opts ...Option) *Server {
 		maxPerCred = 100
 	}
 	s.transactionTracker = newTransactionTracker(maxTxn, maxPerCred)
+
+	// Build the signing credentials once so a key that does not match its
+	// certificate is caught here rather than silently dropping protection from
+	// every response.
+	if s.cfg.signerKey != nil || s.cfg.signerCert != nil {
+		s.cfg.signerCreds, s.cfg.signerErr = pkicmp.NewSignatureCredentials(s.cfg.signerKey, s.cfg.signerCert, s.cfg.signerChain...)
+	}
 	return s
 }
+
+// Err reports a configuration error detected by [New], such as a signer key that
+// does not match its certificate. A server with a non-nil Err answers every
+// request with systemFailure, so callers should check it at startup.
+func (s *Server) Err() error { return s.cfg.signerErr }
 
 // isCMPMediaType reports whether a Content-Type value identifies the CMP media type.
 func isCMPMediaType(value string) bool {
@@ -93,6 +105,16 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // processMessage handles a parsed PKIMessage and returns a response.
 func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pkicmp.PKIMessage {
+	// A signer that New rejected cannot protect anything. Refuse before the CA
+	// issues a certificate that could never be delivered.
+	if s.cfg.signerErr != nil {
+		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			Status:       pkicmp.StatusRejection,
+			FailInfo:     pkicmp.FailSystemFailure,
+			StatusString: pkicmp.PKIFreeText{"server misconfigured"},
+		})
+	}
+
 	// RFC 9810 §7: Validate PVNO.
 	if msg.Header.PVNO < pkicmp.PVNO2 || msg.Header.PVNO > pkicmp.PVNO3 {
 		resp := s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
@@ -250,8 +272,9 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 
 	// RFC 9483 §3.5: a present messageTime must be close to reliable receiver
 	// time when local policy enables the check. The profile leaves the threshold
-	// to the use case.
-	if s.cfg.messageTimeTolerance > 0 && !msg.Header.MessageTime.IsZero() {
+	// to the use case. Presence is read from the wire, so a peer cannot skip the
+	// check by sending the zero GeneralizedTime.
+	if s.cfg.messageTimeTolerance > 0 && msg.Header.HasMessageTime() {
 		now := time.Now()
 		if msg.Header.MessageTime.Before(now.Add(-s.cfg.messageTimeTolerance)) || msg.Header.MessageTime.After(now.Add(s.cfg.messageTimeTolerance)) {
 			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadTime, StatusText: "messageTime outside allowed tolerance"}
