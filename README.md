@@ -113,6 +113,10 @@ srv := server.NewCAServer(myCA,
 	// A present messageTime outside this local tolerance is rejected as badTime.
 	server.WithMessageTimeTolerance(5*time.Minute),
 )
+// Reports a misconfiguration such as a signer key that does not match its cert.
+if err := srv.Err(); err != nil {
+	log.Fatal(err)
+}
 
 http.Handle("/cmp", srv)
 http.ListenAndServe(":8080", nil)
