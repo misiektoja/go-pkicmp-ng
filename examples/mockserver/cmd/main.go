@@ -5,6 +5,7 @@ import (
 	"crypto/x509"
 	"log/slog"
 	"net/http"
+	"os"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/examples/mockserver"
@@ -46,6 +47,10 @@ func main() {
 		server.WithSecretLookup(ca),
 		server.WithCertificateLookup(ca),
 	)
+	if err := srv.Err(); err != nil {
+		log.Error("server misconfigured", "err", err)
+		os.Exit(1)
+	}
 
 	// Periodically remove stale transactions from clients that never send certConf.
 	go func() {
