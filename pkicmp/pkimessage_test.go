@@ -1,6 +1,7 @@
 package pkicmp_test
 
 import (
+	"bytes"
 	"crypto/rand"
 	"crypto/rsa"
 	"crypto/x509"
@@ -8,6 +9,7 @@ import (
 	"encoding/asn1"
 	"os"
 	"testing"
+	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
@@ -191,5 +193,48 @@ func TestParseRejectsInvalidASN1Structure(t *testing.T) {
 		_, err := pkicmp.ParsePKIMessage(badDer)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "invalid PKIMessage sequence")
+	})
+}
+
+// The zero GeneralizedTime is a legal value, so a messageTime carrying it must
+// stay distinguishable from an absent one and survive a re-encode.
+func TestMessageTimePresenceSurvivesRoundTrip(t *testing.T) {
+	build := func(messageTime time.Time) *pkicmp.PKIMessage {
+		conf := pkicmp.CertConfirmContent{}
+		msg := pkicmp.NewPKIMessage(pkicmp.NewCertConfBody(&conf), pkicmp.MessageOptions{
+			Sender: pkicmp.NewDirectoryName(pkix.Name{CommonName: "presence"}),
+		})
+		msg.Header.MessageTime = messageTime
+		return msg
+	}
+
+	t.Run("absent", func(t *testing.T) {
+		msg := build(time.Time{})
+		assert.False(t, msg.Header.HasMessageTime())
+		der, err := msg.MarshalBinary()
+		require.NoError(t, err)
+		parsed, err := pkicmp.ParsePKIMessage(der)
+		require.NoError(t, err)
+		assert.False(t, parsed.Header.HasMessageTime())
+	})
+
+	t.Run("zero time on the wire", func(t *testing.T) {
+		real := time.Now().UTC().Truncate(time.Second)
+		der, err := build(real).MarshalBinary()
+		require.NoError(t, err)
+		patched := bytes.Replace(der, []byte(real.Format("20060102150405")+"Z"), []byte("00010101000000Z"), 1)
+		require.NotEqual(t, der, patched)
+
+		parsed, err := pkicmp.ParsePKIMessage(patched)
+		require.NoError(t, err)
+		assert.True(t, parsed.Header.MessageTime.IsZero())
+		assert.True(t, parsed.Header.HasMessageTime())
+
+		// Re-encoding must keep the field, otherwise presence is lost silently.
+		reencoded, err := parsed.MarshalBinary()
+		require.NoError(t, err)
+		again, err := pkicmp.ParsePKIMessage(reencoded)
+		require.NoError(t, err)
+		assert.True(t, again.Header.HasMessageTime())
 	})
 }
