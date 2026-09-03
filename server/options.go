@@ -5,6 +5,8 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"time"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // Option configures a Server.
@@ -71,9 +73,15 @@ type serverConfig struct {
 	strictProfile                bool
 	messageTimeTolerance         time.Duration
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
+
+	// Built once by New from signerKey and signerCert. signerErr records a
+	// rejected pair so responses fail visibly instead of going out unprotected.
+	signerCreds *pkicmp.SignatureCredentials
+	signerErr   error
 }
 
-// WithSigner configures signature-based response protection.
+// WithSigner configures signature-based response protection. The key must match
+// the certificate; [New] reports a mismatch through [Server.Err].
 func WithSigner(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) Option {
 	return func(c *serverConfig) {
 		c.signerKey = key
@@ -129,40 +137,34 @@ func WithImplicitConfirm() Option {
 }
 
 // WithStrictProfileValidation enforces the RFC 9483 message construction rules
-// that a receiver can check but does not need in order to authenticate a peer.
-//
-// It adds four rejections:
+// that a receiver can check but does not need to authenticate a peer. It adds
+// four rejections:
 //
 //   - a MAC-protected message whose sender is not a directoryName naming the
 //     shared secret (§3.1),
 //   - a signature-protected request that carries no extraCerts (§3.3),
 //   - a signature-protected request whose extraCerts do not lead with the CMP
 //     protection certificate followed by its issuer chain (§3.3),
-//   - a certConf whose senderNonce repeats one already used in the same
-//     transaction (§3.1).
+//   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1).
 //
-// It is off by default because deployed clients fail all four. Nokia's
-// ssh-cmpclient sends the RFC 4210 §5.1.1 NULL-DN sender with the reference
-// number in senderKID, omits its own certificate from extraCerts and reuses the
-// request senderNonce in certConf, and openssl cmp sends only the end entity
-// certificate when the issuer is a self-signed root, which §3.3 itself says to
-// omit. None of the four affects authentication here, because the server
-// identifies the credential from senderKID or CertificateLookup and binds the
-// transaction with recipNonce. Turn it on to run a conformance suite or when
-// every client is known to follow the profile.
+// Off by default because deployed clients fail all four: Nokia ssh-cmpclient
+// sends a NULL-DN sender, omits its own certificate and reuses the senderNonce,
+// and openssl cmp omits a self-signed issuer. None of them affects
+// authentication, which comes from senderKID or CertificateLookup plus
+// recipNonce. Turn it on for a conformance suite or a known-conforming fleet.
 func WithStrictProfileValidation() Option {
 	return func(c *serverConfig) {
 		c.strictProfile = true
 	}
 }
 
-// WithMessageTimeTolerance rejects a present messageTime outside the allowed difference from server time.
+// WithMessageTimeTolerance rejects a messageTime further than tolerance from
+// server time, with failInfo badTime (RFC 9483 §3.5).
 //
-// RFC 9483 Section 3.5 requires this check with failInfo badTime when the
-// receiver has reliable system time and local policy selects the validation.
-// The threshold varies by use case, so validation is disabled by default and a
-// non-positive duration also disables it. This option does not require
-// messageTime to be present.
+// The threshold varies by use case, so the check is off by default and a
+// non-positive duration disables it. A message with no messageTime is not
+// rejected; one carrying any value, including the zero GeneralizedTime, is
+// checked.
 func WithMessageTimeTolerance(tolerance time.Duration) Option {
 	return func(c *serverConfig) {
 		c.messageTimeTolerance = tolerance
