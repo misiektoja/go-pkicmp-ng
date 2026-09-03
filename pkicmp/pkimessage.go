@@ -146,7 +146,15 @@ type PKIHeader struct {
 	FreeText PKIFreeText
 	// GeneralInfo carries typed extensions and protocol hints.
 	GeneralInfo []InfoTypeAndValue
+
+	// messageTimePresent records that messageTime was on the wire. The zero
+	// time is a legal GeneralizedTime, so MessageTime alone cannot tell an
+	// absent field from a peer that sent 00010101000000Z.
+	messageTimePresent bool
 }
+
+// HasMessageTime reports whether the header carries a messageTime.
+func (h *PKIHeader) HasMessageTime() bool { return h.messageTimePresent || !h.MessageTime.IsZero() }
 
 // ParsePKIMessage parses the DER encoding of a PKIMessage.
 func ParsePKIMessage(der []byte) (*PKIMessage, error) {
@@ -318,6 +326,7 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 		if !sub.ReadASN1GeneralizedTime(&h.MessageTime) {
 			return &ParseError{Detail: "invalid messageTime"}
 		}
+		h.messageTimePresent = true
 	}
 
 	// protectionAlg [1] AlgorithmIdentifier OPTIONAL
@@ -426,7 +435,7 @@ func (h *PKIHeader) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 		h.Sender.marshal(mctx, b)
 		h.Recipient.marshal(mctx, b)
 
-		if !h.MessageTime.IsZero() {
+		if h.HasMessageTime() {
 			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 				// X.690 §11.7: DER GeneralizedTime MUST be UTC.
 				b.AddASN1GeneralizedTime(h.MessageTime.UTC())
