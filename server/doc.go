@@ -72,10 +72,17 @@
 //	    server.WithSecretLookup(server.SecretLookupFunc(lookupSecret)),
 //	    server.WithCertificateLookup(server.CertificateLookupFunc(lookupCertificate)),
 //	)
+//	if err := srv.Err(); err != nil {
+//	    log.Fatal(err)
+//	}
 //	http.ListenAndServe(":8080", srv)
 //
 // [SecretLookup] and [CertificateLookup] supply credentials for MAC- and
 // signature-protected messages respectively. See the Authentication section.
+//
+// [Server.Err] reports a configuration error such as a signer key that does not
+// match its certificate. Such a server answers every request with systemFailure
+// rather than issuing certificates it cannot protect, so check it at startup.
 //
 // # Optional interfaces
 //
@@ -130,10 +137,9 @@
 //   - Unknown sender (initial enrollment): sender MUST be a NULL-DN and senderKID
 //     MUST carry the reference number identifying the shared secret (RFC 4210 §5.1.3.1).
 //
-// These fields are analogous to a username; the shared secret is the password.
-// If two clients share the same identifier they become indistinguishable (shared
-// transactions, possible certificate hijacking). The provisioning system must
-// enforce uniqueness:
+// These fields are analogous to a username, with the shared secret as the
+// password. Two clients sharing an identifier become indistinguishable, which
+// allows certificate hijacking, so provisioning must enforce uniqueness:
 //
 //	func Register(senderKID, secret []byte) error {
 //	    if exists(senderKID) {
@@ -147,15 +153,10 @@
 //	}
 //
 // For signature-protected messages (e.g., KUR), the client's identity is its
-// certificate. The sender DN in the header is used only as a lookup key — the
-// server does not trust it. The flow is:
-//
-//  1. Server uses the sender DN to look up a candidate certificate from its store.
-//  2. Server verifies the message signature against that certificate's public key.
-//  3. If the client lied about the DN, the lookup fails or the signature does not verify.
-//
-// Trust comes from the certificate being in the server's store and the signature
-// proving the client holds the corresponding private key.
+// certificate. The sender DN is only a lookup key: the server resolves a
+// candidate certificate from its store and verifies the signature against it, so
+// a client that lies about the DN either finds nothing or fails the signature
+// check. Trust comes from the store plus proof of the private key.
 //
 //	func LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 //	    return certStore[issuer, subject]
@@ -163,15 +164,14 @@
 //
 // # Middleware
 //
-// [NewCAServer] takes a handler wrapper that implements authorization and
-// request validation. The server handles authentication (verifying protection)
-// but delegates authorization and other cross-cutting concerns (like audit logging,
-// metrics tracking, or rate limiting) to wrappers. Without validation wrappers,
-// any authenticated client could request any certificate for any name.
+// [NewCAServer] takes a handler wrapper implementing authorization and request
+// validation. The server authenticates (verifies protection) but delegates
+// authorization, audit logging, metrics and rate limiting to wrappers. Without
+// one, any authenticated client could request any certificate for any name.
 //
-// Two checks are not delegated, because they establish that a request is what it
-// claims to be rather than whether a site wants to grant it, and a server built
-// with a nil policy would otherwise skip them:
+// Two checks are never delegated, because they establish that a request is what
+// it claims to be rather than whether a site wants to grant it, and a nil policy
+// would otherwise skip them:
 //
 //   - Proof of possession, so that a certificate is never issued for a public
 //     key the requester did not prove holding (RFC 4211 §4, RFC 9483 §5.1.1).
@@ -190,16 +190,13 @@
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
 //
-// Some RFC 9483 rules govern how a peer must construct a message rather than
-// how this server authenticates it, and widely deployed clients break them.
-// Those are off by default and enabled together with
-// [WithStrictProfileValidation], which is documented on the option.
+// Some RFC 9483 rules govern how a peer constructs a message rather than how
+// this server authenticates it, and deployed clients break them. Those are off
+// by default, behind [WithStrictProfileValidation].
 //
-// RFC 9483 also requires a present messageTime to be close to reliable
-// receiver time when local policy selects that check. Configure the
-// use-case-specific window with [WithMessageTimeTolerance]. It is independent
-// of [WithStrictProfileValidation] because the RFC does not define one default
-// tolerance that is safe for every deployment.
+// [WithMessageTimeTolerance] enforces the RFC 9483 §3.5 freshness check. It is
+// separate from [WithStrictProfileValidation] because no single tolerance is
+// safe for every deployment.
 //
 // Add custom authorization policy and logging using [MiddlewareChain].
 // In this setup, `myPolicy()` runs before `LightweightPolicy()` to quickly reject
