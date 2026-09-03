@@ -2,6 +2,24 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.0.4 - TBD
+
+Server correctness release. Three ways a server could fail quietly are now reported: a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record.
+
+### `pkicmp`
+
+* **`PKIHeader.HasMessageTime`** reports whether a message carried a `messageTime`. The zero time is a legal `GeneralizedTime`, so the field alone could not tell an absent value from one a peer actually sent. Re-encoding a parsed message keeps the field as received.
+
+### `server`
+
+* **`WithMessageTimeTolerance` can no longer be switched off by the peer it constrains.** A client sending `00010101000000Z` looked like it had sent no `messageTime` and skipped the check entirely. Presence is now read from the wire, so every value present is checked and only a genuinely absent `messageTime` is exempt.
+* **A signer key that does not match its certificate is reported by the new `Server.Err`.** Previously the mismatch was discovered while building each response and then discarded, so the server returned issued certificates in unprotected messages that no conforming client accepts. Such a server now answers every request with `systemFailure` and issues nothing. Check `Server.Err` at startup.
+* **A `CertificateConfirmer` that returns an error now rejects the `certConf` with that status** instead of replying `pkiConf` as though the certificate had been confirmed (RFC 9483 §3.6.2). The transaction is kept, so the client can retry and the CA still receives `ConfirmExpired` if no retry succeeds.
+
+### Documentation
+
+* **Package and option documentation is shorter.** The reference content, RFC citations and interoperability notes are unchanged, with the surrounding justification prose removed.
+
 ## v0.0.3 - 2026-08-25
 
 Interoperability and server-validation release. Repeated key updates can identify the exact certificate being replaced, while CMP servers can enforce a deployment-specific freshness window for protected requests.
