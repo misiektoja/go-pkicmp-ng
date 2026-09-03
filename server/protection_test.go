@@ -5,6 +5,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/x509"
 	"crypto/x509/pkix"
 	"net/http"
 	"net/http/httptest"
@@ -230,4 +231,46 @@ func (c *pbmac1Creds) Protect(msg *pkicmp.PKIMessage) error {
 
 func (c *pbmac1Creds) SharedSecret() []byte {
 	return c.secret
+}
+
+// A signer key that does not match its certificate must be reported and must not
+// leave the server issuing certificates it cannot protect.
+func TestSignerMismatchIsRejected(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	secret := []byte("signer-mismatch-secret")
+
+	issued := 0
+	handler := &mockHandler{handleCertRequest: func(_ context.Context, req *certRequest) (*certResponse, error) {
+		issued++
+		return &certResponse{Certificate: issueCert(ca, req), CACerts: []*x509.Certificate{&caCert}}, nil
+	}}
+
+	otherKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	srv := server.New(handler,
+		server.WithSigner(otherKey, &caCert),
+		server.WithSecretLookup(&staticMACLookup{secret: secret}),
+	)
+	require.Error(t, srv.Err(), "New must report the mismatched signer")
+
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	message := pkicmp.NewPKIMessage(
+		pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, "signer-mismatch")}),
+		macMessageOpts(),
+	)
+	protectMAC(message, secret)
+	response := postCMP(t, ts, message)
+
+	require.Equal(t, pkicmp.BodyTypeError, response.Body.Type)
+	errorContent, err := response.Body.Error()
+	require.NoError(t, err)
+	assert.NotZero(t, errorContent.PKIStatusInfo.FailInfo&pkicmp.FailSystemFailure)
+	assert.Zero(t, issued, "no certificate may be issued while protection is broken")
 }
