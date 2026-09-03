@@ -202,7 +202,9 @@ func (m *mockHandler) doCertConf(ctx context.Context, msg *pkicmp.PKIMessage, se
 		}
 	}
 
-	_ = m.handleCertConfirm(ctx, confirmation)
+	if err := m.handleCertConfirm(ctx, confirmation); err != nil {
+		return nil, err
+	}
 	return nil, nil
 }
 
