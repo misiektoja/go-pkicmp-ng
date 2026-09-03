@@ -105,13 +105,12 @@ func (s *Server) protectResponseWithOptions(resp *pkicmp.PKIMessage, sender *Sen
 		return creds.Protect(resp)
 	}
 
-	// Signature protection.
-	if s.cfg.signerKey != nil && s.cfg.signerCert != nil {
-		creds, err := pkicmp.NewSignatureCredentials(s.cfg.signerKey, s.cfg.signerCert, s.cfg.signerChain...)
-		if err != nil {
-			return err
-		}
-		return creds.Protect(resp)
+	// Signature protection, using the credentials New validated.
+	if s.cfg.signerErr != nil {
+		return s.cfg.signerErr
+	}
+	if s.cfg.signerCreds != nil {
+		return s.cfg.signerCreds.Protect(resp)
 	}
 
 	return nil
