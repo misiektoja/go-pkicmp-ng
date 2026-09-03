@@ -95,37 +95,28 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
-// A shared-secret enrollment completes without [WithTrustedCAs], and a device
-// that holds only an initial authentication key normally has no anchor to
-// configure. Set the pool wherever one is available even so: RFC 4210 §5.3.21
-// and RFC 9810 §5.3.21 both require a CA to sign an error message however the
-// request was protected, so without a pool a rejection such as
-// transactionIdInUse cannot be authenticated. That message is not discarded, its
-// claimed status is reported as an [UnverifiedStatusError], which is safe to log
-// but must not be acted on.
+// A shared-secret enrollment completes without a pool, but errors are signed
+// however the request was protected (RFC 9810 §5.3.21), so without one a
+// rejection such as transactionIdInUse arrives as an [UnverifiedStatusError]:
+// safe to log, not to act on. See [WithTrustedCAs].
 //
-// CMP responses carried by HTTP 4xx or 5xx errors are parsed and verified
-// before their status is returned. Authenticated failure bits remain available
-// through [pkicmp.HasFailure] while the error also retains the HTTP status.
+// CMP responses carried by HTTP 4xx or 5xx are parsed and verified before their
+// status is returned, and the error keeps the HTTP status.
 // [pkicmp.HasFailure] never reports bits from an unverified message.
 //
-// By default a response may use either protection mechanism, whichever the
-// server chose, because a CA that authenticates clients by shared secret and
-// signs every response is a common and interoperable configuration. Use
-// [WithResponseProtection] to require one mechanism throughout the operation, as
-// RFC 9483 §3.1 asks for.
+// Either protection mechanism is accepted by default, since a CA that
+// authenticates by shared secret and signs every response is common. Use
+// [WithResponseProtection] to pin one, as RFC 9483 §3.1 asks for.
 //
-// Signature-protected responses must come from a certificate whose subject
-// matches the sender named in the response header. A server may send extraCerts
-// only on its first response, so the protection certificate authenticated
-// earlier in the operation is retained and tried for later messages, which still
-// have to satisfy the same chain, sender and signature checks against it.
+// A signature-protected response must come from a certificate whose subject
+// matches the sender in its header. Since a server may send extraCerts only on
+// its first response, the certificate authenticated earlier in the operation is
+// retained and retried for later messages, under the same checks.
 //
-// The issued certificate must certify the public key that was requested, and is
-// validated against the configured trust anchors using any certificates the
-// response carried in extraCerts to complete the path. Its subject is not
-// checked, because a CA may return grantedWithMods after changing requested
-// fields such as the subject.
+// The issued certificate must certify the requested public key and must validate
+// against the configured anchors, using response extraCerts to complete the path.
+// Its subject is not checked, because a CA may return grantedWithMods having
+// changed it.
 //
 // # Limits
 //
