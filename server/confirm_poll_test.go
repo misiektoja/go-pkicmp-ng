@@ -6,6 +6,7 @@ import (
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"math/big"
@@ -666,4 +667,80 @@ func (m *multiMACLookup) LookupSecret(_ pkix.Name, senderKID []byte) ([]byte, er
 		return secret, nil
 	}
 	return nil, nil
+}
+
+// A CA that cannot record a confirmation must not have the client told the
+// certificate was confirmed, and the transaction must survive for a retry.
+func TestCertConfHandlerErrorIsReported(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
+	caCert, _ := ca.X509Certificate()
+	secret := []byte("conf-error-secret")
+
+	confirmAttempts := 0
+	failConfirm := true
+	handler := &mockHandler{
+		handleCertRequest: func(_ context.Context, req *certRequest) (*certResponse, error) {
+			return &certResponse{Certificate: issueCert(ca, req), CACerts: []*x509.Certificate{&caCert}}, nil
+		},
+		handleCertConfirm: func(_ context.Context, _ *certConfirmation) error {
+			confirmAttempts++
+			if failConfirm {
+				return &server.Error{
+					Status:      pkicmp.StatusRejection,
+					FailureInfo: pkicmp.FailSystemUnavail,
+					StatusText:  "audit store unavailable",
+				}
+			}
+			return nil
+		},
+	}
+
+	srv := server.New(handler, server.WithSecretLookup(&staticMACLookup{secret: secret}))
+	ts := httptest.NewServer(srv)
+	defer ts.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	pubDER, _ := x509.MarshalPKIXPublicKey(&key.PublicKey)
+	certReqMsg := pkicmp.CertReqMsg{
+		CertReq: pkicmp.CertRequest{
+			CertReqID: 0,
+			CertTemplate: pkicmp.CertTemplate{
+				Subject:   pkicmp.NewDirectoryName(pkix.Name{CommonName: "test"}),
+				PublicKey: pubDER,
+			},
+		},
+	}
+	require.NoError(t, certReqMsg.GeneratePOP(key))
+	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{certReqMsg}), macMessageOpts())
+	protectMAC(msg, secret)
+	ipResp := postCMP(t, ts, msg)
+	require.Equal(t, pkicmp.BodyTypeIP, ipResp.Body.Type)
+
+	ip, err := ipResp.Body.IP()
+	require.NoError(t, err)
+	issued, err := ip.Response[0].CertifiedKeyPair.CertOrEncCert.Certificate.Parse()
+	require.NoError(t, err)
+	hash := sha256.Sum256(issued.Raw)
+
+	sendCertConf := func() *pkicmp.PKIMessage {
+		conf := pkicmp.CertConfirmContent{{CertHash: hash[:], CertReqID: 0}}
+		confMsg := pkicmp.NewPKIMessage(pkicmp.NewCertConfBody(&conf), macMessageOpts())
+		confMsg.Header.TransactionID = msg.Header.TransactionID
+		confMsg.Header.RecipNonce = ipResp.Header.SenderNonce
+		protectMAC(confMsg, secret)
+		return postCMP(t, ts, confMsg)
+	}
+
+	// The CA refused to record it, so the client must not get pkiConf.
+	failed := sendCertConf()
+	require.Equal(t, pkicmp.BodyTypeError, failed.Body.Type)
+	errorContent, err := failed.Body.Error()
+	require.NoError(t, err)
+	assert.NotZero(t, errorContent.PKIStatusInfo.FailInfo&pkicmp.FailSystemUnavail)
+	assert.Equal(t, 1, confirmAttempts)
+
+	// The transaction was kept, so the same certConf succeeds on retry.
+	failConfirm = false
+	assert.Equal(t, pkicmp.BodyTypePKIConf, sendCertConf().Body.Type)
+	assert.Equal(t, 2, confirmAttempts)
 }
