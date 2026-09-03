@@ -39,16 +39,13 @@ const (
 //
 // RFC 9810 §5.1.3.
 type VerifyOptions struct {
-	// RequiredProtection restricts which protection mechanism is accepted.
-	// The zero value, ProtectionAny, accepts either one.
+	// RequiredProtection restricts which protection mechanism is accepted. The
+	// zero value, ProtectionAny, accepts either.
 	//
-	// Within a single PKI management operation the mechanism must not change:
-	// RFC 9483 §3.1 requires "the same kind of protection ... for all messages
-	// of that PKI management operation", and RFC 9810 §5.2.3 reserves the
-	// failInfo bit wrongIntegrity for a message that arrives "password based
-	// instead of signature or vice versa". Callers that know which mechanism
-	// they started an operation with should pin it here, otherwise a peer can
-	// substitute the mechanism it finds easier to satisfy.
+	// The mechanism must not change within one PKI management operation
+	// (RFC 9483 §3.1, failInfo wrongIntegrity in RFC 9810 §5.2.3). Pin it when
+	// the caller knows how the operation started, otherwise a peer may
+	// substitute whichever mechanism is easier for it to satisfy.
 	RequiredProtection ProtectionMechanism
 
 	// SharedSecret is the shared secret for MAC-protected messages.
@@ -61,15 +58,10 @@ type VerifyOptions struct {
 	// if only MAC verification is needed.
 	TrustPool *x509.CertPool
 
-	// TrustedCert is a pre-trusted certificate for verifying signature-protected
-	// messages. When set, the signature is verified directly against this
-	// certificate without chain validation. This is used when the verifier has
-	// already resolved the sender's certificate from its own database.
-	// Takes precedence over TrustPool/ExtraCerts.
-	//
-	// The certificate still has to be within its validity period and to be the
-	// subject the header names, so resolving one by a key identifier alone does
-	// not let a peer attach any sender name it likes to it.
+	// TrustedCert verifies the signature directly, without chain building, for a
+	// verifier that already resolved the sender's certificate from its own store.
+	// Takes precedence over TrustPool and ExtraCerts. The certificate must still
+	// be within its validity period and match the sender named in the header.
 	TrustedCert *x509.Certificate
 
 	// ExtraCerts provides candidate signer certificates (typically from
@@ -105,15 +97,13 @@ type VerifyResult struct {
 	// RFC 9810 §5.1.3.
 	ProtectionParams MACCredentialOption
 
-	// ProtectionCertificate is the certificate whose signature was accepted.
-	// Nil for MAC-verified messages.
+	// ProtectionCertificate is the certificate whose signature was accepted, nil
+	// for MAC-verified messages.
 	//
-	// A peer is allowed to send extraCerts only on the first message of a PKI
-	// management operation (RFC 9810 §5.1), so a later message in the same
-	// operation can arrive with no candidate signer at all. Callers that keep
-	// this certificate can offer it back through [VerifyOptions.ExtraCerts] to
-	// verify those later messages, which still have to satisfy the chain,
-	// sender and signature checks against it.
+	// extraCerts may appear only on the first message of an operation
+	// (RFC 9810 §5.1), so later messages can arrive with no candidate signer.
+	// Keep this and pass it back through [VerifyOptions.ExtraCerts] to verify
+	// them; they still face the same chain, sender and signature checks.
 	ProtectionCertificate *x509.Certificate
 }
 
