@@ -136,12 +136,19 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 		}
 	}
 
-	// Clean up stored cert and transaction.
-	s.delete(credID, txnID)
-
 	// Notify handler about the confirmation, passing issuance details via context.
 	ctx = context.WithValue(ctx, issuedInfoContextKey{}, issuedInfo{cert: entry.cert, issueRef: entry.issueRef})
-	_, _ = s.handler.HandleCMP(ctx, msg, sender)
+	if _, err := s.handler.HandleCMP(ctx, msg, sender); err != nil {
+		// RFC 9483 §3.6.2: an error condition on a certConf MUST be reported
+		// downstream. Keep the transaction so the client can retry and so the
+		// CA still gets ConfirmExpired if no retry succeeds.
+		return s.buildResponseWithEchoProtection(msg, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
+			PKIStatusInfo: errorToStatusInfo(err),
+		}), sender, entry.protectionParams)
+	}
+
+	// Confirmation recorded — release the transaction.
+	s.delete(credID, txnID)
 
 	return s.buildResponseWithEchoProtection(msg, pkicmp.NewPKIConfBody(), sender, entry.protectionParams)
 }
