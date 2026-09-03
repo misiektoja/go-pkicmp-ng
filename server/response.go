@@ -61,11 +61,21 @@ func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIB
 		resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: c.Raw})
 	}
 
-	// Protection failure is non-fatal; unprotected error responses are acceptable per RFC 9810 §5.3.21.
 	if protectionParams == nil && sender != nil {
 		protectionParams = sender.protectionParams
 	}
-	_ = s.protectResponseWithOptions(resp, sender, protectionParams)
+	if err := s.protectResponseWithOptions(resp, sender, protectionParams); err != nil {
+		// Never hand back an unprotected success. Report the failure instead, as
+		// an unprotected error message (RFC 9810 §5.3.21) since protection is
+		// exactly what is broken. The detail stays server-side.
+		resp.Body = pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: pkicmp.PKIStatusInfo{
+			Status:       pkicmp.StatusRejection,
+			FailInfo:     pkicmp.FailSystemFailure,
+			StatusString: pkicmp.PKIFreeText{"response protection unavailable"},
+		}})
+		resp.Header.ProtectionAlg = nil
+		resp.Protection = nil
+	}
 
 	return resp
 }
