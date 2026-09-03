@@ -1,6 +1,7 @@
 package server_test
 
 import (
+	"bytes"
 	"context"
 	"crypto/ecdsa"
 	"crypto/elliptic"
@@ -523,4 +524,49 @@ func TestExpiredLookedUpCertificateIsRejected(t *testing.T) {
 	var verr *pkicmp.VerificationError
 	require.ErrorAs(t, err, &verr)
 	assert.Equal(t, pkicmp.ReasonCertificateExpired, verr.Reason)
+}
+
+// A peer must not be able to skip the freshness check by encoding the zero
+// GeneralizedTime, which parses to Go's zero time and once looked absent.
+func TestZeroMessageTimeIsCheckedAgainstTolerance(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	secret := []byte("zero-message-time-secret")
+	handler := &mockHandler{handleCertRequest: func(_ context.Context, request *certRequest) (*certResponse, error) {
+		return &certResponse{Certificate: issueCert(ca, request), CACerts: []*x509.Certificate{&caCert}}, nil
+	}}
+	testServer := httptest.NewServer(server.New(handler,
+		server.WithSecretLookup(&staticMACLookup{secret: secret}),
+		server.WithMessageTimeTolerance(time.Minute),
+	))
+	defer testServer.Close()
+
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	message := pkicmp.NewPKIMessage(
+		pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, "zero-message-time")}),
+		macMessageOpts(),
+	)
+	realTime := time.Now().UTC().Truncate(time.Second)
+	message.Header.MessageTime = realTime
+	protectMAC(message, secret)
+	der, err := message.MarshalBinary()
+	require.NoError(t, err)
+
+	// Rewrite the encoded messageTime, then re-protect so the forged value is
+	// covered by a MAC the server accepts.
+	patched := bytes.Replace(der, []byte(realTime.Format("20060102150405")+"Z"), []byte("00010101000000Z"), 1)
+	require.NotEqual(t, der, patched, "messageTime not found in the encoding")
+	forged, err := pkicmp.ParsePKIMessage(patched)
+	require.NoError(t, err)
+	require.True(t, forged.Header.MessageTime.IsZero())
+	require.True(t, forged.Header.HasMessageTime(), "presence must survive parsing")
+	protectMAC(forged, secret)
+
+	response := postCMP(t, testServer, forged)
+	assert.Equal(t, pkicmp.BodyTypeError, response.Body.Type)
+	errorContent, err := response.Body.Error()
+	require.NoError(t, err)
+	assert.NotZero(t, errorContent.PKIStatusInfo.FailInfo&pkicmp.FailBadTime)
 }
