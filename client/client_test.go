@@ -942,7 +942,7 @@ func TestPollingServerReturnsErrorDuringPoll(t *testing.T) {
 }
 
 func TestSendIRWithRSAKey(t *testing.T) {
-	// Uses RSA to cover SHA256WithRSA path in hashFromCertSigAlg.
+	// Uses RSA to cover SHA256WithRSA path in pkicmp.CertHash.
 	ca := &certyaml.Certificate{Subject: "cn=rsa-ca", KeyType: certyaml.KeyTypeRSA}
 	caCert, _ := ca.X509Certificate()
 
@@ -1005,7 +1005,7 @@ func TestSendIRWithRSAKey(t *testing.T) {
 }
 
 func TestSendIRWithP384Key(t *testing.T) {
-	// Uses P384 to cover ECDSAWithSHA384 path in hashFromCertSigAlg.
+	// Uses P384 to cover ECDSAWithSHA384 path in pkicmp.CertHash.
 	ca := &certyaml.Certificate{Subject: "cn=p384-ca", KeyType: certyaml.KeyTypeEC, KeySize: 384}
 	caCert, _ := ca.X509Certificate()
 
@@ -1068,7 +1068,7 @@ func TestSendIRWithP384Key(t *testing.T) {
 }
 
 func TestSendIRWithP521Key(t *testing.T) {
-	// Uses P521 to cover ECDSAWithSHA512 path in hashFromCertSigAlg.
+	// Uses P521 to cover ECDSAWithSHA512 path in pkicmp.CertHash.
 	ca := &certyaml.Certificate{Subject: "cn=p521-ca", KeyType: certyaml.KeyTypeEC, KeySize: 521}
 	caCert, _ := ca.X509Certificate()
 
