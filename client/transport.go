@@ -188,7 +188,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	// RFC 9810 §5.3.18: certHash uses the hash algorithm from the certificate's
 	// signature algorithm.
-	certHash, err := certHashForCert(cert)
+	certHash, err := pkicmp.CertHash(cert)
 	if err != nil {
 		return nil, cmpResp.wrapError(&Error{Op: "compute certHash", Err: err})
 	}
@@ -531,9 +531,13 @@ func (c *Client) poll(ctx context.Context, origHeader pkicmp.PKIHeader, lastResp
 			if err != nil {
 				return nil, nil, err
 			}
+			// Clamp unconditionally: an empty pollRep carries no checkAfter, and
+			// leaving waitTime at zero would poll as fast as the network allows.
+			var checkAfter int64
 			if len(*pollRep) > 0 {
-				waitTime = c.clampCheckAfter((*pollRep)[0].CheckAfter)
+				checkAfter = (*pollRep)[0].CheckAfter
 			}
+			waitTime = c.clampCheckAfter(checkAfter)
 			lastResp = resp
 			continue
 		}
@@ -606,32 +610,4 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 	}
 
 	return vr, nil
-}
-
-// certHashForCert computes the certificate hash using the hash algorithm
-// matching the certificate's signature algorithm (RFC 9810 §5.3.18).
-func certHashForCert(cert *x509.Certificate) ([]byte, error) {
-	hash := hashFromCertSigAlg(cert.SignatureAlgorithm)
-	if hash == 0 {
-		return nil, fmt.Errorf("unsupported signature algorithm: %v", cert.SignatureAlgorithm)
-	}
-	h := hash.New()
-	h.Write(cert.Raw)
-	return h.Sum(nil), nil
-}
-
-// hashFromCertSigAlg maps x509.SignatureAlgorithm to crypto.Hash.
-func hashFromCertSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
-	switch sigAlg {
-	case x509.SHA1WithRSA, x509.DSAWithSHA1, x509.ECDSAWithSHA1:
-		return crypto.SHA1
-	case x509.SHA256WithRSA, x509.ECDSAWithSHA256, x509.SHA256WithRSAPSS:
-		return crypto.SHA256
-	case x509.SHA384WithRSA, x509.ECDSAWithSHA384, x509.SHA384WithRSAPSS:
-		return crypto.SHA384
-	case x509.SHA512WithRSA, x509.ECDSAWithSHA512, x509.SHA512WithRSAPSS:
-		return crypto.SHA512
-	default:
-		return 0
-	}
 }
