@@ -7,6 +7,8 @@ import (
 	"crypto/rand"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"errors"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -273,4 +275,103 @@ func TestSignerMismatchIsRejected(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotZero(t, errorContent.PKIStatusInfo.FailInfo&pkicmp.FailSystemFailure)
 	assert.Zero(t, issued, "no certificate may be issued while protection is broken")
+}
+
+// An error raised after a shared secret authenticated the request must be
+// MAC-protected, so a client with no trust anchor can still verify it
+// (RFC 9483 §3.1).
+func TestErrorResponseToMACClientUsesMAC(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	secret := []byte("mac-error-secret")
+
+	handler := &mockHandler{handleCertRequest: func(_ context.Context, req *certRequest) (*certResponse, error) {
+		return &certResponse{Certificate: issueCert(ca, req), CACerts: []*x509.Certificate{&caCert}}, nil
+	}}
+	caKey, err := ca.PrivateKey()
+	require.NoError(t, err)
+	ts := httptest.NewServer(server.New(handler,
+		server.WithSigner(caKey, &caCert),
+		server.WithSecretLookup(&staticMACLookup{secret: secret}),
+	))
+	defer ts.Close()
+
+	newIR := func(transactionID []byte) *pkicmp.PKIMessage {
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		options := macMessageOpts()
+		options.TransactionID = transactionID
+		message := pkicmp.NewPKIMessage(
+			pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, "mac-error")}),
+			options,
+		)
+		protectMAC(message, secret)
+		return message
+	}
+
+	transactionID := []byte("0123456789abcdef")
+	require.Equal(t, pkicmp.BodyTypeIP, postCMP(t, ts, newIR(transactionID)).Body.Type)
+
+	// Reusing the transactionID is rejected only after the MAC verified.
+	response := postCMP(t, ts, newIR(transactionID))
+	require.Equal(t, pkicmp.BodyTypeError, response.Body.Type)
+	_, err = response.Verify(pkicmp.VerifyOptions{
+		SharedSecret:       secret,
+		RequiredProtection: pkicmp.ProtectionMAC,
+	})
+	assert.NoError(t, err, "a MAC client must be able to verify the rejection")
+}
+
+// A Handler error that is not a *server.Error must not put its text on the wire,
+// and a wrapped *server.Error must keep the status the Handler chose.
+func TestHandlerErrorTextIsNotDisclosed(t *testing.T) {
+	secret := []byte("error-text-secret")
+
+	tests := []struct {
+		name         string
+		err          error
+		wantFailInfo pkicmp.PKIFailureInfo
+		wantText     string
+	}{
+		{
+			name:         "wrapped server error keeps its status",
+			err:          fmt.Errorf("issuing from postgres://ca:pw@db/ca: %w", &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized, StatusText: "not authorized"}),
+			wantFailInfo: pkicmp.FailNotAuthorized,
+			wantText:     "not authorized",
+		},
+		{
+			name:         "plain error discloses nothing",
+			err:          errors.New("dial postgres://ca:pw@10.0.0.5/ca: connection refused"),
+			wantFailInfo: pkicmp.FailSystemFailure,
+		},
+	}
+
+	for _, test := range tests {
+		t.Run(test.name, func(t *testing.T) {
+			handler := &mockHandler{handleCertRequest: func(_ context.Context, _ *certRequest) (*certResponse, error) {
+				return nil, test.err
+			}}
+			ts := httptest.NewServer(server.New(handler, server.WithSecretLookup(&staticMACLookup{secret: secret})))
+			defer ts.Close()
+
+			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+			require.NoError(t, err)
+			message := pkicmp.NewPKIMessage(
+				pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, "error-text")}),
+				macMessageOpts(),
+			)
+			protectMAC(message, secret)
+
+			status := statusInfoOf(t, postCMP(t, ts, message))
+			assert.NotZero(t, status.FailInfo&test.wantFailInfo)
+			joined := strings.Join(status.StatusString, " ")
+			assert.NotContains(t, joined, "postgres://")
+			if test.wantText != "" {
+				assert.Contains(t, joined, test.wantText)
+			} else {
+				assert.Empty(t, joined)
+			}
+		})
+	}
 }
