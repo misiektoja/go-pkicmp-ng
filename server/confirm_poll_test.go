@@ -744,3 +744,37 @@ func TestCertConfHandlerErrorIsReported(t *testing.T) {
 	assert.Equal(t, pkicmp.BodyTypePKIConf, sendCertConf().Body.Type)
 	assert.Equal(t, 2, confirmAttempts)
 }
+
+// An Ed25519-signing CA must complete the certConf round trip. RFC 9481 §3
+// pairs EdDSA with SHA-512 for certHash, so client and server have to agree.
+func TestCertConfWithEd25519CA(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Ed25519 CA", KeyType: certyaml.KeyTypeEd25519}
+	caCert, err := ca.X509Certificate()
+	require.NoError(t, err)
+	require.Equal(t, x509.PureEd25519, caCert.SignatureAlgorithm)
+	secret := []byte("ed25519-conf-secret")
+
+	var confirmed bool
+	handler := &mockHandler{
+		handleCertRequest: func(_ context.Context, req *certRequest) (*certResponse, error) {
+			return &certResponse{Certificate: issueCert(ca, req), CACerts: []*x509.Certificate{&caCert}}, nil
+		},
+		handleCertConfirm: func(_ context.Context, confirm *certConfirmation) error {
+			confirmed = true
+			assert.NotEmpty(t, confirm.Accepted)
+			return nil
+		},
+	}
+
+	ts := httptest.NewServer(server.New(handler, server.WithSecretLookup(&staticMACLookup{secret: secret})))
+	defer ts.Close()
+
+	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	creds, _ := pkicmp.NewMACCredentials(secret)
+	_, err = client.NewClient(ts.URL).SendIR(context.Background(), key, creds,
+		client.WithTemplateSubject(pkix.Name{CommonName: "ed25519-test"}),
+		client.WithSender(pkix.Name{CommonName: "ed25519-test"}),
+	)
+	require.NoError(t, err)
+	assert.True(t, confirmed, "certConf must reach the CA")
+}
