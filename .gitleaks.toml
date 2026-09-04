@@ -1,0 +1,39 @@
+title = "go-pkicmp gitleaks config"
+
+[extend]
+useDefault = true
+
+[[rules]]
+id = "pkicmp-secret-assignment"
+description = "Detects CMP shared secret and key password assignments with lower entropy tolerance"
+path = '''(?i)(?:^|/)(?:\.env(?:\.[^/]+)?|[^/]+\.(?:go|env|ini|cfg|conf|toml|ya?ml|json|sh|xml|tmpl|robot|py))$'''
+regex = '''(?i)\b(?:shared[_-]?secret|srv[_-]?secret|preshared[_-]?secret|trust[_-]?secret|client[_-]?secret|enrollment[_-]?secret|mac[_-]?secret|credential[_-]?secret|cmp[_-]?psk|psk[_-]?secret|key[_-]?password|keystore[_-]?password|truststore[_-]?password|p(?:kcs)?12[_-]?password|superadmin[_-]?pass(?:word)?|passphrase)\b(?:[ \t\w.-]{0,20})[\s'"]{0,3}(?:=|:{1,3}=|:|=>|\?=)[\s=]{0,3}[\x60'"]([^\x60'"\s#]{8,256})[\x60'"](?:[\x60'"\s;]|\\[nr]|$)'''
+secretGroup = 1
+entropy = 3.1
+keywords = [
+    "secret",
+    "psk",
+    "pass",
+    "password",
+    "passphrase",
+]
+
+[[rules.allowlists]]
+description = "Skip placeholders and variable references"
+regexTarget = "secret"
+regexes = [
+    '''^[a-z]{1,20}(?:-[a-z]{1,20}){1,7}$''',
+    '''(?i)^your_[a-z0-9_]+$''',
+    '''(?i)^example(?:_[a-z0-9_]+)?$''',
+    '''(?i)^dummy(?:_[a-z0-9_]+)?$''',
+    '''(?i)^changeme(?:_[a-z0-9_]+)?$''',
+    '''(?i)^replace(?:_[a-z0-9_]+)?$''',
+    '''(?i)^test(?:[_-][a-z0-9_-]+)?$''',
+    '''(?i)^[a-z_][a-z0-9_]*(?:\.[a-z_][a-z0-9_]*)+$''',
+    '''(?i)^[a-z_][a-z0-9_]*\([^\)]{0,80}\)$''',
+    '''(?i)^<[^>]{1,64}>$''',
+    '''(?i)^\$\{?[A-Z0-9_]{2,64}\}?$''',
+    '''(?i)^\$\{?[a-z_][a-z0-9_]{1,63}\}?$''',
+    '''(?i)^x{8,}$''',
+    '''^_+$''',
+]
