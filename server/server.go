@@ -108,7 +108,7 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 	// A signer that New rejected cannot protect anything. Refuse before the CA
 	// issues a certificate that could never be delivered.
 	if s.cfg.signerErr != nil {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, nil, pkicmp.PKIStatusInfo{
 			Status:       pkicmp.StatusRejection,
 			FailInfo:     pkicmp.FailSystemFailure,
 			StatusString: pkicmp.PKIFreeText{"server misconfigured"},
@@ -117,7 +117,7 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 
 	// RFC 9810 §7: Validate PVNO.
 	if msg.Header.PVNO < pkicmp.PVNO2 || msg.Header.PVNO > pkicmp.PVNO3 {
-		resp := s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		resp := s.buildErrorResponse(msg, nil, pkicmp.PKIStatusInfo{
 			Status:   pkicmp.StatusRejection,
 			FailInfo: pkicmp.FailUnsupportedVersion,
 		})
@@ -132,7 +132,7 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 
 	// RFC 9810 §5.1.1: Verify that the recipient matches the server's identity.
 	if err := s.verifyRecipient(msg); err != nil {
-		resp := s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		resp := s.buildErrorResponse(msg, nil, pkicmp.PKIStatusInfo{
 			Status:       pkicmp.StatusRejection,
 			FailInfo:     pkicmp.FailBadRequest,
 			StatusString: pkicmp.PKIFreeText{err.Error()},
@@ -143,7 +143,7 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 	// Verify message protection.
 	sender, err := s.verifyProtection(msg)
 	if err != nil {
-		resp := s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		resp := s.buildErrorResponse(msg, nil, pkicmp.PKIStatusInfo{
 			Status:       pkicmp.StatusRejection,
 			FailInfo:     pkicmp.FailBadMessageCheck,
 			StatusString: pkicmp.PKIFreeText{err.Error()},
@@ -153,14 +153,14 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 
 	if s.cfg.strictProfile {
 		if err := validateProfileSender(msg, sender); err != nil {
-			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       pkicmp.StatusRejection,
 				FailInfo:     pkicmp.FailBadMessageCheck,
 				StatusString: pkicmp.PKIFreeText{err.Error()},
 			})
 		}
 		if err := validateProfileExtraCerts(msg, sender); err != nil {
-			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       pkicmp.StatusRejection,
 				FailInfo:     pkicmp.FailBadMessageCheck,
 				StatusString: pkicmp.PKIFreeText{err.Error()},
@@ -172,13 +172,13 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 	if err := s.validateHeader(msg, sender); err != nil {
 		var srvErr *Error
 		if errors.As(err, &srvErr) {
-			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       srvErr.Status,
 				FailInfo:     srvErr.FailureInfo,
 				StatusString: pkicmp.PKIFreeText{srvErr.StatusText},
 			})
 		}
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status:   pkicmp.StatusRejection,
 			FailInfo: pkicmp.FailBadDataFormat,
 		})
@@ -198,7 +198,7 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 		// already catches invalid headers, so reaching here means the header is valid.
 		resp = s.buildResponse(msg, pkicmp.NewPKIConfBody(), sender)
 	default:
-		resp = s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		resp = s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status:   pkicmp.StatusRejection,
 			FailInfo: pkicmp.FailBadRequest,
 		})
