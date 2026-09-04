@@ -2,7 +2,7 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
-## v0.0.4 - TBD
+## v0.0.4 - 2026-09-04
 
 Correctness release. Several ways a server could fail quietly are now reported, including a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record. Handler error text no longer reaches the peer, and enrollment works against an Ed25519-signing CA.
 
