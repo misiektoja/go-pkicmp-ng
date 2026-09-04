@@ -2,11 +2,17 @@ package pkicmp
 
 import (
 	"crypto"
+	"crypto/ed25519"
+	"crypto/rand"
+	"crypto/sha512"
 	"crypto/x509"
+	"crypto/x509/pkix"
 	"encoding/asn1"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // RFC 9481 §2.1 & §3 (Algorithm mapping tests)
@@ -155,5 +161,32 @@ func TestHashFromSigAlg(t *testing.T) {
 
 	t.Run("Unknown", func(t *testing.T) {
 		assert.Equal(t, crypto.Hash(0), hashFromSigAlg(x509.UnknownSignatureAlgorithm))
+	})
+}
+
+// RFC 9481 §3 pairs EdDSA with SHA-512, which the client and server both need
+// for certHash. It is the case a per-package copy of this mapping kept missing.
+func TestCertHash(t *testing.T) {
+	t.Run("Ed25519", func(t *testing.T) {
+		assert.Equal(t, crypto.SHA512, hashFromSigAlg(x509.PureEd25519))
+
+		pub, key, err := ed25519.GenerateKey(rand.Reader)
+		require.NoError(t, err)
+		template := &x509.Certificate{SerialNumber: big.NewInt(1), Subject: pkix.Name{CommonName: "ed25519"}}
+		der, err := x509.CreateCertificate(rand.Reader, template, template, pub, key)
+		require.NoError(t, err)
+		cert, err := x509.ParseCertificate(der)
+		require.NoError(t, err)
+		require.Equal(t, x509.PureEd25519, cert.SignatureAlgorithm)
+
+		got, err := CertHash(cert)
+		require.NoError(t, err)
+		want := sha512.Sum512(cert.Raw)
+		assert.Equal(t, want[:], got)
+	})
+
+	t.Run("Unknown", func(t *testing.T) {
+		_, err := CertHash(&x509.Certificate{SignatureAlgorithm: x509.UnknownSignatureAlgorithm})
+		assert.Error(t, err)
 	})
 }
