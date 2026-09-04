@@ -611,16 +611,18 @@ func TestSignedErrorAuthenticatedWithTrustAnchors(t *testing.T) {
 // loop, while a merely large one parks the operation for years.
 func TestPollingClampsCheckAfter(t *testing.T) {
 	tests := []struct {
-		name        string
-		checkAfter  int64
-		minInterval time.Duration
-		maxInterval time.Duration
-		wantAtLeast time.Duration
+		name         string
+		checkAfter   int64
+		emptyPollRep bool
+		minInterval  time.Duration
+		maxInterval  time.Duration
+		wantAtLeast  time.Duration
 	}{
 		{name: "overflowing value waits the configured maximum", checkAfter: math.MaxInt64, minInterval: 0, maxInterval: 200 * time.Millisecond, wantAtLeast: 200 * time.Millisecond},
 		{name: "zero waits the configured minimum", checkAfter: 0, minInterval: 150 * time.Millisecond, maxInterval: time.Second, wantAtLeast: 150 * time.Millisecond},
 		{name: "negative value waits the configured minimum", checkAfter: -1, minInterval: 150 * time.Millisecond, maxInterval: time.Second, wantAtLeast: 150 * time.Millisecond},
 		{name: "value within the limits is honored", checkAfter: 1, minInterval: 0, maxInterval: 5 * time.Second, wantAtLeast: time.Second},
+		{name: "empty pollRep waits the configured minimum", emptyPollRep: true, minInterval: 150 * time.Millisecond, maxInterval: time.Second, wantAtLeast: 150 * time.Millisecond},
 	}
 
 	for _, tt := range tests {
@@ -651,7 +653,11 @@ func TestPollingClampsCheckAfter(t *testing.T) {
 					})
 				case 2:
 					pollRepAt.Store(time.Now().UnixNano())
-					resp.Body = pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: tt.checkAfter}})
+					pollRep := pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: tt.checkAfter}}
+					if tt.emptyPollRep {
+						pollRep = pkicmp.PollRepContent{}
+					}
+					resp.Body = pkicmp.NewPollRepBody(&pollRep)
 				default:
 					finalAt.Store(time.Now().UnixNano())
 					resp.Body = pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
