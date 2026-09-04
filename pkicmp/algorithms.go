@@ -106,6 +106,18 @@ func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
 	return x509.UnknownSignatureAlgorithm, &ParseError{Detail: fmt.Sprintf("unsupported signature algorithm: %v", oid)}
 }
 
+// CertHash computes the certHash of a certificate with the hash matching its
+// signature algorithm, as RFC 9810 §5.3.18 and RFC 9481 §3 require.
+func CertHash(cert *x509.Certificate) ([]byte, error) {
+	hash := hashFromSigAlg(cert.SignatureAlgorithm)
+	if hash == 0 || !hash.Available() {
+		return nil, &ParseError{Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm)}
+	}
+	h := hash.New()
+	h.Write(cert.Raw)
+	return h.Sum(nil), nil
+}
+
 // hashFromSigAlg maps x509.SignatureAlgorithm to crypto.Hash.
 func hashFromSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
 	switch sigAlg {
