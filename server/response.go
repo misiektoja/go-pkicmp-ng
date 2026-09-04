@@ -80,9 +80,12 @@ func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIB
 	return resp
 }
 
-// buildErrorResponse creates an error response message.
-func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, si pkicmp.PKIStatusInfo) *pkicmp.PKIMessage {
-	return s.buildResponse(req, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: si}), nil)
+// buildErrorResponse creates an error response message. Pass the authenticated
+// sender whenever there is one: RFC 9483 §3.1 keeps one protection mechanism per
+// operation, and a shared-secret client with no trust anchor cannot verify a
+// signed error. Pass nil for errors raised before authentication.
+func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, sender *SenderIdentity, si pkicmp.PKIStatusInfo) *pkicmp.PKIMessage {
+	return s.buildResponse(req, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: si}), sender)
 }
 
 // buildCertRepResponseForType creates a CertRepMessage with the specified response type.
@@ -140,7 +143,7 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
 	credID, err := sender.credentialID()
 	if err != nil {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadMessageCheck,
 		})
 	}
@@ -148,7 +151,7 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 
 	// RFC 9810 §5.1.1: Reject if transactionID is already pending (waiting for poll).
 	if _, exists := s.getPending(credID, txnID); exists {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status:   pkicmp.StatusRejection,
 			FailInfo: pkicmp.FailTransactionIdInUse,
 		})
@@ -165,12 +168,12 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 		// RFC 9810 §5.3.21: Use error body for fundamental request failures (e.g., unknown
 		// algorithm in P10CR CSR) where the request cannot be processed at all.
 		if si.FailInfo&pkicmp.FailBadAlg != 0 && msg.Body.Type == pkicmp.BodyTypeP10CR {
-			return s.buildErrorResponse(msg, si)
+			return s.buildErrorResponse(msg, sender, si)
 		}
 		// Header-level validation failures (e.g., missing directoryName, missing extraCerts)
 		// produce error body responses since the request was not processable.
 		if si.FailInfo&pkicmp.FailBadMessageCheck != 0 {
-			return s.buildErrorResponse(msg, si)
+			return s.buildErrorResponse(msg, sender, si)
 		}
 		return s.buildCertRepResponseForType(msg, certReqID, si, nil, nil, sender, reqType)
 	}
@@ -180,7 +183,7 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 		si := pkicmp.PKIStatusInfo{Status: pkicmp.StatusWaiting}
 		respMsg := s.buildCertRepResponseForType(msg, certReqID, si, nil, nil, sender, reqType)
 		if !s.setPending(credID, txnID, reqType, resp.Waiting.PollRef, respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Time{}) {
-			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailSystemFailure,
 			})
 		}
@@ -204,7 +207,7 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 			}
 		} else {
 			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams) {
-				return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})
 			}
@@ -218,7 +221,7 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
 	pollReq, err := msg.Body.PollReq()
 	if err != nil {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadDataFormat,
 		})
 	}
@@ -230,7 +233,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 
 	credID, err := sender.credentialID()
 	if err != nil {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadMessageCheck,
 		})
 	}
@@ -239,7 +242,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 	// Look up pending request using composite key — automatically rejects different credentials.
 	pending, ok := s.getPending(credID, txnID)
 	if !ok {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status:       pkicmp.StatusRejection,
 			FailInfo:     pkicmp.FailBadRequest,
 			StatusString: pkicmp.PKIFreeText{"no pending certificate"},
@@ -248,13 +251,13 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 
 	// RFC 9483 §3.5: recipNonce MUST equal the senderNonce of the previous message.
 	if len(msg.Header.RecipNonce) == 0 {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRecipientNonce,
 			StatusString: pkicmp.PKIFreeText{"missing recipNonce"},
 		})
 	}
 	if !bytes.Equal(msg.Header.RecipNonce, pending.senderNonce) {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRecipientNonce,
 			StatusString: pkicmp.PKIFreeText{"recipNonce mismatch"},
 		})
@@ -262,7 +265,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 
 	// Reject polling too frequently.
 	if !pending.lastPollTime.IsZero() && time.Since(pending.lastPollTime) < pending.checkAfter {
-		return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRequest,
 			StatusString: pkicmp.PKIFreeText{"polling too frequently"},
 		})
@@ -275,7 +278,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 	resp, err := s.handler.HandleCMP(ctx, msg, sender)
 	if err != nil {
 		si := errorToStatusInfo(err)
-		return s.buildErrorResponse(msg, si)
+		return s.buildErrorResponse(msg, sender, si)
 	}
 
 	// Still waiting → update pollRef and respond with PollRep.
@@ -288,7 +291,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 		pollRep := pkicmp.PollRepContent{item}
 		respMsg := s.buildResponse(msg, pkicmp.NewPollRepBody(&pollRep), sender)
 		if !s.setPending(credID, txnID, pending.reqType, resp.Waiting.PollRef, respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Now()) {
-			return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailSystemFailure,
 			})
 		}
@@ -311,7 +314,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 			}
 		} else {
 			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams) {
-				return s.buildErrorResponse(msg, pkicmp.PKIStatusInfo{
+				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})
 			}
