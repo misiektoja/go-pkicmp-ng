@@ -9,11 +9,13 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"math/big"
+	"testing"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
 )
 
@@ -309,6 +311,30 @@ func issueCert(ca *certyaml.Certificate, req *certRequest) *x509.Certificate {
 	certDER, _ := x509.CreateCertificate(rand.Reader, tmpl, &caCert, req.PublicKey, caKey)
 	cert, _ := x509.ParseCertificate(certDER)
 	return cert
+}
+
+// statusInfoOf extracts the PKIStatusInfo from an error or cert response body.
+func statusInfoOf(t *testing.T, msg *pkicmp.PKIMessage) pkicmp.PKIStatusInfo {
+	t.Helper()
+	switch msg.Body.Type {
+	case pkicmp.BodyTypeError:
+		content, err := msg.Body.Error()
+		require.NoError(t, err)
+		return content.PKIStatusInfo
+	case pkicmp.BodyTypeIP:
+		rep, err := msg.Body.IP()
+		require.NoError(t, err)
+		require.NotEmpty(t, rep.Response)
+		return rep.Response[0].Status
+	case pkicmp.BodyTypeCP:
+		rep, err := msg.Body.CP()
+		require.NoError(t, err)
+		require.NotEmpty(t, rep.Response)
+		return rep.Response[0].Status
+	default:
+		t.Fatalf("no status in body type %s", msg.Body.Type)
+		return pkicmp.PKIStatusInfo{}
+	}
 }
 
 // testSender is the default sender name used in MAC-protected test messages.
