@@ -4,17 +4,25 @@ Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags p
 
 ## v0.0.4 - TBD
 
-Server correctness release. Three ways a server could fail quietly are now reported: a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record.
+Correctness release. Several ways a server could fail quietly are now reported, including a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record. Handler error text no longer reaches the peer, and enrollment works against an Ed25519-signing CA.
 
 ### `pkicmp`
 
 * **`PKIHeader.HasMessageTime`** reports whether a message carried a `messageTime`. The zero time is a legal `GeneralizedTime`, so the field alone could not tell an absent value from one a peer actually sent. Re-encoding a parsed message keeps the field as received.
+* **`CertHash`** computes the certHash of a certificate with the hash its signature algorithm requires. The client and server previously kept private copies of that mapping and had drifted apart.
+
+### `client`
+
+* **Enrollment from an Ed25519-signing CA completes.** The client could not compute the certHash for such a certificate, so it failed after the CA had already issued one and never sent `certConf`, leaving the certificate to expire unconfirmed.
+* **An empty `pollRep` no longer bypasses the minimum poll interval.** The floor set by `WithCheckAfterLimits` was applied only when the response carried a `checkAfter`, so a peer sending empty poll responses could drive polling as fast as the network allowed.
 
 ### `server`
 
 * **`WithMessageTimeTolerance` can no longer be switched off by the peer it constrains.** A client sending `00010101000000Z` looked like it had sent no `messageTime` and skipped the check entirely. Presence is now read from the wire, so every value present is checked and only a genuinely absent `messageTime` is exempt.
 * **A signer key that does not match its certificate is reported by the new `Server.Err`.** Previously the mismatch was discovered while building each response and then discarded, so the server returned issued certificates in unprotected messages that no conforming client accepts. Such a server now answers every request with `systemFailure` and issues nothing. Check `Server.Err` at startup.
 * **A `CertificateConfirmer` that returns an error now rejects the `certConf` with that status** instead of replying `pkiConf` as though the certificate had been confirmed (RFC 9483 §3.6.2). The transaction is kept, so the client can retry and the CA still receives `ConfirmExpired` if no retry succeeds.
+* **A Handler error that is not a `server.Error` no longer puts its text on the wire.** The peer is told only `systemFailure`, so an error carrying a connection string or a file path discloses nothing. A wrapped `server.Error` also keeps the status and `failInfo` the Handler chose, instead of being downgraded to `systemFailure`.
+* **Errors raised after a shared secret authenticated the request are MAC-protected**, not signed. A bootstrapping client with no trust anchor can now verify a rejection such as `transactionIdInUse`. Errors raised before authentication have no credential and stay signed.
 
 ### Documentation
 
