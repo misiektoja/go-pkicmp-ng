@@ -24,6 +24,10 @@ Correctness release. Several ways a server could fail quietly are now reported, 
 * **A Handler error that is not a `server.Error` no longer puts its text on the wire.** The peer is told only `systemFailure`, so an error carrying a connection string or a file path discloses nothing. A wrapped `server.Error` also keeps the status and `failInfo` the Handler chose, instead of being downgraded to `systemFailure`.
 * **Errors raised after a shared secret authenticated the request are MAC-protected**, not signed. A bootstrapping client with no trust anchor can now verify a rejection such as `transactionIdInUse`. Errors raised before authentication have no credential and stay signed.
 
+### Requirements
+
+* **Go 1.26.8 or later is now required**, raised from 1.26.1. The intervening patch releases fix standard library issues this library is exposed to, including unbounded recursion in `encoding/asn1`, which parses every message a peer sends.
+
 ### Documentation
 
 * **Package and option documentation is shorter.** The reference content, RFC citations and interoperability notes are unchanged, with the surrounding justification prose removed.
