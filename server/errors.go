@@ -1,13 +1,17 @@
 package server
 
 import (
+	"errors"
 	"fmt"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // Error can be returned by Handler to control the CMP error response.
-// If a Handler returns a plain error, the server maps it to systemFailure.
+//
+// Any other error becomes a bare systemFailure. Its text is not sent to the
+// peer, so returning an error carrying internal detail discloses nothing. Put
+// anything the peer should see in StatusText.
 type Error struct {
 	// Status is the PKI status code for the response.
 	Status pkicmp.PKIStatus
@@ -29,11 +33,14 @@ func (e *Error) Error() string {
 }
 
 // errorToStatusInfo maps a handler error to PKIStatusInfo for CMP responses.
+// Only the text a Handler put in [Error.StatusText] reaches the peer, so an
+// error carrying internal detail is not disclosed by returning it.
 func errorToStatusInfo(err error) pkicmp.PKIStatusInfo {
 	if err == nil {
 		return pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}
 	}
-	if se, ok := err.(*Error); ok {
+	var se *Error
+	if errors.As(err, &se) {
 		si := pkicmp.PKIStatusInfo{
 			Status:   se.Status,
 			FailInfo: se.FailureInfo,
@@ -43,10 +50,10 @@ func errorToStatusInfo(err error) pkicmp.PKIStatusInfo {
 		}
 		return si
 	}
-	// Unknown error → systemFailure.
+	// Unknown error → systemFailure. The error stays server-side; the peer is
+	// told only that the request failed.
 	return pkicmp.PKIStatusInfo{
-		Status:       pkicmp.StatusRejection,
-		FailInfo:     pkicmp.FailSystemFailure,
-		StatusString: pkicmp.PKIFreeText{err.Error()},
+		Status:   pkicmp.StatusRejection,
+		FailInfo: pkicmp.FailSystemFailure,
 	}
 }
