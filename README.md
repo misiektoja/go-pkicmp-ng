@@ -4,10 +4,10 @@
 
 Go library for the Certificate Management Protocol (CMP).
 The library partially implements:
-- **RFC 9810**: Certificate Management Protocol (CMP)
+- **RFC 9810** (obsoletes RFC 4210 and RFC 9480): Certificate Management Protocol (CMP)
 - **RFC 9483**: Lightweight CMP Profile
 - **RFC 4211**: Certificate Request Message Format (CRMF)
-- **RFC 6712**: Certificate Management Protocol (CMP) over HTTP
+- **RFC 9811** (obsoletes RFC 6712): HTTP Transfer for the Certificate Management Protocol (CMP)
 
 Compliance is verified via integration tests: client against [EJBCA](https://docs.keyfactor.com/ejbca/latest/cmp) and [OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html); server against [Siemens CMP Test Suite](https://github.com/siemens/cmp-test-suite).
 

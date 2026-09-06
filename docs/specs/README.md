@@ -18,8 +18,9 @@ This directory contains the essential RFC specifications for **CMP v2** and **CM
    - Cryptographic algorithm conventions for CMP (Nov 2023)
    - Algorithm profiles and recommendations
 
-4. **[RFC 6712](https://datatracker.ietf.org/doc/html/rfc6712)** - HTTP Transfer for CMP
-   - CMP over HTTP transport layer (Sep 2012)
+4. **[RFC 9811](https://datatracker.ietf.org/doc/html/rfc9811)** - HTTP Transfer for CMP
+   - Current CMP over HTTP transport specification (Jul 2025)
+   - Obsoletes RFC 6712
    - HTTP mechanics for CMP message transport
 
 5. **[RFC 4211](https://datatracker.ietf.org/doc/html/rfc4211)** - Internet X.509 PKI - Certificate Request Message Format (CRMF)
@@ -29,6 +30,10 @@ This directory contains the essential RFC specifications for **CMP v2** and **CM
 6. **[RFC 4210](https://datatracker.ietf.org/doc/html/rfc4210)** - Internet X.509 PKI - Certificate Management Protocol (CMP)
    - Original CMP v2 specification (Oct 2005)
 
-7. **[RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)** - Internet X.509 PKI - Certificate and CRL Profile
+7. **[RFC 6712](https://datatracker.ietf.org/doc/html/rfc6712)** - HTTP Transfer for CMP
+   - Original CMP over HTTP specification (Sep 2012)
+   - Obsoleted by RFC 9811
+
+8. **[RFC 5280](https://datatracker.ietf.org/doc/html/rfc5280)** - Internet X.509 PKI - Certificate and CRL Profile
    - X.509 certificate structure and PKI components (May 2008)
    - Specifies `GeneralName` type used in CMP headers for sender/recipient fields
