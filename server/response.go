@@ -206,7 +206,7 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
 		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams) {
+			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams, msg.Header.ProtectionAlg) {
 				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})
@@ -313,7 +313,7 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
 		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams) {
+			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams, msg.Header.ProtectionAlg) {
 				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
 				})

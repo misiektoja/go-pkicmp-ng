@@ -85,11 +85,12 @@ type transactionEntry struct {
 	checkAfter   time.Duration // minimum interval between polls
 
 	// Set when state == stateIssued
-	cert              *x509.Certificate
-	issueRef          any                        // opaque CA reference for CertificateConfirmer
-	issuedSenderNonce []byte                     // server's senderNonce from the issued response
-	clientSenderNonce []byte                     // client's senderNonce from the cert request
-	protectionParams  pkicmp.MACCredentialOption // decoded protection parameters for echo-back
+	cert                *x509.Certificate
+	issueRef            any    // opaque CA reference for CertificateConfirmer
+	issuedSenderNonce   []byte // server's senderNonce from the issued response
+	clientSenderNonce   []byte // client's senderNonce from the cert request
+	protectionAlgorithm *pkicmp.AlgorithmIdentifier
+	protectionParams    pkicmp.MACCredentialOption // decoded protection parameters for echo-back
 }
 
 // transactionTracker manages transaction state for the CMP server.
@@ -197,7 +198,8 @@ func (t *transactionTracker) getPending(credentialID, transactionID []byte) (*tr
 	return entry, true
 }
 
-func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert *x509.Certificate, issueRef any, senderNonce, clientSenderNonce []byte, protectionParams pkicmp.MACCredentialOption) bool {
+// setIssued retains the certificate and protection parameters needed for confirmation.
+func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert *x509.Certificate, issueRef any, senderNonce, clientSenderNonce []byte, protectionParams pkicmp.MACCredentialOption, algorithm ...*pkicmp.AlgorithmIdentifier) bool {
 	key := makeKey(credentialID, transactionID)
 	ck := makeCredentialKey(credentialID)
 
@@ -220,6 +222,9 @@ func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert 
 		issuedSenderNonce: senderNonce,
 		clientSenderNonce: clientSenderNonce,
 		protectionParams:  protectionParams,
+	}
+	if len(algorithm) > 0 {
+		newEntry.protectionAlgorithm = algorithm[0]
 	}
 	return t.transactions.CompareAndSwap(key, old, newEntry)
 }
