@@ -2,6 +2,14 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.0.5 - 2026-09-23
+
+Servers can save CMP transaction state and resume certificate confirmation or polling after a restart.
+
+### `server`
+
+* **`SnapshotTransactions` and `RestoreTransactions`** preserve credential binding, nonces, certificates and MAC protection parameters. The host supplies durable storage, serializes access and saves responses before delivery. Snapshots must come from trusted storage and use the same response-signing certificate. JSON-serializable issuance references support an optional restore decoder. Recovery does not provide an automatic response cache or database integration.
+
 ## v0.0.4 - 2026-09-04
 
 Correctness release. Several ways a server could fail quietly are now reported, including a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record. Handler error text no longer reaches the peer, and enrollment works against an Ed25519-signing CA.
