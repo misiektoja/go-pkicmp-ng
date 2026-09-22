@@ -293,4 +293,28 @@
 //
 // Entries expire based on last activity time; the expiry duration is controlled
 // by [WithConfirmWaitTime] (default 10 seconds).
+//
+// # Durable transaction recovery
+//
+// [Server.SnapshotTransactions] saves active, waiting, issued and completed
+// protocol state. [Server.RestoreTransactions] loads it into a fresh server with
+// the same response-signing certificate before that server accepts requests.
+// Original nonces, credential binding, timestamps and MAC parameters survive.
+//
+// The host must exclude concurrent ServeHTTP, CleanupExpired, snapshot and
+// restore calls. Persist a successful response and its snapshot before sending
+// that response to the peer. Commit issuance records and credential usage in
+// the same durable operation. The library does not provide database transactions
+// or a response cache. Exact request retries need a host-managed response cache
+// to avoid issuing another certificate or reusing a completed transaction ID.
+//
+// Treat snapshots as trusted private server data, never client input. They have
+// a versioned format and contain no authentication secrets or signing keys,
+// unless the application's IssueRef includes them. IssueRef must be JSON
+// serializable. Supply a decoder to RestoreTransactions when its original Go
+// type matters. A nil decoder uses the standard encoding/json value types.
+// Restore rejects a different signer, invalid state and configured capacity
+// overruns without replacing existing state. Snapshots are limited to 64 MiB.
+// Expiration timestamps are preserved. The host still calls CleanupExpired
+// according to its configured confirmation deadline.
 package server
