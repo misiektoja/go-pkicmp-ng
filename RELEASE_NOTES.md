@@ -2,6 +2,28 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.1.0 - 2026-09-27
+
+Enroll and confirm certificates with ML-DSA keys and signatures.
+
+### `pkicmp`
+
+* **ML-DSA-44, ML-DSA-65 and ML-DSA-87** support covers certificate keys, CRMF proof of possession and pure message signatures. Algorithm parameters must be absent.
+* **`NewCertStatus`** supplies the explicit SHA-512 confirmation hash identifier for ML-DSA-signed certificates.
+* **Ed25519 message protection** signs the original protected bytes instead of incorrectly prehashing them.
+
+### `client`
+
+* **ML-DSA certificate confirmation** uses CMPv3 and an explicit hash algorithm. Peers must support these fields.
+
+### `server`
+
+* **ML-DSA proof of possession** is required for signing-capable requests unless the configured registration-authority proof path applies.
+
+### Requirements
+
+* **Go 1.27.1 or newer** is required. Classical algorithms remain supported.
+
 ## v0.0.6 - 2026-09-26
 
 OpenSSL clients can complete certificate confirmation after enrollment from an Ed25519-signing CA.
