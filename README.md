@@ -37,6 +37,12 @@ The API is pre-v1 and may change.
 go get github.com/misiektoja/go-pkicmp-ng
 ```
 
+Requires Go 1.27.1 or newer.
+
+ML-DSA-44, ML-DSA-65 and ML-DSA-87 support covers certificate keys, CRMF proof of possession and message signatures. The client confirms ML-DSA-signed certificates with an explicit SHA-512 hash algorithm under CMPv3. Peers must support these algorithms and confirmation fields. Classical enrollment remains available.
+
+Use `pkicmp.NewCertStatus` when constructing confirmation manually. It includes the required hash identifier for ML-DSA. `pkicmp.CertHash` alone cannot represent that identifier. Pure ML-DSA uses an empty context and absent algorithm parameters. Composite signatures and older Dilithium encodings are not supported.
+
 ## Package structure
 
 The library is split into three packages:
