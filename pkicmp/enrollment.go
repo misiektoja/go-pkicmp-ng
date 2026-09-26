@@ -291,9 +291,9 @@ func (s *CertStatus) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 		}
 		if s.HashAlg != nil {
 			mctx.MinRequiredPVNO = PVNO3
-			// hashAlg [0] AlgorithmIdentifier OPTIONAL (IMPLICIT)
+			// CMP uses EXPLICIT TAGS for the optional hash algorithm.
 			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				s.HashAlg.marshalInner(mctx, b)
+				s.HashAlg.marshal(mctx, b)
 			})
 		}
 	})
@@ -321,10 +321,20 @@ func (s *CertStatus) unmarshal(inner *cryptobyte.String) error {
 		if !seq.ReadASN1(&sub, cbasn1.Tag(0).ContextSpecific().Constructed()) {
 			return &ParseError{Detail: "invalid hashAlg tag"}
 		}
+		var algorithm cryptobyte.String
+		if !sub.ReadASN1(&algorithm, cbasn1.SEQUENCE) {
+			return &ParseError{Detail: "invalid hashAlg sequence"}
+		}
 		s.HashAlg = &AlgorithmIdentifier{}
-		if err := s.HashAlg.unmarshalInner(&sub); err != nil {
+		if err := s.HashAlg.unmarshalInner(&algorithm); err != nil {
 			return err
 		}
+		if !sub.Empty() || !algorithm.Empty() {
+			return &ParseError{Detail: "trailing hashAlg data"}
+		}
+	}
+	if !seq.Empty() {
+		return &ParseError{Detail: "trailing CertStatus data"}
 	}
 	return nil
 }

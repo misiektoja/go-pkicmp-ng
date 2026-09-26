@@ -74,7 +74,7 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 
 	// Verify certHash matches the issued certificate (RFC 9810 §5.3.18).
 	if len(*conf) > 0 {
-		expectedHash, err := pkicmp.CertHash(entry.cert)
+		expectedHash, err := (*conf)[0].CertificateHash(entry.cert)
 		if err != nil {
 			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       pkicmp.StatusRejection,

@@ -1,6 +1,7 @@
 package pkicmp
 
 import (
+	"bytes"
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
@@ -112,6 +113,26 @@ func CertHash(cert *x509.Certificate) ([]byte, error) {
 	hash := hashFromSigAlg(cert.SignatureAlgorithm)
 	if hash == 0 || !hash.Available() {
 		return nil, &ParseError{Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm)}
+	}
+	h := hash.New()
+	h.Write(cert.Raw)
+	return h.Sum(nil), nil
+}
+
+// CertificateHash computes the confirmation hash using an explicit algorithm when supplied.
+func (s *CertStatus) CertificateHash(cert *x509.Certificate) ([]byte, error) {
+	if s.HashAlg == nil {
+		return CertHash(cert)
+	}
+	hash, err := hashFromOID(s.HashAlg.Algorithm)
+	if err != nil {
+		return nil, err
+	}
+	if hash < crypto.SHA256 || !hash.Available() {
+		return nil, &ParseError{Detail: "unsupported confirmation hash"}
+	}
+	if len(s.HashAlg.Parameters) != 0 && !bytes.Equal(s.HashAlg.Parameters, []byte{5, 0}) {
+		return nil, &ParseError{Detail: "invalid confirmation hash parameters"}
 	}
 	h := hash.New()
 	h.Write(cert.Raw)
