@@ -1,6 +1,7 @@
 package pkicmp
 
 import (
+	"encoding/hex"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -395,4 +396,26 @@ func TestPollContentASN1(t *testing.T) {
 		err := unmarshaled.unmarshal(&s)
 		assert.Error(t, err)
 	})
+}
+
+// TestCertStatusExplicitHashTag checks independent DER rather than a self-consistent codec round trip.
+func TestCertStatusExplicitHashTag(t *testing.T) {
+	der, err := hex.DecodeString("301604020102020103a00d300b0609608648016503040203")
+	require.NoError(t, err)
+	var status CertStatus
+	input := cryptobyte.String(der)
+	require.NoError(t, status.unmarshal(&input))
+	require.True(t, status.HashAlg.Algorithm.Equal(oidSHA512))
+	var b cryptobyte.Builder
+	status.marshal(&marshalContext{MinRequiredPVNO: PVNO2}, &b)
+	encoded, err := b.Bytes()
+	require.NoError(t, err)
+	require.Equal(t, der, encoded)
+	for _, invalid := range []string{"301404020102020103a00b0609608648016503040203", "301a04020102020103a011300f060960864801650304020305000500", "301804020102020103a00f300b06096086480165030402030500", "301804020102020103a00d300b06096086480165030402030500"} {
+		data, err := hex.DecodeString(invalid)
+		require.NoError(t, err)
+		input := cryptobyte.String(data)
+		var rejected CertStatus
+		require.Error(t, rejected.unmarshal(&input))
+	}
 }

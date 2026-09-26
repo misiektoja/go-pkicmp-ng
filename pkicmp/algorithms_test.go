@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/ed25519"
 	"crypto/rand"
+	"crypto/sha256"
 	"crypto/sha512"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -189,4 +190,24 @@ func TestCertHash(t *testing.T) {
 		_, err := CertHash(&x509.Certificate{SignatureAlgorithm: x509.UnknownSignatureAlgorithm})
 		assert.Error(t, err)
 	})
+}
+
+// TestExplicitConfirmationHash verifies the supplied algorithm and rejects unsupported parameters.
+func TestExplicitConfirmationHash(t *testing.T) {
+	cert := &x509.Certificate{Raw: []byte("certificate"), SignatureAlgorithm: x509.PureEd25519}
+	status := &CertStatus{HashAlg: &AlgorithmIdentifier{Algorithm: oidSHA256}}
+	got, err := status.CertificateHash(cert)
+	require.NoError(t, err)
+	expected := sha256.Sum256(cert.Raw)
+	require.Equal(t, expected[:], got)
+	status.HashAlg = nil
+	got, err = status.CertificateHash(cert)
+	require.NoError(t, err)
+	fallback := sha512.Sum512(cert.Raw)
+	require.Equal(t, fallback[:], got)
+	for _, alg := range []*AlgorithmIdentifier{{Algorithm: oidSHA1}, {Algorithm: oidSHA224}, {Algorithm: asn1.ObjectIdentifier{1, 2, 3}}, {Algorithm: oidSHA512, Parameters: []byte{2, 1, 0}}} {
+		status.HashAlg = alg
+		_, err := status.CertificateHash(cert)
+		require.Error(t, err)
+	}
 }

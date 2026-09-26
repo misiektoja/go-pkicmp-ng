@@ -9,6 +9,7 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/asn1"
 	"math/big"
 	"net/http"
 	"net/http/httptest"
@@ -777,4 +778,57 @@ func TestCertConfWithEd25519CA(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.True(t, confirmed, "certConf must reach the CA")
+}
+
+// TestCertConfExplicitHash validates the declared digest before recording confirmation.
+func TestCertConfExplicitHash(t *testing.T) {
+	ca := &certyaml.Certificate{Subject: "CN=Explicit hash CA", KeyType: certyaml.KeyTypeEd25519}
+	secret := []byte("explicit-confirmation-secret")
+	confirmed := 0
+	handler := &mockHandler{
+		handleCertRequest: func(_ context.Context, req *certRequest) (*certResponse, error) {
+			return &certResponse{Certificate: issueCert(ca, req)}, nil
+		},
+		handleCertConfirm: func(_ context.Context, _ *certConfirmation) error { confirmed++; return nil },
+	}
+	ts := httptest.NewServer(server.New(handler, server.WithSecretLookup(&staticMACLookup{secret: secret})))
+	defer ts.Close()
+	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+	pub, err := x509.MarshalPKIXPublicKey(key.Public())
+	require.NoError(t, err)
+	request := pkicmp.CertReqMsg{CertReq: pkicmp.CertRequest{CertReqID: 0, CertTemplate: pkicmp.CertTemplate{Subject: pkicmp.NewDirectoryName(pkix.Name{CommonName: "device"}), PublicKey: pub}}}
+	require.NoError(t, request.GeneratePOP(key))
+	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{request}), macMessageOpts())
+	protectMAC(msg, secret)
+	response := postCMP(t, ts, msg)
+	require.Equal(t, pkicmp.BodyTypeIP, response.Body.Type)
+	ip, err := response.Body.IP()
+	require.NoError(t, err)
+	cert, err := ip.Response[0].CertifiedKeyPair.CertOrEncCert.Certificate.Parse()
+	require.NoError(t, err)
+	digest := sha256.Sum256(cert.Raw)
+	for _, test := range []struct {
+		hash     []byte
+		oid      asn1.ObjectIdentifier
+		accepted bool
+	}{
+		{digest[:], asn1.ObjectIdentifier{1, 2, 3}, false},
+		{[]byte("wrong"), asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}, false},
+		{digest[:], asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}, true},
+	} {
+		conf := pkicmp.CertConfirmContent{{CertReqID: 0, CertHash: test.hash, HashAlg: &pkicmp.AlgorithmIdentifier{Algorithm: test.oid}}}
+		confirm := pkicmp.NewPKIMessage(pkicmp.NewCertConfBody(&conf), macMessageOpts())
+		confirm.Header.TransactionID = msg.Header.TransactionID
+		confirm.Header.RecipNonce = response.Header.SenderNonce
+		protectMAC(confirm, secret)
+		result := postCMP(t, ts, confirm)
+		if test.accepted {
+			require.Equal(t, pkicmp.BodyTypePKIConf, result.Body.Type)
+		} else {
+			require.Equal(t, pkicmp.BodyTypeError, result.Body.Type)
+			require.Zero(t, confirmed)
+		}
+	}
+	require.Equal(t, 1, confirmed)
 }
