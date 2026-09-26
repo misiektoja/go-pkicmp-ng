@@ -35,7 +35,7 @@ func VerifyPOP(reqMsg *CertReqMsg) error {
 	}
 
 	// Verify signature using the algorithm from popoSigningKey.
-	sigAlg, err := sigAlgFromOID(reqMsg.Popo.Signature.Algorithm.Algorithm)
+	sigAlg, err := signatureAlgorithm(reqMsg.Popo.Signature.Algorithm)
 	if err != nil {
 		return err
 	}

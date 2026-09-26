@@ -4,6 +4,7 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -157,11 +158,10 @@ func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
 	return pkicmp.VerifyPOP(&(*msgs)[0])
 }
 
-// isSignatureCapableKey returns true if the key can be used for signing.
-// RSA, ECDSA, and EdDSA keys are signature-capable.
+// isSignatureCapableKey identifies keys that require signature proof of possession.
 func isSignatureCapableKey(pub crypto.PublicKey) bool {
 	switch pub.(type) {
-	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey:
+	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
 		return true
 	default:
 		return false

@@ -299,7 +299,7 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 // RFC 9810 §8.9: The message sender MUST be authenticated with existing
 // trust anchors.
 func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
-	sigAlg, err := sigAlgFromOID(m.Header.ProtectionAlg.Algorithm)
+	sigAlg, err := signatureAlgorithm(*m.Header.ProtectionAlg)
 	if err != nil {
 		return nil, err
 	}

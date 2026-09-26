@@ -5,7 +5,9 @@ import (
 	"crypto"
 	"crypto/ecdsa"
 	"crypto/ed25519"
+	"crypto/mldsa"
 	"crypto/rsa"
+	"crypto/sha512"
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
@@ -28,6 +30,9 @@ var (
 	oidECDSAWithSHA384         = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 3}
 	oidECDSAWithSHA512         = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 3, 4}
 	oidEd25519                 = asn1.ObjectIdentifier{1, 3, 101, 112}
+	oidMLDSA44                 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 3, 17}
+	oidMLDSA65                 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 3, 18}
+	oidMLDSA87                 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 3, 19}
 
 	// MAC Algorithms (RFC 9481 §6.1, RFC 9810 §5.1.3.4).
 	oidPasswordBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 13}
@@ -103,8 +108,38 @@ func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
 		return x509.ECDSAWithSHA512, nil
 	case oid.Equal(oidEd25519):
 		return x509.PureEd25519, nil
+	case oid.Equal(oidMLDSA44):
+		return x509.MLDSA44, nil
+	case oid.Equal(oidMLDSA65):
+		return x509.MLDSA65, nil
+	case oid.Equal(oidMLDSA87):
+		return x509.MLDSA87, nil
 	}
 	return x509.UnknownSignatureAlgorithm, &ParseError{Detail: fmt.Sprintf("unsupported signature algorithm: %v", oid)}
+}
+
+// signatureAlgorithm validates parameters before resolving a signature identifier.
+func signatureAlgorithm(alg AlgorithmIdentifier) (x509.SignatureAlgorithm, error) {
+	if (alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)) && len(alg.Parameters) != 0 {
+		return x509.UnknownSignatureAlgorithm, &ParseError{Detail: "ML-DSA parameters must be absent"}
+	}
+	return sigAlgFromOID(alg.Algorithm)
+}
+
+// NewCertStatus computes confirmation with an explicit SHA-512 identifier for ML-DSA certificates.
+func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) {
+	status := CertStatus{CertReqID: certReqID}
+	switch cert.SignatureAlgorithm {
+	case x509.MLDSA44, x509.MLDSA65, x509.MLDSA87:
+		sum := sha512.Sum512(cert.Raw)
+		status.CertHash = sum[:]
+		status.HashAlg = &AlgorithmIdentifier{Algorithm: oidSHA512}
+		return status, nil
+	default:
+		hash, err := CertHash(cert)
+		status.CertHash = hash
+		return status, err
+	}
 }
 
 // CertHash computes the certHash of a certificate with the hash matching its
@@ -182,6 +217,16 @@ func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto
 		}
 	case ed25519.PublicKey:
 		return oidEd25519, crypto.Hash(0), nil
+	case *mldsa.PublicKey:
+		switch pub.Parameters() {
+		case mldsa.MLDSA44():
+			return oidMLDSA44, crypto.Hash(0), nil
+		case mldsa.MLDSA65():
+			return oidMLDSA65, crypto.Hash(0), nil
+		case mldsa.MLDSA87():
+			return oidMLDSA87, crypto.Hash(0), nil
+		}
+		return nil, 0, &ParseError{Detail: "unsupported ML-DSA parameters"}
 	default:
 		return nil, 0, &ParseError{Detail: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}

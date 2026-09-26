@@ -186,17 +186,11 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		}
 	}
 
-	// RFC 9810 §5.3.18: certHash uses the hash algorithm from the certificate's
-	// signature algorithm.
-	certHash, err := pkicmp.CertHash(cert)
+	// RFC 9810 requires an explicit hash when the signature does not identify one.
+	certStatus, err := pkicmp.NewCertStatus(cert, certResp.CertReqID)
 	if err != nil {
 		return nil, cmpResp.wrapError(&Error{Op: "compute certHash", Err: err})
 	}
-	certStatus := pkicmp.CertStatus{
-		CertHash:  certHash,
-		CertReqID: certResp.CertReqID,
-	}
-
 	confMsg := pkicmp.NewPKIMessage(
 		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{certStatus}),
 		pkicmp.MessageOptions{

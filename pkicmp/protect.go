@@ -329,7 +329,7 @@ func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certific
 		return &ParseError{Detail: "missing message body"}
 	}
 
-	sigAlgOID, _, err := signatureAlgorithmFromKey(key)
+	sigAlgOID, hash, err := signatureAlgorithmFromKey(key)
 	if err != nil {
 		return &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
@@ -360,9 +360,6 @@ func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certific
 	if err != nil {
 		return err
 	}
-
-	sigAlg, _ := sigAlgFromOID(sigAlgOID)
-	hash := hashFromSigAlg(sigAlg)
 
 	var opts crypto.SignerOpts
 	var digest []byte

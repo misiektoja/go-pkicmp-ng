@@ -1,6 +1,6 @@
 module github.com/misiektoja/go-pkicmp-ng
 
-go 1.26.8
+go 1.27.1
 
 require (
 	github.com/stretchr/testify v1.11.1
