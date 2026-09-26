@@ -2,6 +2,18 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.0.6 - 2026-09-26
+
+OpenSSL clients can complete certificate confirmation after enrollment from an Ed25519-signing CA.
+
+### `pkicmp`
+
+* **Explicit confirmation hash algorithms** use the CMP ASN.1 tag format. Malformed tags and trailing confirmation fields are rejected.
+
+### `server`
+
+* **Certificate confirmation** verifies the declared hash algorithm when supplied. Unsupported algorithms and invalid digests are rejected without accepting the certificate.
+
 ## v0.0.5 - 2026-09-23
 
 Servers can save CMP transaction state and resume certificate confirmation or polling after a restart.
