@@ -4,7 +4,7 @@ Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags p
 
 ## v0.2.0 - TBD
 
-Revoke certificates over CMP from the client and accept revocation requests in the server.
+Revoke certificates over CMP from the client and accept revocation requests in the server. The client tells the CA when it refuses an issued certificate, and the server no longer passes requests without a verified proof of possession to the CA.
 
 ### `pkicmp`
 
@@ -14,11 +14,13 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 ### `client`
 
 * **`SendRR`** asks the CA to revoke a certificate. A rejection such as `certRevoked` is returned as `*pkicmp.PKIStatusError`. Sign the request with the certificate being revoked, or with registration authority credentials when the CA allows that. A delayed answer is polled like enrollment.
+* **Refused certificates are reported to the CA.** When an issued certificate fails validation or certifies a different key, the client sends `certConf` with status rejection before returning the error. The CA previously learned of it only when its confirmation wait expired.
 
 ### `server`
 
 * **Revocation requests** reach CAs that implement the new **`Revoker`** interface. By default only the certificate being revoked may sign the request. Implement **`RevocationAuthorizer`** to accept other signers, such as a registration authority. Revocation is synchronous. A CA without `Revoker` rejects revocation requests with `badRequest`.
 * **`LightweightPolicy`** requires revocation requests to use signature protection and to carry a reason code.
+* **Proof of possession by signature is required** for every `ir`, `cr` and `kur`, with or without a policy. Requests for keys that cannot sign, such as X25519, are rejected with `badPOP` and requests without a public key with `badCertTemplate`. They previously reached the CA without any verified proof.
 
 ## v0.1.0 - 2026-09-27
 
