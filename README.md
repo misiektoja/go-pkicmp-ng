@@ -48,8 +48,8 @@ Use `pkicmp.NewCertStatus` when constructing confirmation manually. It includes 
 The library is split into three packages:
 
 *   **[`pkicmp`](./pkicmp/)**: Core types for CMP and CRMF ASN.1 structures. Handles parsing, serialization, PVNO 2/3, and protection (MAC or X.509 signatures).
-*   **[`client`](./client/)**: Handles IR, CR, KUR, and P10CR enrollment flows, including automatic polling, response verification, and certificate confirmation.
-*   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, and enforces policies via middleware (including the lightweight profile).
+*   **[`client`](./client/)**: Handles IR, CR, KUR, and P10CR enrollment flows, including automatic polling, response verification, and certificate confirmation. Sends revocation requests (RR).
+*   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, handles revocation for CAs that implement it, and enforces policies via middleware (including the lightweight profile).
 
 ## Usage
 
@@ -89,6 +89,18 @@ result, err := c.SendKUR(context.Background(), newKey, creds,
 )
 ```
 
+Revocation Request (RR)
+
+```go
+// RFC 9483 expects the request to be signed with the certificate being revoked.
+creds, _ := pkicmp.NewSignatureCredentials(certKey, cert)
+c := client.NewClient("http://localhost:8080/cmp", client.WithTrustedCAs(trustedCAs))
+
+// A nil error means the CA revoked the certificate. A rejection such as
+// certRevoked is returned as *pkicmp.PKIStatusError.
+err := c.SendRR(context.Background(), cert, pkicmp.CRLReasonKeyCompromise, creds)
+```
+
 ### Server
 
 Use the `server` package to expose a CMP endpoint as a standard `http.Handler`.
@@ -105,6 +117,10 @@ func (ca *MyCA) LookupSecret(sender, senderKID) {
 }
 func (ca *MyCA) LookupCertificate(issuer, subject, senderKID) {
 	// Called to verify signature-protected requests. Finds existing cert by DN or Subject Key ID.
+}
+func (ca *MyCA) RevokeCertificate(ctx, req, sender) {
+	// Optional. Called on revocation requests (RR) signed with the certificate being revoked.
+	// Implement server.RevocationAuthorizer to also accept requests from other signers.
 }
 ```
 
@@ -132,7 +148,7 @@ http.ListenAndServe(":8080", nil)
 
 For a complete, runnable demonstration of both client and server packages, check out the [examples](./examples/) directory. It contains:
 - **[Mock Server](./examples/mockserver/)**: A simple HTTP server implementing the `server.CA` interface.
-- **[Mock Client](./examples/mockclient/)**: A client executing a MAC-protected IR enrollment followed by a signature-protected KUR key update.
+- **[Mock Client](./examples/mockclient/)**: A client executing a MAC-protected IR enrollment, a signature-protected KUR key update and a signature-protected RR revocation.
 
 You can run them locally in separate terminals:
 ```bash
