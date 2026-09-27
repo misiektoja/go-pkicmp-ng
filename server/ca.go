@@ -97,6 +97,7 @@ type caHandler struct {
 
 // NewCAHandler creates a Handler that delegates certificate issuance to a CA.
 // It handles CRMF/P10CR parsing, template building, and the CMP ceremony.
+// Revocation requests go to the CA when it implements [Revoker].
 //
 // Use with middleware for policy enforcement:
 //
@@ -118,6 +119,8 @@ func (h *caHandler) HandleCMP(ctx context.Context, msg *pkicmp.PKIMessage, sende
 		return h.handleCertConf(ctx, msg)
 	case pkicmp.BodyTypePollReq:
 		return h.handlePollReq(ctx, msg, sender)
+	case pkicmp.BodyTypeRR:
+		return nil, h.handleRevocation(ctx, msg, sender)
 	default:
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest}
 	}
@@ -246,7 +249,8 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 }
 
 // NewCAServer creates a complete CMP server from a CA implementation.
-// The CA is responsible only for certificate issuance. Configure request
+// The CA is responsible only for certificate issuance, and for revocation when
+// it implements [Revoker]. Configure request
 // verification separately with [WithSecretLookup] and/or
 // [WithCertificateLookup]. Use policy enforcement wrappers (e.g., [LightweightPolicy]).
 // Use [WithSigner] and [WithExtraCerts] options to configure the signing

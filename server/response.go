@@ -88,6 +88,11 @@ func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, sender *SenderIdenti
 	return s.buildResponse(req, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: si}), sender)
 }
 
+// buildRevRepResponse creates an rp with one status for the single revocation requested.
+func (s *Server) buildRevRepResponse(req *pkicmp.PKIMessage, si pkicmp.PKIStatusInfo, sender *SenderIdentity) *pkicmp.PKIMessage {
+	return s.buildResponse(req, pkicmp.NewRPBody(&pkicmp.RevRepContent{Status: []pkicmp.PKIStatusInfo{si}}), sender)
+}
+
 // buildCertRepResponseForType creates a CertRepMessage with the specified response type.
 func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID int64, si pkicmp.PKIStatusInfo, cert *x509.Certificate, caCerts []*x509.Certificate, sender *SenderIdentity, reqType RequestType, protectionParams ...pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
 	certResp := pkicmp.CertResponse{

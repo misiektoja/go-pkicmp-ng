@@ -35,6 +35,13 @@ func LightweightPolicy() func(Handler) Handler {
 			// default would reject deployed clients over a field the server
 			// ignores. Outgoing responses always follow §3.3.
 
+			if msg.Body.Type == pkicmp.BodyTypeRR {
+				if err := validateRR(msg, sender); err != nil {
+					return nil, err
+				}
+				return next.HandleCMP(ctx, msg, sender)
+			}
+
 			// Only validate cert requests further.
 			if !isCertRequest(msg.Body.Type) {
 				return next.HandleCMP(ctx, msg, sender)
@@ -90,6 +97,24 @@ func validateP10CR(msg *pkicmp.PKIMessage) error {
 	// RFC 5280 §4.2.1.9 path-length rules, plus the policy decision to refuse a
 	// request for a CA certificate.
 	return checkBasicConstraints(csr.Extensions)
+}
+
+// validateRR applies the RFC 9483 §4.2 rules to a revocation request.
+func validateRR(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
+	// RFC 9483 §4.2 and §5.3.2: the request is signed, either with the
+	// certificate being revoked or by a PKI management entity.
+	if sender.MACVerified {
+		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailWrongIntegrity, StatusText: "revocation requires signature protection"}
+	}
+	req, err := parseRevocationRequest(msg)
+	if err != nil {
+		return err
+	}
+	// RFC 9483 §4.2: crlEntryDetails MUST contain a reasonCode.
+	if !req.hasReason {
+		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "reasonCode required"}
+	}
+	return nil
 }
 
 func validateCRMF(msg *pkicmp.PKIMessage) error {

@@ -193,6 +193,8 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 		resp = s.handleCertConf(ctx, msg, sender)
 	case pkicmp.BodyTypePollReq:
 		resp = s.handlePollReqNew(ctx, msg, sender)
+	case pkicmp.BodyTypeRR:
+		resp = s.handleRevocation(ctx, msg, sender)
 	case pkicmp.BodyTypeError:
 		// RFC 9810 §5.3.21: Respond with PKIConf. Protection verification above
 		// already catches invalid headers, so reaching here means the header is valid.
@@ -311,7 +313,7 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 // isInitialRequest returns true if the body type starts a new transaction.
 func isInitialRequest(bodyType pkicmp.BodyType) bool {
 	switch bodyType {
-	case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR, pkicmp.BodyTypeP10CR:
+	case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR, pkicmp.BodyTypeP10CR, pkicmp.BodyTypeRR:
 		return true
 	default:
 		return false
