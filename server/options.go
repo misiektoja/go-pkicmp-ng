@@ -72,6 +72,7 @@ type serverConfig struct {
 	maxTransactionsPerCredential int
 	strictProfile                bool
 	messageTimeTolerance         time.Duration
+	raAuthorizer                 RAAuthorizer
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
 
 	// Built once by New from signerKey and signerCert. signerErr records a
@@ -141,8 +142,9 @@ func WithImplicitConfirm() Option {
 // four rejections:
 //
 //   - a MAC-protected message whose sender is not a directoryName naming the
-//     shared secret (§3.1),
-//   - a signature-protected request that carries no extraCerts (§3.3),
+//     shared secret (§3.1), unless it is a nested message (§5.2.2.1),
+//   - a signature-protected request or nested message that carries no
+//     extraCerts (§3.3, §5.2.2),
 //   - a signature-protected request whose extraCerts do not lead with the CMP
 //     protection certificate followed by its issuer chain (§3.3),
 //   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1).
@@ -168,6 +170,16 @@ func WithStrictProfileValidation() Option {
 func WithMessageTimeTolerance(tolerance time.Duration) Option {
 	return func(c *serverConfig) {
 		c.messageTimeTolerance = tolerance
+	}
+}
+
+// WithRAAuthorizer accepts requests that a registration authority forwards in a
+// nested message, as far as authorizer allows (RFC 9483 §5.2.2.1). Without it,
+// nested messages are rejected with badRequest. Batches of several messages
+// are always rejected.
+func WithRAAuthorizer(authorizer RAAuthorizer) Option {
+	return func(c *serverConfig) {
+		c.raAuthorizer = authorizer
 	}
 }
 

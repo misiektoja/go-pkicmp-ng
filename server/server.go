@@ -105,6 +105,15 @@ func (s *Server) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 // processMessage handles a parsed PKIMessage and returns a response.
 func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pkicmp.PKIMessage {
+	return s.process(ctx, msg, nil)
+}
+
+// process verifies and answers a request, which fwd carried inside a nested message when it is not nil.
+//
+// A forwarded request passes the same checks as one sent directly, so the end
+// entity is still authenticated by its own protection and the response is
+// protected for it.
+func (s *Server) process(ctx context.Context, msg *pkicmp.PKIMessage, fwd *forwarding) *pkicmp.PKIMessage {
 	// A signer that New rejected cannot protect anything. Refuse before the CA
 	// issues a certificate that could never be delivered.
 	if s.cfg.signerErr != nil {
@@ -165,6 +174,19 @@ func (s *Server) processMessage(ctx context.Context, msg *pkicmp.PKIMessage) *pk
 				FailInfo:     pkicmp.FailBadMessageCheck,
 				StatusString: pkicmp.PKIFreeText{err.Error()},
 			})
+		}
+	}
+
+	// RFC 9483 §5.2.2.1: other header fields of a nested message can be
+	// ignored, so it skips the header validation below. The forwarded request
+	// gets it instead.
+	if msg.Body.Type == pkicmp.BodyTypeNested {
+		return s.handleNested(ctx, msg, sender)
+	}
+	if fwd != nil {
+		sender.RA = fwd.ra
+		if err := s.cfg.raAuthorizer.AuthorizeRA(ctx, fwd.ra, msg, sender); err != nil {
+			return s.buildErrorResponse(fwd.msg, fwd.ra, errorToStatusInfo(err))
 		}
 	}
 
@@ -325,6 +347,11 @@ func validateProfileSender(msg *pkicmp.PKIMessage, sender *SenderIdentity) error
 	if sender == nil || !sender.MACVerified {
 		return nil
 	}
+	// RFC 9483 §5.2.2.1 lets the receiver ignore the sender of a nested
+	// message. Whether a MAC may protect one at all is for the RAAuthorizer.
+	if msg.Body.Type == pkicmp.BodyTypeNested {
+		return nil
+	}
 	if len(msg.Header.Sender.DirectoryName) == 0 {
 		return errors.New("MAC protection requires directoryName sender")
 	}
@@ -336,8 +363,9 @@ func validateProfileExtraCerts(msg *pkicmp.PKIMessage, sender *SenderIdentity) e
 	if sender == nil || sender.MACVerified {
 		return nil
 	}
-	// §3.3 allows extraCerts to be omitted in certConf, PKIConf, pollReq and pollRep.
-	if !isInitialRequest(msg.Body.Type) {
+	// §3.3 allows extraCerts to be omitted in certConf, PKIConf, pollReq and
+	// pollRep. §5.2.2 requires them in a nested message.
+	if !isInitialRequest(msg.Body.Type) && msg.Body.Type != pkicmp.BodyTypeNested {
 		return nil
 	}
 	if len(msg.ExtraCerts) == 0 {

@@ -69,6 +69,10 @@ type SenderIdentity struct {
 	SenderKID []byte
 	// MACVerified is true when protection was verified via shared secret.
 	MACVerified bool
+	// RA identifies the registration authority that forwarded the request in a
+	// nested message, once [RAAuthorizer] accepted it. It is nil for a request
+	// sent directly.
+	RA *SenderIdentity
 
 	// secret is the verified shared secret, cached to avoid redundant lookups
 	// when protecting the response.
