@@ -68,7 +68,7 @@ type PKIBody struct {
 	pollReq  *PollReqContent
 	pollRep  *PollRepContent
 	errorMsg *ErrorMsgContent
-	nested   *PKIMessage
+	nested   []*PKIMessage
 }
 
 type BodyType cbasn1.Tag
@@ -185,14 +185,24 @@ func (b *PKIBody) marshal(mctx *marshalContext, builder *cryptobyte.Builder) {
 		case BodyTypeError:
 			b.errorMsg.marshal(mctx, builder)
 		case BodyTypeNested:
-			// NestedMessageContent ::= PKIMessage (RFC 9810 §5.1.3.5)
-			// The inner PKIMessage is encoded as a full DER SEQUENCE inside the [20] tag.
-			der, err := b.nested.MarshalBinary()
-			if err != nil {
-				builder.SetError(err)
+			if len(b.nested) == 0 {
+				builder.SetError(&ParseError{Detail: "nested body requires at least one message"})
 				return
 			}
-			builder.AddBytes(der)
+			builder.AddASN1(cbasn1.SEQUENCE, func(builder *cryptobyte.Builder) {
+				for _, msg := range b.nested {
+					if msg == nil {
+						builder.SetError(&ParseError{Detail: "nil message in nested body"})
+						return
+					}
+					der, err := msg.marshalForNesting()
+					if err != nil {
+						builder.SetError(err)
+						return
+					}
+					builder.AddBytes(der)
+				}
+			})
 		default:
 			// Should not happen if correctly constructed
 			builder.AddBytes(b.Raw)
@@ -392,23 +402,43 @@ func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 	return b.errorMsg, b.err
 }
 
-// Nested returns the inner PKIMessage from a nested [20] body.
-// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
-func (b *PKIBody) Nested() (*PKIMessage, error) {
+// Nested returns the messages carried by a nested [20] body.
+//
+// RFC 9810 §5.1.3.5 and RFC 4210 §5.1.3.4 both define NestedMessageContent as
+// PKIMessages, a SEQUENCE SIZE (1..MAX) OF PKIMessage.
+func (b *PKIBody) Nested() ([]*PKIMessage, error) {
 	if b.Type != BodyTypeNested {
 		return nil, &ParseError{Detail: fmt.Sprintf("body is not nested (type %s)", b.Type)}
 	}
 	if b.nested == nil && b.err == nil {
-		// Parse the inner PKIMessage from the body content bytes.
-		s := cryptobyte.String(b.Raw)
-		var content cryptobyte.String
-		if !s.ReadASN1(&content, cbasn1.Tag(b.Type)) {
-			b.err = &ParseError{Detail: "invalid nested body content"}
-			return nil, b.err
-		}
-		b.nested, b.err = ParsePKIMessage([]byte(content))
+		b.nested, b.err = parseNestedMessages(b.Raw)
 	}
 	return b.nested, b.err
+}
+
+// parseNestedMessages decodes the PKIMessages inside a DER nested [20] body element.
+func parseNestedMessages(raw []byte) ([]*PKIMessage, error) {
+	s := cryptobyte.String(raw)
+	var content, seq cryptobyte.String
+	if !s.ReadASN1(&content, cbasn1.Tag(BodyTypeNested)) || !content.ReadASN1(&seq, cbasn1.SEQUENCE) || !content.Empty() {
+		return nil, &ParseError{Detail: "invalid nested body content"}
+	}
+	var msgs []*PKIMessage
+	for !seq.Empty() {
+		var elem cryptobyte.String
+		if !seq.ReadASN1Element(&elem, cbasn1.SEQUENCE) {
+			return nil, &ParseError{Detail: "invalid message in nested body"}
+		}
+		msg, err := ParsePKIMessage(elem)
+		if err != nil {
+			return nil, &ParseError{Detail: "nested message", Err: err}
+		}
+		msgs = append(msgs, msg)
+	}
+	if len(msgs) == 0 {
+		return nil, &ParseError{Detail: "nested body contains no messages"}
+	}
+	return msgs, nil
 }
 
 func (b *PKIBody) unmarshalBodyContent(p interface {
@@ -493,8 +523,11 @@ func NewErrorBody(err *ErrorMsgContent) *PKIBody {
 	return &PKIBody{Type: BodyTypeError, errorMsg: err, dirty: true}
 }
 
-// NewNestedBody creates a nested [20] body wrapping a single inner PKIMessage.
-// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
-func NewNestedBody(msg *PKIMessage) *PKIBody {
-	return &PKIBody{Type: BodyTypeNested, nested: msg, dirty: true}
+// NewNestedBody creates a nested [20] body carrying one or more messages (RFC 9810 §5.1.3.5).
+//
+// A protected message keeps the exact header and body bytes its protection was
+// computed over, so a received message is forwarded without breaking its
+// protection. An unprotected message is encoded from its fields.
+func NewNestedBody(msgs ...*PKIMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeNested, nested: msgs, dirty: true}
 }

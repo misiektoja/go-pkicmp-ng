@@ -271,27 +271,50 @@ func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		m.Header.marshal(mctx, b)
 		b.AddBytes(bodyBytes)
-
-		if len(m.Protection) > 0 {
-			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
-					b.AddUint8(0) // No unused bits for now
-					b.AddBytes(m.Protection)
-				})
-			})
-		}
-
-		if len(m.ExtraCerts) > 0 {
-			b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-					for _, cert := range m.ExtraCerts {
-						cert.marshal(mctx, b)
-					}
-				})
-			})
-		}
+		m.marshalTrailer(mctx, b)
 	})
 	return b.Bytes()
+}
+
+// marshalForNesting encodes the message for a nested body, reusing the header and body bytes a protected message was protected over.
+//
+// Re-encoding a received header from its decoded fields need not reproduce the
+// original bytes, and any difference would invalidate the protection the
+// receiver of the nested message verifies.
+func (m *PKIMessage) marshalForNesting() ([]byte, error) {
+	if len(m.Protection) == 0 || len(m.rawHeader) == 0 || len(m.rawBody) == 0 {
+		return m.MarshalBinary()
+	}
+	mctx := &marshalContext{MinRequiredPVNO: max(m.Header.PVNO, PVNO2)}
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		b.AddBytes(m.rawHeader)
+		b.AddBytes(m.rawBody)
+		m.marshalTrailer(mctx, b)
+	})
+	return b.Bytes()
+}
+
+// marshalTrailer adds the optional protection and extraCerts fields that follow the body.
+func (m *PKIMessage) marshalTrailer(mctx *marshalContext, b *cryptobyte.Builder) {
+	if len(m.Protection) > 0 {
+		b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+			b.AddASN1(cbasn1.BIT_STRING, func(b *cryptobyte.Builder) {
+				b.AddUint8(0) // No unused bits for now
+				b.AddBytes(m.Protection)
+			})
+		})
+	}
+
+	if len(m.ExtraCerts) > 0 {
+		b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+			b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+				for _, cert := range m.ExtraCerts {
+					cert.marshal(mctx, b)
+				}
+			})
+		})
+	}
 }
 
 func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
