@@ -153,6 +153,39 @@
 // acceptance or the rejection RevokeCertificate returned. A custom [Handler]
 // that returns a [WaitingResponse] for an rr gets systemFailure.
 //
+// # Registration authorities
+//
+// A registration authority (RA) can approve a request by forwarding it unchanged
+// inside a nested message that carries the RA's own protection (RFC 9483
+// §5.2.2.1). Accept such messages with [WithRAAuthorizer]:
+//
+//	server.WithRAAuthorizer(server.RAAuthorizerFunc(func(ctx context.Context,
+//	    ra *server.SenderIdentity, req *pkicmp.PKIMessage, sender *server.SenderIdentity) error {
+//
+//	    if ra.Certificate == nil || !ra.Certificate.Equal(raCert) {
+//	        return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized}
+//	    }
+//	    return nil
+//	}))
+//
+// The server verifies the nested message, then handles the forwarded request as
+// if the end entity had sent it directly. The request's own protection is
+// verified and the response is protected for the end entity, uses its pvno and
+// is not wrapped in a nested message. The authorizer runs once both protections
+// are verified, and [SenderIdentity.RA] tells the CA which RA approved the
+// request.
+//
+// The nested message must copy the transactionID and senderNonce of the request
+// it wraps. Problems with the nested message itself, including a refusal by the
+// authorizer, are reported to the RA in an error message. Without an authorizer
+// nested messages are rejected with badRequest. Batching several messages in
+// one nested message (RFC 9483 §5.2.2.2) is not supported and is also rejected
+// with badRequest.
+//
+// RFC 9483 requires the RA to sign the nested message, while RFC 4210 also
+// allows a MAC. The authorizer decides. The example above refuses a MAC, since
+// ra.Certificate is nil for one.
+//
 // # Authentication
 //
 // The server verifies every message's protection before passing it to the CA or
