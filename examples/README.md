@@ -38,17 +38,28 @@ This directory contains a complete, runnable demonstration of the `client` and `
 5. Server returns the renewed certificate. The client verifies the response
    signature using the trust anchor established in step 1.
 
+**Step 3 — Revocation (RR, signature-protected)**
+
+1. Client sends an RR for the renewed certificate, signed with that
+   certificate and its key.
+2. Server verifies the signature, checks that the signer is the certificate
+   being revoked, and calls `MockCA.RevokeCertificate`.
+3. MockCA records the revocation. The revoked certificate can no longer
+   authenticate requests.
+4. Server returns an RP with status accepted.
+
 Everything runs in memory — no files are written to disk.
 
 ## Code Structure
 
 - [`mockserver/mockserver.go`](mockserver/mockserver.go) — implements the
   [`server.CA`](../server/ca.go) interface (certificate issuance, secret
-  lookup, certificate lookup).
+  lookup, certificate lookup) and the optional
+  [`server.Revoker`](../server/revocation.go) interface.
 - [`mockserver/cmd/main.go`](mockserver/cmd/main.go) — connects the MockCA to
   [`server.NewCAServer`](../server/ca.go) and starts an HTTP server.
 - [`mockclient/mockclient.go`](mockclient/mockclient.go) — shows MAC-based
-  enrollment (IR) and signature-based key update (KUR) using the
-  [`client`](../client/) package.
-- [`mockclient/cmd/main.go`](mockclient/cmd/main.go) — runs both flows
+  enrollment (IR), signature-based key update (KUR) and revocation (RR) using
+  the [`client`](../client/) package.
+- [`mockclient/cmd/main.go`](mockclient/cmd/main.go) — runs the three flows
   back-to-back against the mock server.
