@@ -49,7 +49,7 @@ The library is split into three packages:
 
 *   **[`pkicmp`](./pkicmp/)**: Core types for CMP and CRMF ASN.1 structures. Handles parsing, serialization, PVNO 2/3, and protection (MAC or X.509 signatures).
 *   **[`client`](./client/)**: Handles IR, CR, KUR, and P10CR enrollment flows, including automatic polling, response verification, and certificate confirmation. Sends revocation requests (RR).
-*   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, handles revocation for CAs that implement it, and enforces policies via middleware (including the lightweight profile).
+*   **[`server`](./server/)**: Exposes an HTTP handler that authenticates clients, tracks transactions, supports async issuance, handles revocation for CAs that implement it, accepts requests a registration authority forwards in nested messages and enforces policies via middleware (including the lightweight profile).
 
 ## Usage
 
