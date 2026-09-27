@@ -120,4 +120,22 @@ func main() {
 
 	printCert(log, "renewed", renewal.Certificate)
 	verifyCert(log, renewal.Certificate, trustedCAs)
+
+	// --- Step 3: Revocation (RR) with signature protection ---
+	//
+	// The device retires the renewed certificate. RFC 9483 §4.2 expects the
+	// request to be signed with the certificate being revoked, which proves
+	// the device is entitled to revoke it.
+	revCreds, err := pkicmp.NewSignatureCredentials(newKey, renewal.Certificate, result.CAPubs...)
+	if err != nil {
+		log.Error("creating revocation credentials", "error", err)
+		return
+	}
+
+	log.Info("sending RR with signature protection")
+	if err := c.SendRR(context.Background(), renewal.Certificate, pkicmp.CRLReasonCessationOfOperation, revCreds); err != nil {
+		log.Error("RR failed", "error", err)
+		return
+	}
+	log.Info("certificate revoked", "serial", renewal.Certificate.SerialNumber.String())
 }
