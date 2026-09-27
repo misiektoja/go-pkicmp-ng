@@ -2,6 +2,24 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.2.0 - TBD
+
+Revoke certificates over CMP from the client and accept revocation requests in the server.
+
+### `pkicmp`
+
+* **`RevReqContent` and `RevRepContent`** encode and parse revocation request (`rr`) and response (`rp`) bodies. **`NewRevDetails`** names a certificate by issuer and serial number and adds a **`CRLReason`**.
+* **`CertTemplate`** supports the `serialNumber` and `issuer` fields.
+
+### `client`
+
+* **`SendRR`** asks the CA to revoke a certificate. A rejection such as `certRevoked` is returned as `*pkicmp.PKIStatusError`. Sign the request with the certificate being revoked, or with registration authority credentials when the CA allows that. A delayed answer is polled like enrollment.
+
+### `server`
+
+* **Revocation requests** reach CAs that implement the new **`Revoker`** interface. By default only the certificate being revoked may sign the request. Implement **`RevocationAuthorizer`** to accept other signers, such as a registration authority. Revocation is synchronous. A CA without `Revoker` rejects revocation requests with `badRequest`.
+* **`LightweightPolicy`** requires revocation requests to use signature protection and to carry a reason code.
+
 ## v0.1.0 - 2026-09-27
 
 Enroll and confirm certificates with ML-DSA keys and signatures.
