@@ -109,6 +109,21 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 		}
 	}
 
+	// A nested body carrying the last two protected messages.
+	var inner []*pkicmp.PKIMessage
+	for _, der := range seeds[len(seeds)-2:] {
+		msg, err := pkicmp.ParsePKIMessage(der)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		inner = append(inner, msg)
+	}
+	nested, err := pkicmp.NewPKIMessage(pkicmp.NewNestedBody(inner...), pkicmp.MessageOptions{}).MarshalBinary()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	seeds = append(seeds, nested)
+
 	return seeds
 }
 
@@ -171,7 +186,12 @@ func exerciseBody(msg *pkicmp.PKIMessage) {
 	case pkicmp.BodyTypeError:
 		_, _ = msg.Body.Error()
 	case pkicmp.BodyTypeNested:
-		_, _ = msg.Body.Nested()
+		// Each level of nesting costs input bytes, so the recursion is bounded.
+		if msgs, err := msg.Body.Nested(); err == nil {
+			for _, inner := range msgs {
+				exerciseBody(inner)
+			}
+		}
 	}
 }
 
