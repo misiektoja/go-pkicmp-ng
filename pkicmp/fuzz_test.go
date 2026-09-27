@@ -50,8 +50,14 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 	}
 	cert := fuzzSeedCertificate(tb, key)
 
+	revDetails, err := pkicmp.NewRevDetails(cert, pkicmp.CRLReasonKeyCompromise)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
 	checkAfter := int64(60)
 	bodies := []*pkicmp.PKIBody{
+		pkicmp.NewRRBody(&pkicmp.RevReqContent{revDetails}),
 		pkicmp.NewPKIConfBody(),
 		pkicmp.NewIPBody(&pkicmp.CertRepMessage{
 			Response: []pkicmp.CertResponse{{
@@ -63,6 +69,10 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{{CertHash: cert.Raw[:32], CertReqID: 0}}),
 		pkicmp.NewPollReqBody(&pkicmp.PollReqContent{0}),
 		pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: checkAfter}}),
+		pkicmp.NewRPBody(&pkicmp.RevRepContent{
+			Status:   []pkicmp.PKIStatusInfo{{Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailCertRevoked}},
+			RevCerts: []pkicmp.CertID{{Issuer: pkicmp.NewDirectoryNameFromRawDER(cert.RawIssuer), SerialNumber: cert.SerialNumber}},
+		}),
 		pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
 			PKIStatusInfo: pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRequest},
 		}),
@@ -150,6 +160,14 @@ func exerciseBody(msg *pkicmp.PKIMessage) {
 		_, _ = msg.Body.PollReq()
 	case pkicmp.BodyTypePollRep:
 		_, _ = msg.Body.PollRep()
+	case pkicmp.BodyTypeRR:
+		if rr, err := msg.Body.RR(); err == nil {
+			for i := range *rr {
+				_, _ = (*rr)[i].CRLEntryExtensions()
+			}
+		}
+	case pkicmp.BodyTypeRP:
+		_, _ = msg.Body.RP()
 	case pkicmp.BodyTypeError:
 		_, _ = msg.Body.Error()
 	case pkicmp.BodyTypeNested:
