@@ -90,6 +90,8 @@
 //
 //   - [PendingChecker]: asynchronous issuance with polling.
 //   - [CertificateConfirmer]: notification when a client accepts or rejects a certificate.
+//   - [Revoker]: revocation requests (rr).
+//   - [RevocationAuthorizer]: revocation by signers other than the certificate holder.
 //
 // # Asynchronous issuance (polling)
 //
@@ -121,6 +123,35 @@
 // confirm is granted ([ConfirmImplicit]), or when the transaction expires
 // ([ConfirmExpired]). The ref parameter echoes [Response.IssueRef] set during
 // [CA.IssueCertificate] for correlation.
+//
+// # Revocation
+//
+// Implement [Revoker] to accept revocation requests (RFC 9483 §4.2). Without it
+// the server rejects every rr with badRequest.
+//
+//	func (c *myCA) RevokeCertificate(ctx context.Context, req *server.RevocationRequest,
+//	    sender *server.SenderIdentity) error {
+//
+//	    cert := c.store.Find(req.Issuer, req.SerialNumber)
+//	    if err := req.Match(cert); err != nil {
+//	        return err // badCertId
+//	    }
+//	    if c.store.IsRevoked(cert) {
+//	        return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailCertRevoked}
+//	    }
+//	    return c.store.Revoke(cert, req.Reason)
+//	}
+//
+// The server authorizes the request before calling RevokeCertificate. By
+// default only the certificate being revoked may sign it, as RFC 9483 §4.2
+// requires. Requests signed by anyone else, such as a registration authority
+// (RFC 9483 §5.3.2), are rejected with notAuthorized unless the CA implements
+// [RevocationAuthorizer] and approves them. The same applies to MAC-protected
+// requests when the policy lets them through.
+//
+// Revocation is synchronous. The server answers with an rp that reports either
+// acceptance or the rejection RevokeCertificate returned. A custom [Handler]
+// that returns a [WaitingResponse] for an rr gets systemFailure.
 //
 // # Authentication
 //
@@ -189,6 +220,8 @@
 //   - Enforces subject presence in certificate templates.
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
+//   - Requires a revocation request to use signature protection and to carry
+//     a reasonCode.
 //
 // Some RFC 9483 rules govern how a peer constructs a message rather than how
 // this server authenticates it, and deployed clients break them. Those are off
