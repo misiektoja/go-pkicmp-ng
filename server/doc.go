@@ -206,7 +206,9 @@
 //
 //   - Proof of possession, so that a certificate is never issued for a public
 //     key the requester did not prove holding (RFC 4211 §4, RFC 9483 §5.1.1).
-//     For a p10cr this is the CSR self-signature.
+//     For a p10cr this is the CSR self-signature. Only signature-based proof is
+//     supported, so a CRMF request without a public key or for a key that
+//     cannot sign, such as X25519, is rejected.
 //   - Rejection of a BasicConstraints extension that cannot be decoded, so that
 //     no extension reaches [CA.IssueCertificate] that the checks above did not
 //     understand.
