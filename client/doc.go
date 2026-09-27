@@ -134,7 +134,9 @@
 // The issued certificate must certify the requested public key and must validate
 // against the configured anchors, using response extraCerts to complete the path.
 // Its subject is not checked, because a CA may return grantedWithMods having
-// changed it.
+// changed it. A certificate that fails these checks is rejected in certConf
+// before the error is returned, so the CA learns of it at once (RFC 9483
+// §3.6.1).
 //
 // # Limits
 //
