@@ -4,12 +4,13 @@ Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags p
 
 ## v0.2.0 - TBD
 
-Revoke certificates over CMP from the client and accept revocation requests in the server. The client tells the CA when it refuses an issued certificate, and the server no longer passes requests without a verified proof of possession to the CA.
+Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA.
 
 ### `pkicmp`
 
 * **`RevReqContent` and `RevRepContent`** encode and parse revocation request (`rr`) and response (`rp`) bodies. **`NewRevDetails`** names a certificate by issuer and serial number and adds a **`CRLReason`**.
 * **`CertTemplate`** supports the `serialNumber` and `issuer` fields.
+* **Nested message bodies use the encoding RFC 4210 and RFC 9810 define**, a sequence of one or more messages. They previously held a single message directly, which conforming peers could not parse. **`NewNestedBody`** takes one or more messages and **`Nested`** returns a slice. A protected message keeps the exact bytes its protection covers, so a received message can be forwarded without breaking its protection.
 
 ### `client`
 
@@ -19,6 +20,7 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 ### `server`
 
 * **Revocation requests** reach CAs that implement the new **`Revoker`** interface. By default only the certificate being revoked may sign the request. Implement **`RevocationAuthorizer`** to accept other signers, such as a registration authority. Revocation is synchronous. A CA without `Revoker` rejects revocation requests with `badRequest`.
+* **Requests forwarded by a registration authority** in a nested message are accepted when **`WithRAAuthorizer`** is set (RFC 9483 §5.2.2.1). The server verifies the protection of both the RA and the end entity, then answers the end entity as if it had sent the request directly. The authorizer decides which RAs may forward requests and whether a MAC-protected nested message is allowed, which RFC 4210 permits and RFC 9483 does not. **`SenderIdentity.RA`** names the approving RA. Without an authorizer nested messages are still rejected with `badRequest`. Batches of several messages are always rejected. `WithStrictProfileValidation` requires a signed nested message to carry `extraCerts`.
 * **`LightweightPolicy`** requires revocation requests to use signature protection and to carry a reason code.
 * **Proof of possession by signature is required** for every `ir`, `cr` and `kur`, with or without a policy. Requests for keys that cannot sign, such as X25519, are rejected with `badPOP` and requests without a public key with `badCertTemplate`. They previously reached the CA without any verified proof.
 
