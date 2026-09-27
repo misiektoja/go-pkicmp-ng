@@ -2,6 +2,7 @@ package server_test
 
 import (
 	"context"
+	"crypto/ecdh"
 	"crypto/ecdsa"
 	"crypto/elliptic"
 	"crypto/rand"
@@ -388,4 +389,67 @@ func TestSignatureSenderMustMatchLookedUpCertificate(t *testing.T) {
 			assert.False(t, issuer.called, "the CA must not see a sender the message did not authenticate")
 		})
 	}
+}
+
+// Only a signature proves possession here. RFC 9810 §5.2.8.3 gives keys that
+// cannot sign an indirect method, which is not implemented, so such a request
+// must be refused instead of reaching the CA with no proof at all.
+func TestProofOfPossessionRequiredForKeysThatCannotSign(t *testing.T) {
+	secret := []byte("pop-non-signing-key")
+	key, err := ecdh.X25519().GenerateKey(rand.Reader)
+	require.NoError(t, err)
+	subsequent := int64(0)
+
+	requests := map[string]func(t *testing.T) pkicmp.CertReqMsg{
+		"NoPOP": func(t *testing.T) pkicmp.CertReqMsg {
+			return certReqMsgWithoutPOP(t, key.PublicKey(), "x25519-no-pop")
+		},
+		"KeyEnciphermentPOP": func(t *testing.T) pkicmp.CertReqMsg {
+			msg := certReqMsgWithoutPOP(t, key.PublicKey(), "x25519-key-encipherment")
+			msg.Popo = pkicmp.NewKeyEnciphermentPOP(&subsequent)
+			return msg
+		},
+	}
+	policies := map[string]func(server.Handler) server.Handler{
+		"LightweightPolicy": server.LightweightPolicy(),
+		"NoPolicy":          nil,
+	}
+
+	for reqName, request := range requests {
+		for policyName, policy := range policies {
+			t.Run(reqName+"/"+policyName, func(t *testing.T) {
+				issuer := &recordingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}
+				ts := httptest.NewServer(server.NewCAServer(issuer, policy, server.WithSecretLookup(&staticMACLookup{secret: secret})))
+				defer ts.Close()
+
+				msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{request(t)}), macMessageOpts())
+				protectMAC(msg, secret)
+
+				status := rejectionStatus(t, postCMP(t, ts, msg))
+				assert.Equal(t, pkicmp.StatusRejection, status.Status)
+				assert.Equal(t, pkicmp.FailBadPOP, status.FailInfo)
+				assert.Equal(t, pkicmp.PKIFreeText{"proof of possession by signature required"}, status.StatusString)
+				assert.False(t, issuer.called, "the CA must not be reached without a verified proof")
+			})
+		}
+	}
+}
+
+// A template without a public key asks for central key generation, which is not supported.
+func TestCertRequestWithoutPublicKeyRejected(t *testing.T) {
+	secret := []byte("no-public-key")
+	issuer := &recordingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}
+	ts := httptest.NewServer(server.NewCAServer(issuer, nil, server.WithSecretLookup(&staticMACLookup{secret: secret})))
+	defer ts.Close()
+
+	req := pkicmp.CertReqMsg{CertReq: pkicmp.CertRequest{CertTemplate: pkicmp.CertTemplate{
+		Subject: pkicmp.NewDirectoryName(pkix.Name{CommonName: "central-keygen"}),
+	}}}
+	msg := pkicmp.NewPKIMessage(pkicmp.NewIRBody(&pkicmp.CertReqMessages{req}), macMessageOpts())
+	protectMAC(msg, secret)
+
+	status := rejectionStatus(t, postCMP(t, ts, msg))
+	assert.Equal(t, pkicmp.FailBadCertTemplate, status.FailInfo)
+	assert.Equal(t, pkicmp.PKIFreeText{"public key required"}, status.StatusString)
+	assert.False(t, issuer.called)
 }
