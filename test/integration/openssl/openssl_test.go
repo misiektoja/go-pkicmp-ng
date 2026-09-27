@@ -453,3 +453,43 @@ func TestOpenSSLInitializeP10CRWrongSecret(t *testing.T) {
 
 	t.Logf("Expected error: %v", err)
 }
+
+func TestOpenSSLRevoke(t *testing.T) {
+	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{})
+
+	// RFC 9483 §4.2: the request is signed with the certificate being revoked.
+	creds, err := pkicmp.NewSignatureCredentials(srv.RspKey, srv.RspCert)
+	require.NoError(t, err)
+
+	c := client.NewClient(srv.Endpoint,
+		client.WithRecipient(srv.CACert.Subject),
+		client.WithTrustedCAs(srv.TrustedCAs()),
+	)
+	err = c.SendRR(context.Background(), srv.RspCert, pkicmp.CRLReasonKeyCompromise, creds)
+	require.NoError(t, err, "SendRR")
+}
+
+func TestOpenSSLRevokeRejected(t *testing.T) {
+	// The mock server answers rr with the configured status in the rp body.
+	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
+		PKIStatus: intPtr(int(pkicmp.StatusRejection)),
+		Failure:   intPtr(10), // certRevoked
+	})
+
+	creds, err := pkicmp.NewSignatureCredentials(srv.RspKey, srv.RspCert)
+	require.NoError(t, err)
+
+	c := client.NewClient(srv.Endpoint,
+		client.WithRecipient(srv.CACert.Subject),
+		client.WithTrustedCAs(srv.TrustedCAs()),
+	)
+	err = c.SendRR(context.Background(), srv.RspCert, pkicmp.CRLReasonSuperseded, creds)
+	require.Error(t, err)
+
+	var statusErr *pkicmp.PKIStatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, pkicmp.StatusRejection, statusErr.Status)
+	assert.True(t, pkicmp.HasFailure(err, pkicmp.FailCertRevoked), "FailInfo should have certRevoked bit set")
+
+	t.Logf("Expected revocation failure: %v", err)
+}
