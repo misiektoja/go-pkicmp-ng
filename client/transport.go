@@ -24,7 +24,6 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	if err != nil {
 		return nil, err
 	}
-	sender, recipient := msg.Header.Sender, msg.Header.Recipient
 
 	cmpResp, vr, err := c.exchangeFirst(ctx, msg, creds)
 	if err != nil {
@@ -100,6 +99,8 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		}
 	}
 
+	conf := &certConfirmation{req: msg, resp: resp, creds: creds, trustPool: effectiveTrustPool, knownSigner: knownSigner}
+
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
 	if effectiveTrustPool != nil {
 		// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
@@ -118,12 +119,13 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
 		}
 		if _, err := cert.Verify(verifyOpts); err != nil {
-			return nil, cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err})
+			return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certificate validation failed",
+				cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err}))
 		}
 	}
 
 	if err := checkIssuedKey(cert, requestedKey); err != nil {
-		return nil, cmpResp.wrapError(err)
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certificate does not certify the requested public key", cmpResp.wrapError(err))
 	}
 
 	var parsedCACerts []*x509.Certificate
@@ -145,51 +147,8 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	if err != nil {
 		return nil, cmpResp.wrapError(&Error{Op: "compute certHash", Err: err})
 	}
-	confMsg := pkicmp.NewPKIMessage(
-		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{certStatus}),
-		pkicmp.MessageOptions{
-			Sender:     sender,
-			Recipient:  recipient,
-			RecipNonce: resp.Header.SenderNonce,
-		},
-	)
-	confMsg.Header.TransactionID = msg.Header.TransactionID
-	// Preserve senderKID across all messages in this transaction (RFC 9810 §5.1.1).
-	// For signature-based creds, ProtectWithSignature will overwrite this with the
-	// cert SubjectKeyId; for MAC-based creds it must be set explicitly.
-	confMsg.Header.SenderKID = msg.Header.SenderKID
-
-	if err := creds.Protect(confMsg); err != nil {
-		return nil, &Error{Op: "protect certConf", Err: err}
-	}
-
-	confDER, err := confMsg.MarshalBinary()
-	if err != nil {
-		return nil, &Error{Op: "marshal certConf", Err: err}
-	}
-
-	confHTTPResp, err := c.sendHTTP(ctx, confDER)
-	if err != nil {
-		return nil, &Error{Op: "certConf exchange", Err: err}
-	}
-
-	// RFC 9810 §5.3.18: The server MUST respond with PKIConf.
-	confCMPResp, err := confHTTPResp.parse("parse PKIConf")
-	if err != nil {
+	if err := c.sendCertConf(ctx, conf, certStatus); err != nil {
 		return nil, err
-	}
-	confResp := confCMPResp.message
-
-	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool, knownSigner); err != nil {
-		return nil, confCMPResp.wrapError(withUnverifiedStatus(confResp, &Error{Op: "verify PKIConf", Err: err}))
-	}
-
-	if confResp.Body.Type == pkicmp.BodyTypeError {
-		return nil, confCMPResp.wrapError(parseErrorResponse(confResp))
-	}
-
-	if confResp.Body.Type != pkicmp.BodyTypePKIConf {
-		return nil, confCMPResp.wrapError(&Error{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)})
 	}
 
 	return &EnrollResult{
@@ -197,6 +156,85 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		CAPubs:            parsedCACerts,
 		ExtraCertificates: parsedExtraCerts,
 	}, nil
+}
+
+// certConfirmation holds what a certConf needs from the enrollment exchange it confirms.
+type certConfirmation struct {
+	req         *pkicmp.PKIMessage // first request of the operation
+	resp        *pkicmp.PKIMessage // response that carried the certificate
+	creds       pkicmp.Credentials
+	trustPool   *x509.CertPool
+	knownSigner *x509.Certificate
+}
+
+// sendCertConf sends a certConf carrying status and checks that the CA answers with pkiConf.
+func (c *Client) sendCertConf(ctx context.Context, conf *certConfirmation, status pkicmp.CertStatus) error {
+	confMsg := pkicmp.NewPKIMessage(
+		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{status}),
+		pkicmp.MessageOptions{
+			Sender:     conf.req.Header.Sender,
+			Recipient:  conf.req.Header.Recipient,
+			RecipNonce: conf.resp.Header.SenderNonce,
+		},
+	)
+	confMsg.Header.TransactionID = conf.req.Header.TransactionID
+	// Preserve senderKID across all messages in this transaction (RFC 9810 §5.1.1).
+	// For signature-based creds, ProtectWithSignature will overwrite this with the
+	// cert SubjectKeyId; for MAC-based creds it must be set explicitly.
+	confMsg.Header.SenderKID = conf.req.Header.SenderKID
+
+	if err := conf.creds.Protect(confMsg); err != nil {
+		return &Error{Op: "protect certConf", Err: err}
+	}
+
+	confDER, err := confMsg.MarshalBinary()
+	if err != nil {
+		return &Error{Op: "marshal certConf", Err: err}
+	}
+
+	confHTTPResp, err := c.sendHTTP(ctx, confDER)
+	if err != nil {
+		return &Error{Op: "certConf exchange", Err: err}
+	}
+
+	// RFC 9810 §5.3.18: The server MUST respond with PKIConf.
+	confCMPResp, err := confHTTPResp.parse("parse PKIConf")
+	if err != nil {
+		return err
+	}
+	confResp := confCMPResp.message
+
+	if _, err := c.verifyResponse(confMsg, confResp, conf.creds, conf.trustPool, conf.knownSigner); err != nil {
+		return confCMPResp.wrapError(withUnverifiedStatus(confResp, &Error{Op: "verify PKIConf", Err: err}))
+	}
+
+	if confResp.Body.Type == pkicmp.BodyTypeError {
+		return confCMPResp.wrapError(parseErrorResponse(confResp))
+	}
+
+	if confResp.Body.Type != pkicmp.BodyTypePKIConf {
+		return confCMPResp.wrapError(&Error{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)})
+	}
+	return nil
+}
+
+// rejectCertificate reports a refused certificate to the CA with a rejecting certConf and returns reason.
+func (c *Client) rejectCertificate(ctx context.Context, conf *certConfirmation, cert *x509.Certificate, certReqID int64, text string, reason error) error {
+	// RFC 9483 §3.6.1: an end entity that refuses a newly issued certificate
+	// MUST say so in certConf and await pkiConf, so the CA can revoke or log it
+	// instead of waiting for the confirmation to expire.
+	status, err := pkicmp.NewCertStatus(cert, certReqID)
+	if err == nil {
+		status.StatusInfo = &pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection, StatusString: pkicmp.PKIFreeText{text}}
+		err = c.sendCertConf(ctx, conf, status)
+	}
+	if err != nil {
+		// A CA treats a missing certConf as a rejection as well (RFC 9483
+		// §4.1.1), so the outcome stands. The failure is kept as text only, so
+		// that pkicmp.HasFailure reports the reason and not the CA's answer.
+		return fmt.Errorf("%w (rejection not confirmed by the CA: %v)", reason, err)
+	}
+	return reason
 }
 
 // newRequest builds and protects the first message of an operation.
