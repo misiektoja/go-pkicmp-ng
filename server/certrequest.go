@@ -2,10 +2,6 @@ package server
 
 import (
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/mldsa"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -15,12 +11,11 @@ import (
 )
 
 type parsedCRMF struct {
-	certReqID   int64
-	subject     pkix.Name
-	publicKey   crypto.PublicKey
-	extensions  []pkix.Extension
-	popMissing  bool // POP not present in request
-	popRequired bool // Key type requires POP (signature-capable)
+	certReqID    int64
+	subject      pkix.Name
+	publicKey    crypto.PublicKey
+	extensions   []pkix.Extension
+	signaturePOP bool // request carries a signature proof of possession
 }
 
 // parseCRMFMsg extracts fields from a CRMF request body.
@@ -64,13 +59,9 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: err.Error()}
 		}
 		result.publicKey = pub
-
-		// Check if key type requires POP (signature-capable keys).
-		result.popRequired = isSignatureCapableKey(pub)
 	}
 
-	// Check if POP is missing.
-	result.popMissing = reqMsg.Popo == nil || reqMsg.Popo.Signature == nil
+	result.signaturePOP = reqMsg.Popo != nil && reqMsg.Popo.Signature != nil
 
 	// Extract extensions.
 	if len(reqMsg.CertReq.CertTemplate.Extensions) > 0 {
@@ -125,11 +116,15 @@ func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
 			}
 			return &Error{Status: pkicmp.StatusRejection, FailureInfo: failInfo, StatusText: err.Error()}
 		}
-		// A signature-capable key must carry the signature proof. Without this
-		// a request that simply omits popo would be accepted, since there is
-		// then nothing for verifyPOPMsg to check.
-		if crmf.popRequired && crmf.popMissing {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: "POP required for signature key"}
+		if crmf.publicKey == nil {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertTemplate, StatusText: "public key required"}
+		}
+		// verifyPOPMsg checks only a signature proof and passes a request that
+		// omits popo or uses another variant. A key that cannot sign would need
+		// the indirect method of RFC 9810 §5.2.8.3, which is not implemented, so
+		// such requests are refused rather than issued for an unproven key.
+		if !crmf.signaturePOP {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: "proof of possession by signature required"}
 		}
 		return nil
 	}
@@ -156,16 +151,6 @@ func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
 	}
 
 	return pkicmp.VerifyPOP(&(*msgs)[0])
-}
-
-// isSignatureCapableKey identifies keys that require signature proof of possession.
-func isSignatureCapableKey(pub crypto.PublicKey) bool {
-	switch pub.(type) {
-	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
-		return true
-	default:
-		return false
-	}
 }
 
 // oidBasicConstraints identifies the RFC 5280 §4.2.1.9 BasicConstraints extension.
