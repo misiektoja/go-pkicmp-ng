@@ -20,68 +20,22 @@ import (
 // request → response → [poll] → certConf → pkiConf
 // (RFC 9810 §5.3.1–§5.3.4, Appendix C.4).
 func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions, requestedKey crypto.PublicKey) (*EnrollResult, error) {
-	if creds == nil {
-		return nil, &Error{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
-	}
-	sender := pkicmp.GeneralName{}
-	if opts.sender != nil {
-		sender = pkicmp.NewDirectoryName(*opts.sender)
-	} else if sc, ok := creds.(*pkicmp.SignatureCredentials); ok && sc.Certificate() != nil {
-		// RFC 9810 §C.5/C.6: sender name SHOULD be present for CR/KUR.
-		sender = pkicmp.NewDirectoryName(sc.Certificate().Subject)
-	}
-
-	recipient := pkicmp.GeneralName{}
-	if !isEmptyName(c.recipient) {
-		recipient = pkicmp.NewDirectoryName(c.recipient)
-	}
-
-	msg := pkicmp.NewPKIMessage(reqBody, pkicmp.MessageOptions{
-		Sender:    sender,
-		Recipient: recipient,
-	})
-
-	for _, cert := range c.extraCerts {
-		msg.ExtraCerts = append(msg.ExtraCerts, pkicmp.CMPCertificate{Raw: cert.Raw})
-	}
-
-	// RFC 9810 §5.1.1: senderKID identifies the key used for protection.
-	// For MAC-protected requests it carries the reference number of the shared secret.
-	msg.Header.SenderKID = opts.senderKID
-
-	if err := creds.Protect(msg); err != nil {
-		return nil, &Error{Op: "protect request", Err: err}
-	}
-
-	reqDER, err := msg.MarshalBinary()
-	if err != nil {
-		return nil, &Error{Op: "marshal request", Err: err}
-	}
-
-	httpResp, err := c.sendHTTP(ctx, reqDER)
+	msg, err := c.newRequest(reqBody, creds, opts)
 	if err != nil {
 		return nil, err
 	}
+	sender, recipient := msg.Header.Sender, msg.Header.Recipient
 
-	cmpResp, err := httpResp.parse("parse response")
+	cmpResp, vr, err := c.exchangeFirst(ctx, msg, creds)
 	if err != nil {
 		return nil, err
 	}
 	resp := cmpResp.message
-
-	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs, nil)
-	if err != nil {
-		return nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify response", Err: err}))
-	}
 	// Keep the signer authenticated here so the rest of the operation can still
 	// be verified when the server stops sending extraCerts.
 	var knownSigner *x509.Certificate
 	if vr != nil {
 		knownSigner = vr.ProtectionCertificate
-	}
-
-	if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
-		return nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)})
 	}
 
 	if resp.Body.Type == pkicmp.BodyTypeError {
@@ -243,6 +197,72 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		CAPubs:            parsedCACerts,
 		ExtraCertificates: parsedExtraCerts,
 	}, nil
+}
+
+// newRequest builds and protects the first message of an operation.
+func (c *Client) newRequest(reqBody *pkicmp.PKIBody, creds pkicmp.Credentials, opts *requestOptions) (*pkicmp.PKIMessage, error) {
+	if creds == nil {
+		return nil, &Error{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
+	}
+	sender := pkicmp.GeneralName{}
+	if opts.sender != nil {
+		sender = pkicmp.NewDirectoryName(*opts.sender)
+	} else if sc, ok := creds.(*pkicmp.SignatureCredentials); ok && sc.Certificate() != nil {
+		// RFC 9810 §C.5/C.6: sender name SHOULD be present for CR/KUR.
+		sender = pkicmp.NewDirectoryName(sc.Certificate().Subject)
+	}
+
+	recipient := pkicmp.GeneralName{}
+	if !isEmptyName(c.recipient) {
+		recipient = pkicmp.NewDirectoryName(c.recipient)
+	}
+
+	msg := pkicmp.NewPKIMessage(reqBody, pkicmp.MessageOptions{
+		Sender:    sender,
+		Recipient: recipient,
+	})
+
+	for _, cert := range c.extraCerts {
+		msg.ExtraCerts = append(msg.ExtraCerts, pkicmp.CMPCertificate{Raw: cert.Raw})
+	}
+
+	// RFC 9810 §5.1.1: senderKID identifies the key used for protection.
+	// For MAC-protected requests it carries the reference number of the shared secret.
+	msg.Header.SenderKID = opts.senderKID
+
+	if err := creds.Protect(msg); err != nil {
+		return nil, &Error{Op: "protect request", Err: err}
+	}
+	return msg, nil
+}
+
+// exchangeFirst sends the first request of an operation and returns its verified response.
+func (c *Client) exchangeFirst(ctx context.Context, msg *pkicmp.PKIMessage, creds pkicmp.Credentials) (*cmpHTTPResponse, *pkicmp.VerifyResult, error) {
+	reqDER, err := msg.MarshalBinary()
+	if err != nil {
+		return nil, nil, &Error{Op: "marshal request", Err: err}
+	}
+
+	httpResp, err := c.sendHTTP(ctx, reqDER)
+	if err != nil {
+		return nil, nil, err
+	}
+
+	cmpResp, err := httpResp.parse("parse response")
+	if err != nil {
+		return nil, nil, err
+	}
+	resp := cmpResp.message
+
+	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs, nil)
+	if err != nil {
+		return nil, nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify response", Err: err}))
+	}
+
+	if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
+		return nil, nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)})
+	}
+	return cmpResp, vr, nil
 }
 
 func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyType) (*pkicmp.CertResponse, *pkicmp.CertRepMessage, error) {
