@@ -61,6 +61,8 @@ type PKIBody struct {
 	p10cr    *x509.CertificateRequest
 	kur      *CertReqMessages
 	kup      *CertRepMessage
+	rr       *RevReqContent
+	rp       *RevRepContent
 	certConf *CertConfirmContent
 	pkiConf  *PKIConfirmContent
 	pollReq  *PollReqContent
@@ -84,6 +86,8 @@ const (
 	BodyTypeP10CR    = BodyType(4 | classContextSpecific | classConstructed)
 	BodyTypeKUR      = BodyType(7 | classContextSpecific | classConstructed)
 	BodyTypeKUP      = BodyType(8 | classContextSpecific | classConstructed)
+	BodyTypeRR       = BodyType(11 | classContextSpecific | classConstructed)
+	BodyTypeRP       = BodyType(12 | classContextSpecific | classConstructed)
 	BodyTypePKIConf  = BodyType(19 | classContextSpecific | classConstructed)
 	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: nested [20] NestedMessageContent
 	BodyTypeError    = BodyType(23 | classContextSpecific | classConstructed)
@@ -109,6 +113,10 @@ func (t BodyType) String() string {
 		return "kur"
 	case BodyTypeKUP:
 		return "kup"
+	case BodyTypeRR:
+		return "rr"
+	case BodyTypeRP:
+		return "rp"
 	case BodyTypePKIConf:
 		return "pkiconf"
 	case BodyTypeNested:
@@ -162,6 +170,10 @@ func (b *PKIBody) marshal(mctx *marshalContext, builder *cryptobyte.Builder) {
 			b.kur.marshal(mctx, builder)
 		case BodyTypeKUP:
 			b.kup.marshal(mctx, builder)
+		case BodyTypeRR:
+			b.rr.marshal(mctx, builder)
+		case BodyTypeRP:
+			b.rp.marshal(mctx, builder)
 		case BodyTypeCertConf:
 			b.certConf.marshal(mctx, builder)
 		case BodyTypePKIConf:
@@ -301,6 +313,30 @@ func (b *PKIBody) IP() (*CertRepMessage, error) {
 	return b.ip, b.err
 }
 
+// RR returns the revocation request content (RFC 9810 §5.3.9).
+func (b *PKIBody) RR() (*RevReqContent, error) {
+	if b.Type != BodyTypeRR {
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not rr (type %s)", b.Type)}
+	}
+	if b.rr == nil && b.err == nil {
+		b.rr = &RevReqContent{}
+		b.err = b.unmarshalBodyContent(b.rr)
+	}
+	return b.rr, b.err
+}
+
+// RP returns the revocation response content (RFC 9810 §5.3.10).
+func (b *PKIBody) RP() (*RevRepContent, error) {
+	if b.Type != BodyTypeRP {
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not rp (type %s)", b.Type)}
+	}
+	if b.rp == nil && b.err == nil {
+		b.rp = &RevRepContent{}
+		b.err = b.unmarshalBodyContent(b.rp)
+	}
+	return b.rp, b.err
+}
+
 func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 	if b.Type != BodyTypeCertConf {
 		return nil, &ParseError{Detail: fmt.Sprintf("body is not certConf (type %s)", b.Type)}
@@ -425,6 +461,16 @@ func NewCPBody(rep *CertRepMessage) *PKIBody {
 
 func NewIPBody(rep *CertRepMessage) *PKIBody {
 	return &PKIBody{Type: BodyTypeIP, ip: rep, dirty: true}
+}
+
+// NewRRBody creates a revocation request body (RFC 9810 §5.3.9).
+func NewRRBody(req *RevReqContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeRR, rr: req, dirty: true}
+}
+
+// NewRPBody creates a revocation response body (RFC 9810 §5.3.10).
+func NewRPBody(rep *RevRepContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeRP, rp: rep, dirty: true}
 }
 
 func NewCertConfBody(conf *CertConfirmContent) *PKIBody {

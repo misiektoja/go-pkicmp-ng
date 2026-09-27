@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"fmt"
+	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -312,10 +313,13 @@ func (a *AttributeTypeAndValue) unmarshal(s *cryptobyte.String) error {
 
 // CertTemplate per RFC 4211 §2.
 //
-// Only subject [5], publicKey [6], and extensions [9] are supported.
-// Other fields (version, serialNumber, issuer, validity, issuerUID, subjectUID)
-// are silently skipped during parsing.
+// Only serialNumber [1], issuer [3], subject [5], publicKey [6] and extensions [9]
+// are supported. Other fields (version, signingAlg, validity, issuerUID,
+// subjectUID) are silently skipped during parsing.
 type CertTemplate struct {
+	// SerialNumber identifies an existing certificate, as in a revocation request.
+	SerialNumber *big.Int
+	Issuer       []byte // Raw DER Name, such as x509.Certificate.RawIssuer
 	// Subject is the requested certificate subject DN.
 	Subject    GeneralName
 	PublicKey  []byte // Raw DER SubjectPublicKeyInfo
@@ -324,6 +328,23 @@ type CertTemplate struct {
 
 func (t *CertTemplate) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		if t.SerialNumber != nil {
+			// serialNumber [1] INTEGER OPTIONAL (IMPLICIT)
+			b.AddASN1(cbasn1.Tag(1).ContextSpecific(), func(b *cryptobyte.Builder) {
+				b.AddBytes(marshalImplicitBigInt(t.SerialNumber))
+			})
+		}
+		if len(t.Issuer) > 0 {
+			// issuer [3] Name OPTIONAL
+			// Name is a CHOICE, so the tag is EXPLICIT and wraps the SEQUENCE.
+			if !isSingleElement(t.Issuer, cbasn1.SEQUENCE) {
+				b.SetError(fmt.Errorf("pkicmp: invalid issuer DER"))
+				return
+			}
+			b.AddASN1(cbasn1.Tag(3).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+				b.AddBytes(t.Issuer)
+			})
+		}
 		if len(t.Subject.DirectoryName) > 0 {
 			// subject [5] Name OPTIONAL
 			// Name is CHOICE { rdnSequence RDNSequence }
@@ -375,6 +396,25 @@ func (t *CertTemplate) unmarshal(s *cryptobyte.String) error {
 		}
 
 		switch tag {
+		case cbasn1.Tag(1).ContextSpecific():
+			var content cryptobyte.String
+			if !sub.ReadASN1(&content, tag) {
+				return &ParseError{Detail: "invalid serialNumber tag"}
+			}
+			serial, err := unmarshalImplicitBigInt(content)
+			if err != nil {
+				return err
+			}
+			t.SerialNumber = serial
+		case cbasn1.Tag(3).ContextSpecific().Constructed():
+			var content, name cryptobyte.String
+			if !sub.ReadASN1(&content, tag) {
+				return &ParseError{Detail: "invalid issuer tag"}
+			}
+			if !content.ReadASN1Element(&name, cbasn1.SEQUENCE) || !content.Empty() {
+				return &ParseError{Detail: "invalid issuer name"}
+			}
+			t.Issuer = name
 		case cbasn1.Tag(5).ContextSpecific().Constructed():
 			var content cryptobyte.String
 			if !sub.ReadASN1(&content, tag) {

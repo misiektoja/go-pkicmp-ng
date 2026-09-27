@@ -5,6 +5,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -482,6 +483,35 @@ func marshalImplicitInt64(val int64) []byte {
 	var content cryptobyte.String
 	s.ReadASN1(&content, cbasn1.INTEGER)
 	return content
+}
+
+// marshalImplicitBigInt returns the content octets of an INTEGER for use under an implicit tag.
+func marshalImplicitBigInt(n *big.Int) []byte {
+	var b cryptobyte.Builder
+	b.AddASN1BigInt(n)
+	der := b.BytesOrPanic()
+	s := cryptobyte.String(der)
+	var content cryptobyte.String
+	s.ReadASN1(&content, cbasn1.INTEGER)
+	return content
+}
+
+// unmarshalImplicitBigInt decodes the content octets of an implicitly tagged INTEGER, rejecting non-minimal encodings.
+func unmarshalImplicitBigInt(content []byte) (*big.Int, error) {
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.INTEGER, func(b *cryptobyte.Builder) {
+		b.AddBytes(content)
+	})
+	der, err := b.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	s := cryptobyte.String(der)
+	n := new(big.Int)
+	if !s.ReadASN1Integer(n) {
+		return nil, &ParseError{Detail: "invalid integer"}
+	}
+	return n, nil
 }
 
 func unmarshalImplicitInt64(content []byte) (int64, error) {
