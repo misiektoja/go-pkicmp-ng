@@ -5,7 +5,7 @@
 // registration), [Client.SendCR] (certification), [Client.SendKUR] (key update),
 // and [Client.SendP10CR] (PKCS#10 request). All handle the full lifecycle
 // transparently: protection, response verification, polling, and certificate
-// confirmation.
+// confirmation. [Client.SendRR] asks the CA to revoke a certificate.
 //
 // # Initial enrollment with MAC protection
 //
@@ -57,6 +57,24 @@
 // SendKUR automatically identifies oldCert through the CRMF oldCertID control
 // when newCreds is a [pkicmp.SignatureCredentials]. Custom credential types can
 // provide the certificate with [WithOldCertificate].
+//
+// # Revocation
+//
+// RFC 9483 §4.2 expects the request to be signed with the certificate being
+// revoked:
+//
+//	creds, err := pkicmp.NewSignatureCredentials(certKey, cert)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	err = c.SendRR(context.Background(), cert, pkicmp.CRLReasonKeyCompromise, creds)
+//	if pkicmp.HasFailure(err, pkicmp.FailCertRevoked) {
+//	    fmt.Println("certificate was already revoked")
+//	}
+//
+// [pkicmp.CRLReasonCertificateHold] suspends a certificate and
+// [pkicmp.CRLReasonRemoveFromCRL] releases it, if the CA supports holds. A CA
+// that delays its answer is polled as described below, without certConf.
 //
 // # Asynchronous enrollment and polling
 //
