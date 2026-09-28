@@ -96,8 +96,8 @@ func (s *SenderIdentity) credentialID() ([]byte, error) {
 	switch {
 	case s.MACVerified:
 		// SecretLookup may find the secret by senderKID, by the sender name or by
-		// both, and RFC 4210 §5.1.1 tells a sender whose name identifies the
-		// secret to omit senderKID. Keying on senderKID alone would give all such
+		// both. RFC 4210 §5.1.1 tells a sender whose name identifies the secret
+		// to omit senderKID. Keying on senderKID alone would give all such
 		// clients one identity. RFC 4210 Appendix D.4 keeps both fields the same
 		// for the whole transaction. The prefix keeps this input apart from a
 		// certificate, whose DER encoding starts with a SEQUENCE tag.
