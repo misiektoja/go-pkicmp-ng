@@ -87,14 +87,17 @@ type transactionEntry struct {
 	lastActivity  time.Time
 	credentialKey credentialKey
 
+	// Set when state == statePending or stateIssued
+	reqType RequestType
+
 	// Set when state == statePending
-	reqType      RequestType
 	pollRef      string
 	senderNonce  []byte        // server's senderNonce from the waiting response (for recipNonce verification)
 	lastPollTime time.Time     // last time a poll was received (zero for initial pending)
 	checkAfter   time.Duration // minimum interval between polls
 
 	// Set when state == stateIssued
+	certReqID           *int64 // certReqId of the CertResponse that carried cert, nil when restored from a snapshot without it
 	cert                *x509.Certificate
 	issueRef            any    // opaque CA reference for CertificateConfirmer
 	issuedSenderNonce   []byte // server's senderNonce from the issued response
@@ -209,7 +212,7 @@ func (t *transactionTracker) getPending(credentialID, transactionID []byte) (*tr
 }
 
 // setIssued retains the certificate and protection parameters needed for confirmation.
-func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert *x509.Certificate, issueRef any, senderNonce, clientSenderNonce []byte, protectionParams pkicmp.MACCredentialOption, algorithm ...*pkicmp.AlgorithmIdentifier) bool {
+func (t *transactionTracker) setIssued(credentialID, transactionID []byte, reqType RequestType, certReqID int64, cert *x509.Certificate, issueRef any, senderNonce, clientSenderNonce []byte, protectionParams pkicmp.MACCredentialOption, algorithm ...*pkicmp.AlgorithmIdentifier) bool {
 	key := makeKey(credentialID, transactionID)
 	ck := makeCredentialKey(credentialID)
 
@@ -227,6 +230,8 @@ func (t *transactionTracker) setIssued(credentialID, transactionID []byte, cert 
 		state:             stateIssued,
 		lastActivity:      time.Now(),
 		credentialKey:     ck,
+		reqType:           reqType,
+		certReqID:         &certReqID,
 		cert:              cert,
 		issueRef:          issueRef,
 		issuedSenderNonce: senderNonce,

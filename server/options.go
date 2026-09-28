@@ -140,7 +140,7 @@ func WithImplicitConfirm() Option {
 
 // WithStrictProfileValidation enforces the RFC 9483 message construction rules
 // that a receiver can check but does not need to authenticate a peer. It adds
-// six rejections:
+// seven rejections:
 //
 //   - a MAC-protected message whose sender is not a directoryName naming the
 //     shared secret (§3.1), unless it is a nested message (§5.2.2.1),
@@ -152,7 +152,8 @@ func WithImplicitConfirm() Option {
 //   - a request without a transactionID (§3.5), which RFC 4210 and RFC 9810
 //     let the server assign instead,
 //   - a message whose senderNonce is missing or shorter than 128 bits (§3.5),
-//     which RFC 4210 and RFC 9810 leave optional.
+//     which RFC 4210 and RFC 9810 leave optional,
+//   - a certConf with more than one CertStatus (§4.1.1).
 //
 // Off by default because deployed clients fail them: Nokia ssh-cmpclient
 // sends a NULL-DN sender, omits its own certificate and reuses the senderNonce,

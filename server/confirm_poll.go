@@ -72,23 +72,14 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 		})
 	}
 
-	// Verify certHash matches the issued certificate (RFC 9810 §5.3.18).
-	if len(*conf) > 0 {
-		expectedHash, err := (*conf)[0].CertificateHash(entry.cert)
-		if err != nil {
-			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
-				Status:       pkicmp.StatusRejection,
-				FailInfo:     pkicmp.FailBadAlg,
-				StatusString: pkicmp.PKIFreeText{"cannot compute certHash"},
-			})
-		}
-		if !bytes.Equal((*conf)[0].CertHash, expectedHash) {
-			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
-				Status:       pkicmp.StatusRejection,
-				FailInfo:     pkicmp.FailBadCertId,
-				StatusString: pkicmp.PKIFreeText{"certHash mismatch"},
-			})
-		}
+	// Each CertStatus reaches the CA as a verdict on the issued certificate, so
+	// every one of them must name it (RFC 9810 §5.3.18).
+	if statusErr := s.checkCertStatuses(*conf, entry); statusErr != nil {
+		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
+			Status:       statusErr.Status,
+			FailInfo:     statusErr.FailureInfo,
+			StatusString: pkicmp.PKIFreeText{statusErr.StatusText},
+		})
 	}
 
 	// RFC 9483 §3.5: recipNonce MUST equal the senderNonce of the previous message.
@@ -152,6 +143,50 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 	s.delete(credID, txnID)
 
 	return s.buildResponseWithEchoProtection(msg, pkicmp.NewPKIConfBody(), sender, entry.protectionParams)
+}
+
+// checkCertStatuses verifies that every CertStatus of a certConf names the certificate issued in entry and that all of them agree.
+func (s *Server) checkCertStatuses(statuses pkicmp.CertConfirmContent, entry *transactionEntry) *Error {
+	// RFC 9483 §4.1.1 allows exactly one CertStatus. RFC 4210 and RFC 9810
+	// allow one per certificate. A transaction here issues one certificate, so
+	// further entries can only repeat the first.
+	if s.cfg.strictProfile && len(statuses) > 1 {
+		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "more than one CertStatus"}
+	}
+	for i := range statuses {
+		cs := &statuses[i]
+		expectedHash, err := cs.CertificateHash(entry.cert)
+		if err != nil {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "cannot compute certHash"}
+		}
+		if !bytes.Equal(cs.CertHash, expectedHash) {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "certHash mismatch"}
+		}
+		if !certReqIDMatches(entry, cs.CertReqID) {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "certReqId does not match the issued certificate"}
+		}
+		if certStatusRejects(cs) != certStatusRejects(&statuses[0]) {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "CertStatus entries disagree"}
+		}
+	}
+	return nil
+}
+
+// certReqIDMatches reports whether certReqID names the certificate issued in entry.
+func certReqIDMatches(entry *transactionEntry, certReqID int64) bool {
+	if entry.certReqID == nil || certReqID == *entry.certReqID {
+		return true
+	}
+	// A p10cr carries no certReqId. RFC 9810 §5.3.4 answers it with -1, but
+	// RFC 9483 §4.1.4 changes only the cp and keeps 0 from §4.1.1 for the
+	// certConf. EJBCA answers a p10cr with 0. Either value can only name the
+	// one certificate of the transaction, so both are accepted.
+	return entry.reqType == RequestP10CR && (certReqID == 0 || certReqID == -1)
+}
+
+// certStatusRejects reports whether a CertStatus rejects its certificate, an absent statusInfo meaning acceptance.
+func certStatusRejects(cs *pkicmp.CertStatus) bool {
+	return cs.StatusInfo != nil && cs.StatusInfo.Status == pkicmp.StatusRejection
 }
 
 // publicKeysEqual compares two public keys by their PKIX-encoded form.

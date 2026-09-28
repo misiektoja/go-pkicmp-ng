@@ -223,22 +223,14 @@ func (h *caHandler) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage) 
 
 	issueRef := IssueRefFromContext(ctx)
 
-	// RFC 4210 and RFC 9810 §5.3.18: a certConf without a CertStatus for an
-	// issued certificate rejects it, and an empty one rejects them all.
-	if len(*conf) == 0 {
-		return nil, confirmer.ConfirmCertificate(ctx, cert, ConfirmRejected, issueRef)
+	// The server has checked that every CertStatus names this certificate and
+	// that they agree, so the CA is told once. RFC 4210 and RFC 9810 §5.3.18:
+	// a certConf without a CertStatus for an issued certificate rejects it.
+	status := ConfirmRejected
+	if len(*conf) > 0 && !certStatusRejects(&(*conf)[0]) {
+		status = ConfirmAccepted
 	}
-
-	for _, cs := range *conf {
-		status := ConfirmAccepted
-		if cs.StatusInfo != nil && cs.StatusInfo.Status == pkicmp.StatusRejection {
-			status = ConfirmRejected
-		}
-		if err := confirmer.ConfirmCertificate(ctx, cert, status, issueRef); err != nil {
-			return nil, err
-		}
-	}
-	return nil, nil
+	return nil, confirmer.ConfirmCertificate(ctx, cert, status, issueRef)
 }
 
 func (h *caHandler) handlePollReq(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) (*Response, error) {
