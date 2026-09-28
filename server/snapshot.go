@@ -34,6 +34,9 @@ type savedTransaction struct {
 	IssuedSenderNonce   []byte
 	ClientSenderNonce   []byte
 	ProtectionAlgorithm *pkicmp.AlgorithmIdentifier
+	// CertReqID is absent from snapshots taken before it was recorded. A
+	// transaction restored from one confirms without the certReqId check.
+	CertReqID *int64 `json:",omitempty"`
 }
 
 // SnapshotTransactions encodes trusted recovery state while the caller excludes concurrent requests and cleanup.
@@ -42,7 +45,21 @@ func (s *Server) SnapshotTransactions() ([]byte, error) {
 	var snapshotErr error
 	s.transactions.Range(func(key, value any) bool {
 		entry := value.(*transactionEntry)
-		saved := savedTransaction{Key: key.(transactionKey), Credential: entry.credentialKey, State: entry.state, LastActivity: entry.lastActivity, RequestType: entry.reqType, PollRef: entry.pollRef, SenderNonce: entry.senderNonce, LastPollTime: entry.lastPollTime, CheckAfter: entry.checkAfter, IssuedSenderNonce: entry.issuedSenderNonce, ClientSenderNonce: entry.clientSenderNonce, ProtectionAlgorithm: entry.protectionAlgorithm}
+		saved := savedTransaction{
+			Key:                 key.(transactionKey),
+			Credential:          entry.credentialKey,
+			State:               entry.state,
+			LastActivity:        entry.lastActivity,
+			RequestType:         entry.reqType,
+			PollRef:             entry.pollRef,
+			SenderNonce:         entry.senderNonce,
+			LastPollTime:        entry.lastPollTime,
+			CheckAfter:          entry.checkAfter,
+			IssuedSenderNonce:   entry.issuedSenderNonce,
+			ClientSenderNonce:   entry.clientSenderNonce,
+			ProtectionAlgorithm: entry.protectionAlgorithm,
+			CertReqID:           entry.certReqID,
+		}
 		if entry.cert != nil {
 			saved.Certificate = entry.cert.Raw
 		}
@@ -62,7 +79,9 @@ func (s *Server) SnapshotTransactions() ([]byte, error) {
 	if snapshotErr != nil {
 		return nil, snapshotErr
 	}
-	sort.Slice(snapshot.Entries, func(i, j int) bool { return bytes.Compare(snapshot.Entries[i].Key[:], snapshot.Entries[j].Key[:]) < 0 })
+	sort.Slice(snapshot.Entries, func(i, j int) bool {
+		return bytes.Compare(snapshot.Entries[i].Key[:], snapshot.Entries[j].Key[:]) < 0
+	})
 	data, err := json.Marshal(snapshot)
 	if len(data) > 64<<20 {
 		return nil, errors.New("transaction snapshot exceeds 64 MiB")
@@ -90,10 +109,24 @@ func (s *Server) RestoreTransactions(data []byte, decodeIssueRef func(json.RawMe
 	}
 	next := newTransactionTracker(s.maxTransactions, s.maxTransactionsPerCredential)
 	for _, saved := range snapshot.Entries {
-		if saved.State < stateActive || saved.State > stateCompleted || saved.LastActivity.IsZero() || saved.LastActivity.After(time.Now().Add(time.Minute)) {
+		if saved.State < stateActive || saved.State > stateCompleted ||
+			saved.LastActivity.IsZero() || saved.LastActivity.After(time.Now().Add(time.Minute)) {
 			return errors.New("invalid saved transaction state or timestamp")
 		}
-		entry := &transactionEntry{state: saved.State, credentialKey: saved.Credential, lastActivity: saved.LastActivity, reqType: saved.RequestType, pollRef: saved.PollRef, senderNonce: saved.SenderNonce, lastPollTime: saved.LastPollTime, checkAfter: saved.CheckAfter, issuedSenderNonce: saved.IssuedSenderNonce, clientSenderNonce: saved.ClientSenderNonce, protectionAlgorithm: saved.ProtectionAlgorithm}
+		entry := &transactionEntry{
+			state:               saved.State,
+			credentialKey:       saved.Credential,
+			lastActivity:        saved.LastActivity,
+			reqType:             saved.RequestType,
+			pollRef:             saved.PollRef,
+			senderNonce:         saved.SenderNonce,
+			lastPollTime:        saved.LastPollTime,
+			checkAfter:          saved.CheckAfter,
+			issuedSenderNonce:   saved.IssuedSenderNonce,
+			clientSenderNonce:   saved.ClientSenderNonce,
+			protectionAlgorithm: saved.ProtectionAlgorithm,
+			certReqID:           saved.CertReqID,
+		}
 		if len(saved.Certificate) > 0 {
 			cert, err := x509.ParseCertificate(saved.Certificate)
 			if err != nil {
@@ -101,7 +134,9 @@ func (s *Server) RestoreTransactions(data []byte, decodeIssueRef func(json.RawMe
 			}
 			entry.cert = cert
 		}
-		if saved.State == stateIssued && (entry.cert == nil || len(entry.issuedSenderNonce) < 16 || len(entry.clientSenderNonce) < 16) {
+		// The client's senderNonce is not checked: RFC 4210 makes it optional and
+		// only WithStrictProfileValidation requires 128 bits.
+		if saved.State == stateIssued && (entry.cert == nil || len(entry.issuedSenderNonce) < 16) {
 			return errors.New("issued transaction is incomplete")
 		}
 		if saved.State == statePending && (saved.PollRef == "" || len(saved.SenderNonce) < 16 || saved.CheckAfter < 0) {

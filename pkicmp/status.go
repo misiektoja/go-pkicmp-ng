@@ -1,6 +1,7 @@
 package pkicmp
 
 import (
+	"encoding/binary"
 	"errors"
 	"fmt"
 	"math/bits"
@@ -93,8 +94,7 @@ func (s PKIStatus) String() string {
 //
 //	if pkicmp.HasFailure(err, pkicmp.FailBadAlg) { ... }
 func HasFailure(err error, info PKIFailureInfo) bool {
-	var statusErr *PKIStatusError
-	if errors.As(err, &statusErr) {
+	if statusErr, ok := errors.AsType[*PKIStatusError](err); ok {
 		return statusErr.FailInfo&info != 0
 	}
 	return false
@@ -291,7 +291,7 @@ func (si *PKIStatusInfo) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 				n := 4 - trailing/8           // number of bytes needed
 				unused := uint8(trailing % 8) // #nosec G115 -- trailing%8 is always 0-7
 				b.AddUint8(unused)
-				b.AddBytes([]byte{byte(si.FailInfo >> 24), byte(si.FailInfo >> 16), byte(si.FailInfo >> 8), byte(si.FailInfo)}[:n]) // #nosec G115 -- intentional byte extraction from uint32
+				b.AddBytes(binary.BigEndian.AppendUint32(nil, uint32(si.FailInfo))[:n])
 			})
 		}
 	})

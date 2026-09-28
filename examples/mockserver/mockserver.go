@@ -2,8 +2,9 @@
 // to build a CMP certificate authority server.
 //
 // Read [CA.IssueCertificate], [CA.LookupSecret], and [CA.LookupCertificate]
-// to see the three methods a CA backend must provide, then look at cmd/main.go
-// to see how they are wired into a running HTTP server.
+// to see the three methods a CA backend must provide, and [CA.RevokeCertificate]
+// for optional revocation support. Then look at cmd/main.go to see how they are
+// wired into a running HTTP server.
 package mockserver
 
 import (
@@ -24,21 +25,23 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // oidKeyUsage identifies the RFC 5280 §4.2.1.3 keyUsage extension.
 var oidKeyUsage = asn1.ObjectIdentifier{2, 5, 29, 15}
 
-// MockCA implements [server.CA], [server.SecretLookup], and [server.CertificateLookup].
+// MockCA implements [server.CA], [server.Revoker], [server.SecretLookup], and [server.CertificateLookup].
 type MockCA struct {
 	key  *ecdsa.PrivateKey // CA private key used to sign issued certificates
 	cert *x509.Certificate // CA certificate returned in caPubs on IR responses
 
-	mu          sync.Mutex          // guards issuedCerts; the HTTP server handles requests concurrently
-	issuedCerts []*x509.Certificate // certificates issued so far; used by LookupCertificate
-	secrets     map[string][]byte   // senderKID -> IAK, used by LookupSecret for MAC-protected requests
-	nextIssueID atomic.Uint64       // monotonic counter; used as IssueRef
+	mu          sync.Mutex                  // guards issuedCerts and revoked against concurrent HTTP requests
+	issuedCerts []*x509.Certificate         // certificates issued so far; used by LookupCertificate
+	revoked     map[string]pkicmp.CRLReason // serial number -> reason for revoked certificates
+	secrets     map[string][]byte           // senderKID -> IAK, used by LookupSecret for MAC-protected requests
+	nextIssueID atomic.Uint64               // monotonic counter; used as IssueRef
 
 	Log *slog.Logger
 }
@@ -60,6 +63,7 @@ func New(secrets map[string][]byte, log *slog.Logger) (*MockCA, error) {
 		cert:    cert,
 		Log:     log,
 		secrets: secrets,
+		revoked: map[string]pkicmp.CRLReason{},
 	}, nil
 }
 
@@ -186,6 +190,11 @@ func (c *MockCA) LookupCertificate(_ pkix.Name, _ pkix.Name, senderKID []byte) (
 	}
 	for _, cert := range c.issuedCerts {
 		if bytes.Equal(cert.SubjectKeyId, senderKID) {
+			// A revoked certificate must no longer authenticate requests.
+			if _, revoked := c.revoked[cert.SerialNumber.String()]; revoked {
+				c.Log.Warn("certificate is revoked", "serial", cert.SerialNumber.String())
+				return nil, fmt.Errorf("certificate revoked")
+			}
 			c.Log.Info("found certificate",
 				"subject", cert.Subject.String(),
 				"serial", cert.SerialNumber.String(),
@@ -197,6 +206,55 @@ func (c *MockCA) LookupCertificate(_ pkix.Name, _ pkix.Name, senderKID []byte) (
 		"senderKID", fmt.Sprintf("%x", senderKID),
 	)
 	return nil, fmt.Errorf("certificate not found")
+}
+
+// RevokeCertificate implements [server.Revoker].
+// The server calls this only for revocation requests signed with the
+// certificate being revoked, because MockCA does not implement
+// [server.RevocationAuthorizer]. A real CA would also publish the revocation
+// through a CRL or OCSP.
+func (c *MockCA) RevokeCertificate(_ context.Context, req *server.RevocationRequest, _ *server.SenderIdentity) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
+	var cert *x509.Certificate
+	for _, issued := range c.issuedCerts {
+		if issued.SerialNumber.Cmp(req.SerialNumber) == 0 {
+			cert = issued
+			break
+		}
+	}
+	// Match reports badCertId when the certificate is unknown or does not match the request.
+	if err := req.Match(cert); err != nil {
+		c.Log.Warn("revocation of unknown certificate", "serial", req.SerialNumber.String())
+		return err
+	}
+
+	// Holding a certificate and releasing it with removeFromCRL would need
+	// suspended state, which this example does not model.
+	if req.Reason == pkicmp.CRLReasonCertificateHold || req.Reason == pkicmp.CRLReasonRemoveFromCRL {
+		return &server.Error{
+			Status:      pkicmp.StatusRejection,
+			FailureInfo: pkicmp.FailBadRequest,
+			StatusText:  "certificate hold not supported",
+		}
+	}
+	serial := cert.SerialNumber.String()
+	if _, revoked := c.revoked[serial]; revoked {
+		return &server.Error{
+			Status:      pkicmp.StatusRejection,
+			FailureInfo: pkicmp.FailCertRevoked,
+			StatusText:  "certificate already revoked",
+		}
+	}
+	c.revoked[serial] = req.Reason
+
+	c.Log.Info("certificate revoked",
+		"subject", cert.Subject.String(),
+		"serial", serial,
+		"reason", req.Reason.String(),
+	)
+	return nil
 }
 
 // ConfirmCertificate implements [server.CertificateConfirmer].

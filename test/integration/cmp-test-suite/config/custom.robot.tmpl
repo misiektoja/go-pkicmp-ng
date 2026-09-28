@@ -57,10 +57,11 @@ ${DEVICE_CERT_CHAIN}       ${None}
 ${DEVICE_KEY}              ${None}
 ${DEVICE_KEY_PASSWORD}     ${None}
 ${DEVICE_CERT}             ${None}
-${OTHER_TRUSTED_PKI_KEY}   ${None}
-${OTHER_TRUSTED_PKI_CERT}  ${None}
+${OTHER_TRUSTED_PKI_KEY}   {{.RAKey}}
+${OTHER_TRUSTED_PKI_CERT}  {{.RACert}}
 ${RA_CERT_CHAIN_DIR}       ${None}
-${RA_CERT_CHAIN_PATH}      ${None}
+${RA_CERT_CHAIN_PATH}      {{.RAChain}}
+${ALLOW_UNPROTECTED_INNER_MESSAGE}    ${False}
 ${TRUSTED_CA_CERT}         ${None}
 ${TRUSTED_CA_KEY}          ${None}
 ${TRUSTED_CA_KEY_PASSWORD}    ${None}

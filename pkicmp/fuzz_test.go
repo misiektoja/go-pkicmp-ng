@@ -28,20 +28,11 @@ var fuzzSecret = []byte("fuzz-shared-secret")
 func fuzzSeeds(tb testing.TB) [][]byte {
 	tb.Helper()
 
-	var seeds [][]byte
-
 	// The golden files are OpenSSL-generated requests, so they carry encodings
 	// this package did not produce itself.
 	golden, err := filepath.Glob(filepath.Join("testdata", "*.der"))
 	if err != nil {
 		tb.Fatal(err)
-	}
-	for _, path := range golden {
-		data, err := os.ReadFile(path) // #nosec G304 -- fixed test data directory
-		if err != nil {
-			tb.Fatal(err)
-		}
-		seeds = append(seeds, data)
 	}
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -50,8 +41,14 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 	}
 	cert := fuzzSeedCertificate(tb, key)
 
+	revDetails, err := pkicmp.NewRevDetails(cert, pkicmp.CRLReasonKeyCompromise)
+	if err != nil {
+		tb.Fatal(err)
+	}
+
 	checkAfter := int64(60)
 	bodies := []*pkicmp.PKIBody{
+		pkicmp.NewRRBody(&pkicmp.RevReqContent{revDetails}),
 		pkicmp.NewPKIConfBody(),
 		pkicmp.NewIPBody(&pkicmp.CertRepMessage{
 			Response: []pkicmp.CertResponse{{
@@ -63,28 +60,44 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{{CertHash: cert.Raw[:32], CertReqID: 0}}),
 		pkicmp.NewPollReqBody(&pkicmp.PollReqContent{0}),
 		pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: checkAfter}}),
+		pkicmp.NewRPBody(&pkicmp.RevRepContent{
+			Status:   []pkicmp.PKIStatusInfo{{Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailCertRevoked}},
+			RevCerts: []pkicmp.CertID{{Issuer: pkicmp.NewDirectoryNameFromRawDER(cert.RawIssuer), SerialNumber: cert.SerialNumber}},
+		}),
 		pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{
 			PKIStatusInfo: pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRequest},
 		}),
 	}
 
+	protectors := []func(*pkicmp.PKIMessage) error{
+		func(m *pkicmp.PKIMessage) error {
+			creds, err := pkicmp.NewMACCredentials(fuzzSecret)
+			if err != nil {
+				return err
+			}
+			return creds.Protect(m)
+		},
+		func(m *pkicmp.PKIMessage) error {
+			creds, err := pkicmp.NewSignatureCredentials(key, cert)
+			if err != nil {
+				return err
+			}
+			return creds.Protect(m)
+		},
+	}
+
+	// One seed per golden file, one per protected body and one nested message.
+	seeds := make([][]byte, 0, len(golden)+len(bodies)*len(protectors)+1)
+	for _, path := range golden {
+		data, err := os.ReadFile(path) // #nosec G304 -- fixed test data directory
+		if err != nil {
+			tb.Fatal(err)
+		}
+		seeds = append(seeds, data)
+	}
+
 	for _, body := range bodies {
-		for _, protect := range []func(*pkicmp.PKIMessage) error{
-			func(m *pkicmp.PKIMessage) error {
-				creds, err := pkicmp.NewMACCredentials(fuzzSecret)
-				if err != nil {
-					return err
-				}
-				return creds.Protect(m)
-			},
-			func(m *pkicmp.PKIMessage) error {
-				creds, err := pkicmp.NewSignatureCredentials(key, cert)
-				if err != nil {
-					return err
-				}
-				return creds.Protect(m)
-			},
-		} {
+		for _, protect := range protectors {
 			msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{
 				Sender: pkicmp.NewDirectoryNameFromRawDER(cert.RawSubject),
 			})
@@ -98,6 +111,22 @@ func fuzzSeeds(tb testing.TB) [][]byte {
 			seeds = append(seeds, der)
 		}
 	}
+
+	// A nested body carrying the last two protected messages.
+	last := seeds[len(seeds)-2:]
+	inner := make([]*pkicmp.PKIMessage, 0, len(last))
+	for _, der := range last {
+		msg, err := pkicmp.ParsePKIMessage(der)
+		if err != nil {
+			tb.Fatal(err)
+		}
+		inner = append(inner, msg)
+	}
+	nested, err := pkicmp.NewPKIMessage(pkicmp.NewNestedBody(inner...), pkicmp.MessageOptions{}).MarshalBinary()
+	if err != nil {
+		tb.Fatal(err)
+	}
+	seeds = append(seeds, nested)
 
 	return seeds
 }
@@ -150,10 +179,23 @@ func exerciseBody(msg *pkicmp.PKIMessage) {
 		_, _ = msg.Body.PollReq()
 	case pkicmp.BodyTypePollRep:
 		_, _ = msg.Body.PollRep()
+	case pkicmp.BodyTypeRR:
+		if rr, err := msg.Body.RR(); err == nil {
+			for i := range *rr {
+				_, _ = (*rr)[i].CRLEntryExtensions()
+			}
+		}
+	case pkicmp.BodyTypeRP:
+		_, _ = msg.Body.RP()
 	case pkicmp.BodyTypeError:
 		_, _ = msg.Body.Error()
 	case pkicmp.BodyTypeNested:
-		_, _ = msg.Body.Nested()
+		// Each level of nesting costs input bytes, so the recursion is bounded.
+		if msgs, err := msg.Body.Nested(); err == nil {
+			for _, inner := range msgs {
+				exerciseBody(inner)
+			}
+		}
 	}
 }
 

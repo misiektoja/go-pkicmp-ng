@@ -62,6 +62,13 @@
 //	    return &server.Response{Certificate: cert}, nil
 //	}
 //
+// crypto/x509 cannot create composite ML-DSA signatures. A CA with a composite
+// key calls compositex509.CreateCertificate from
+// github.com/misiektoja/go-composite-mldsa instead, with the same arguments.
+// Clients can check such a signature only when the CA certificate travels in
+// the response, so pass it to [WithExtraCerts] or return it in
+// [Response].CACerts.
+//
 // Pass the CA implementation and credential lookups to [NewCAServer] along with
 // the signing key, CA certificate, and middleware (or chain of middlewares).
 //
@@ -90,6 +97,8 @@
 //
 //   - [PendingChecker]: asynchronous issuance with polling.
 //   - [CertificateConfirmer]: notification when a client accepts or rejects a certificate.
+//   - [Revoker]: revocation requests (rr).
+//   - [RevocationAuthorizer]: revocation by signers other than the certificate holder.
 //
 // # Asynchronous issuance (polling)
 //
@@ -122,6 +131,75 @@
 // ([ConfirmExpired]). The ref parameter echoes [Response.IssueRef] set during
 // [CA.IssueCertificate] for correlation.
 //
+// Every CertStatus in a certConf must carry the certHash and certReqId of the
+// issued certificate. All of them must accept it or all must reject it. The
+// CA is then notified once. For a p10cr the certReqId may be -1 or 0, because
+// RFC 9810 and RFC 9483 disagree on it and deployed peers use both. A certConf
+// without any CertStatus rejects the certificate (RFC 9810 §5.3.18) and reaches
+// the CA as [ConfirmRejected].
+//
+// # Revocation
+//
+// Implement [Revoker] to accept revocation requests (RFC 9483 §4.2). Without it
+// the server rejects every rr with badRequest.
+//
+//	func (c *myCA) RevokeCertificate(ctx context.Context, req *server.RevocationRequest,
+//	    sender *server.SenderIdentity) error {
+//
+//	    cert := c.store.Find(req.Issuer, req.SerialNumber)
+//	    if err := req.Match(cert); err != nil {
+//	        return err // badCertId
+//	    }
+//	    if c.store.IsRevoked(cert) {
+//	        return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailCertRevoked}
+//	    }
+//	    return c.store.Revoke(cert, req.Reason)
+//	}
+//
+// The server authorizes the request before calling RevokeCertificate. By
+// default only the certificate being revoked may sign it, as RFC 9483 §4.2
+// requires. Requests signed by anyone else, such as a registration authority
+// (RFC 9483 §5.3.2), are rejected with notAuthorized unless the CA implements
+// [RevocationAuthorizer] and approves them. The same applies to MAC-protected
+// requests when the policy lets them through.
+//
+// Revocation is synchronous. The server answers with an rp that reports either
+// acceptance or the rejection RevokeCertificate returned. A custom [Handler]
+// that returns a [WaitingResponse] for an rr gets systemFailure.
+//
+// # Registration authorities
+//
+// A registration authority (RA) can approve a request by forwarding it unchanged
+// inside a nested message that carries the RA's own protection (RFC 9483
+// §5.2.2.1). Accept such messages with [WithRAAuthorizer]:
+//
+//	server.WithRAAuthorizer(server.RAAuthorizerFunc(func(ctx context.Context,
+//	    ra *server.SenderIdentity, req *pkicmp.PKIMessage, sender *server.SenderIdentity) error {
+//
+//	    if ra.Certificate == nil || !ra.Certificate.Equal(raCert) {
+//	        return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized}
+//	    }
+//	    return nil
+//	}))
+//
+// The server verifies the nested message, then handles the forwarded request as
+// if the end entity had sent it directly. The request's own protection is
+// verified and the response is protected for the end entity, uses its pvno and
+// is not wrapped in a nested message. The authorizer runs once both protections
+// are verified, and [SenderIdentity.RA] tells the CA which RA approved the
+// request.
+//
+// The nested message must copy the transactionID and senderNonce of the request
+// it wraps. Problems with the nested message itself, including a refusal by the
+// authorizer, are reported to the RA in an error message. Without an authorizer
+// nested messages are rejected with badRequest. Batching several messages in
+// one nested message (RFC 9483 §5.2.2.2) is not supported and is also rejected
+// with badRequest.
+//
+// RFC 9483 requires the RA to sign the nested message, while RFC 4210 also
+// allows a MAC. The authorizer decides. The example above refuses a MAC, since
+// ra.Certificate is nil for one.
+//
 // # Authentication
 //
 // The server verifies every message's protection before passing it to the CA or
@@ -152,6 +230,10 @@
 //	    return store[senderKID]
 //	}
 //
+// The server keeps a MAC client's transactions apart from other clients by its
+// senderKID and sender name together, so clients that send only a name, as
+// RFC 4210 §5.1.1 allows, do not share transactions or quotas.
+//
 // For signature-protected messages (e.g., KUR), the client's identity is its
 // certificate. The sender DN is only a lookup key: the server resolves a
 // candidate certificate from its store and verifies the signature against it, so
@@ -161,6 +243,10 @@
 //	func LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 //	    return certStore[issuer, subject]
 //	}
+//
+// A request protected with an algorithm the server does not implement is
+// rejected with badAlg. This includes SHA-1 signatures, which RFC 9481 §7.1
+// deprecates. [WithSHA1Signatures] accepts them from RFC 4210 era devices.
 //
 // # Middleware
 //
@@ -175,7 +261,9 @@
 //
 //   - Proof of possession, so that a certificate is never issued for a public
 //     key the requester did not prove holding (RFC 4211 §4, RFC 9483 §5.1.1).
-//     For a p10cr this is the CSR self-signature.
+//     For a p10cr this is the CSR self-signature. Only signature-based proof is
+//     supported, so a CRMF request without a public key or for a key that
+//     cannot sign, such as X25519, is rejected.
 //   - Rejection of a BasicConstraints extension that cannot be decoded, so that
 //     no extension reaches [CA.IssueCertificate] that the checks above did not
 //     understand.
@@ -189,6 +277,8 @@
 //   - Enforces subject presence in certificate templates.
 //   - Rejects requests for CA certificates.
 //   - Validates BasicConstraints path-length.
+//   - Requires a revocation request to use signature protection and to carry
+//     a reasonCode.
 //
 // Some RFC 9483 rules govern how a peer constructs a message rather than how
 // this server authenticates it, and deployed clients break them. Those are off
@@ -214,7 +304,9 @@
 //
 //	func myPolicy() func(server.Handler) server.Handler {
 //	    return func(next server.Handler) server.Handler {
-//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	        return server.HandlerFunc(func(
+//	            ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity,
+//	        ) (*server.Response, error) {
 //	            if !isAllowed(sender) {
 //	                return nil, &server.Error{
 //	                    Status:      pkicmp.StatusRejection,
@@ -229,7 +321,9 @@
 //
 //	func auditLog(logger *slog.Logger) func(server.Handler) server.Handler {
 //	    return func(next server.Handler) server.Handler {
-//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	        return server.HandlerFunc(func(
+//	            ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity,
+//	        ) (*server.Response, error) {
 //	            logger.Info("CMP request received", "type", msg.Body.Type, "sender", sender.Sender)
 //	            resp, err := next.HandleCMP(ctx, msg, sender)
 //	            if err != nil {
@@ -269,8 +363,13 @@
 //
 // The server tracks multi-message exchanges (IR→IP->CertConf->PKIConf and polling
 // flows). Transactions are keyed by a composite of the client's cryptographically
-// verified credentials and the client-supplied transactionID, preventing
-// cross-client hijacking (RFC 9810 §5.1.1).
+// verified credentials and the transactionID, preventing cross-client hijacking
+// (RFC 9810 §5.1.1).
+//
+// A client may omit the transactionID from its first request. The server then
+// assigns a random 128-bit one and returns it in the response, as RFC 4210 and
+// RFC 9810 §5.1.1 require. [WithStrictProfileValidation] rejects such requests
+// instead, following RFC 9483 §3.5.
 //
 // To prevent resource exhaustion, the server enforces transaction caps:
 //

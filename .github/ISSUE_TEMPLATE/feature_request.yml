@@ -1,0 +1,41 @@
+name: Feature request
+description: Ask for a capability that go-pkicmp-ng does not have yet
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        The [README](https://github.com/misiektoja/go-pkicmp-ng/blob/main/README.md) lists the RFCs the library implements and what each package covers.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: What are you trying to do
+      description: The integration or operational problem, not the implementation you have in mind.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What would solve it
+      description: The behavior, option or interface you would like. Name the RFC section when the request is protocol level.
+    validations:
+      required: true
+
+  - type: input
+    id: peer
+    attributes:
+      label: CMP peer this concerns
+      placeholder: EJBCA 9.3.7, OpenSSL 3.5.6, other
+    validations:
+      required: false
+
+  - type: textarea
+    id: workaround
+    attributes:
+      label: Current workaround
+      description: What you do today instead, if anything.
+    validations:
+      required: false

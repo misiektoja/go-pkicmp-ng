@@ -1,0 +1,5 @@
+# Advisories that Scorecard's osv-scanner reports for the module graph but that do not reach this
+# code. Every entry names why. govulncheck is the reachability check.
+[[IgnoredVulns]]
+id = "GO-2026-5932"
+reason = "The library imports only the cryptobyte and pbkdf2 packages of golang.org/x/crypto. Nothing imports the affected and unmaintained golang.org/x/crypto/openpgp packages. govulncheck reports no reachable vulnerable symbols and the advisory has no fixed version."

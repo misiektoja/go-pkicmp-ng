@@ -11,9 +11,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 func TestNewMACCredentials(t *testing.T) {

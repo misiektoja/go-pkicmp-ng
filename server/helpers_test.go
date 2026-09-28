@@ -12,11 +12,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
-	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // requestType identifies the CMP operation type (test-only equivalent of the removed server.RequestType).
@@ -183,6 +184,8 @@ func (m *mockHandler) doCertConf(ctx context.Context, msg *pkicmp.PKIMessage, se
 					hash = crypto.SHA384
 				case x509.ECDSAWithSHA512, x509.SHA512WithRSA:
 					hash = crypto.SHA512
+				default:
+					// hash stays zero, which skips the certHash check below.
 				}
 				if hash != 0 {
 					h := hash.New()

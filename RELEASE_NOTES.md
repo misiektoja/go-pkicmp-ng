@@ -2,13 +2,51 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
-## v0.1.0 - 2026-09-27
+## v0.2.0 - 2026-09-29
 
-Enroll and confirm certificates with ML-DSA keys and signatures.
+A CA with a post-quantum composite ML-DSA key can sign CMP messages and the certificates it issues. Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA. Devices that implement only RFC 4210 can enroll with the default settings. SHA-1 can be enabled for the ones that need it.
 
 ### `pkicmp`
 
-* **ML-DSA-44, ML-DSA-65 and ML-DSA-87** support covers certificate keys, CRMF proof of possession and pure message signatures. Algorithm parameters must be absent.
+* **Composite ML-DSA signatures** (draft-ietf-lamps-pq-composite-sigs) protect and verify CMP messages when the key comes from [go-composite-mldsa](https://github.com/misiektoja/go-composite-mldsa). **`NewSignatureCredentials`** accepts composite keys and certificates. Algorithm parameters must be absent. **`NewCertStatus`** and **`CertHash`** hash a certificate signed by a composite key with the hash that composite algorithm uses. `NewCertStatus` names that hash explicitly. With **`VerifyOptions.TrustPool`**, a certificate signed by a composite key is accepted only when its issuer is also in `ExtraCerts` and no certificate in the path has name constraints. Composite keys in certificate requests and proof of possession are not supported yet.
+* **`RevReqContent` and `RevRepContent`** encode and parse revocation request (`rr`) and response (`rp`) bodies. **`NewRevDetails`** names a certificate by issuer and serial number and adds a **`CRLReason`**.
+* **`CertTemplate`** supports the `serialNumber` and `issuer` fields.
+* **Nested message bodies use the encoding RFC 4210 and RFC 9810 define**, a sequence of one or more messages. They previously held a single message directly, which conforming peers could not parse. **`NewNestedBody`** takes one or more messages and **`Nested`** returns a slice. A protected message keeps the exact bytes its protection covers, so a received message can be forwarded without breaking its protection.
+* **`WithPBMAlgorithms`** chooses the one-way function and HMAC of PasswordBasedMac. `WithPBMAlgorithms(crypto.SHA1, crypto.SHA1)` produces the SHA-1 profile that RFC 4210 requires. `WithPBM` still defaults to SHA-256.
+* **SHA-1 signatures** (`sha1WithRSAEncryption` and `ecdsa-with-SHA1`) verify when **`VerifyOptions.AllowSHA1Signatures`** is set. **`VerifyPOPWithOptions`** does the same for proof of possession. By default they fail with `ReasonUnsupportedAlgorithm`, which is now also the reason for a PasswordBasedMac or PBMAC1 hash function the library does not implement.
+
+### `client`
+
+* **Certificates from a composite ML-DSA CA** are verified and confirmed. The CA certificate must arrive in extraCerts or caPubs, even when it is already in the pool passed to `WithTrustedCAs`.
+* **`SendRR`** asks the CA to revoke a certificate. A rejection such as `certRevoked` is returned as `*pkicmp.PKIStatusError`. Sign the request with the certificate being revoked, or with registration authority credentials when the CA allows that. A delayed answer is polled like enrollment.
+* **Refused certificates are reported to the CA.** When an issued certificate fails validation or certifies a different key, the client sends `certConf` with status rejection before returning the error. The CA previously learned of it only when its confirmation wait expired.
+* **Certificate responses must match the request.** The client accepts a response only when it holds one `CertResponse` with the certReqId of the request. A p10cr response may carry `-1` or `0`. A certificate under another certReqId is rejected in `certConf`. The client previously read the first `CertResponse` without checking its certReqId and ignored any others.
+* **`WithSHA1Signatures`** accepts responses signed with SHA-1 by RFC 4210 era CAs. Certificates signed with SHA-1 are still rejected, because crypto/x509 does not accept them.
+
+### `server`
+
+* **`WithSigner` accepts composite ML-DSA keys** and `WithStrictProfileValidation` checks composite signatures in the extraCerts chain. A CA issues with a composite key through `compositex509.CreateCertificate`, as the package documentation describes.
+* **Revocation requests** reach CAs that implement the new **`Revoker`** interface. By default only the certificate being revoked may sign the request. Implement **`RevocationAuthorizer`** to accept other signers, such as a registration authority. Revocation is synchronous. A CA without `Revoker` rejects revocation requests with `badRequest`.
+* **Requests forwarded by a registration authority** in a nested message are accepted when **`WithRAAuthorizer`** is set (RFC 9483 §5.2.2.1). The server verifies the protection of both the RA and the end entity, then answers the end entity as if it had sent the request directly. The authorizer decides which RAs may forward requests and whether a MAC-protected nested message is allowed, which RFC 4210 permits and RFC 9483 does not. **`SenderIdentity.RA`** names the approving RA. Without an authorizer nested messages are still rejected with `badRequest`. Batches of several messages are always rejected. `WithStrictProfileValidation` requires a signed nested message to carry `extraCerts`.
+* **`LightweightPolicy`** requires revocation requests to use signature protection and to carry a reason code.
+* **Proof of possession by signature is required** for every `ir`, `cr` and `kur`, with or without a policy. Requests for keys that cannot sign, such as X25519, are rejected with `badPOP` and requests without a public key with `badCertTemplate`. They previously reached the CA without any verified proof.
+* **RFC 4210 clients are accepted without the RFC 9483 header rules.** A first request without a transactionID gets one from the server. A missing or short senderNonce is accepted. Such transactions also survive a snapshot and restore. `WithStrictProfileValidation` still rejects both.
+* **MAC clients that send only a sender name no longer share transactions.** Transactions and the `WithMaxTransactionsPerCredential` limit are bound to the senderKID and the sender name together. Clients without a senderKID previously shared one transaction space, so one could confirm or reject another's certificate and all of them shared one limit. A MAC transaction in a snapshot taken by an earlier version cannot be continued after restore and expires.
+* **Every `CertStatus` in a `certConf` is checked.** Each must carry the certHash and certReqId of the issued certificate and all of them must agree. The CA is then notified once. A p10cr confirmation may use certReqId `-1` or `0`. The server previously checked only the first entry and notified the CA once per entry, so an unchecked extra entry could reject a certificate the first one accepted. An **empty `certConf`** rejects the certificate, as RFC 9810 §5.3.18 defines, where the CA previously received nothing. `WithStrictProfileValidation` also rejects a `certConf` with more than one `CertStatus`.
+* **Unsupported protection algorithms are reported as `badAlg`** instead of `badMessageCheck`. This includes SHA-1 signatures, which **`WithSHA1Signatures`** accepts in message protection and in CRMF proof of possession.
+
+### Requirements
+
+* **github.com/misiektoja/go-composite-mldsa v0.1.0** is a new dependency. It has no dependencies of its own.
+* **golang.org/x/crypto v0.57.0 or newer** is required. Older versions carry published advisories, none of which reach the code this library calls.
+
+## v0.1.0 - 2026-09-27
+
+Enroll and confirm certificates with **post-quantum ML-DSA keys and signatures**.
+
+### `pkicmp`
+
+* **ML-DSA-44, ML-DSA-65 and ML-DSA-87 (post-quantum)** support covers certificate keys, CRMF proof of possession and pure message signatures. Algorithm parameters must be absent.
 * **`NewCertStatus`** supplies the explicit SHA-512 confirmation hash identifier for ML-DSA-signed certificates.
 * **Ed25519 message protection** signs the original protected bytes instead of incorrectly prehashing them.
 

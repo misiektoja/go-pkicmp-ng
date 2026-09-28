@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
+
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 )
 
 // Credentials is the interface representing material used to protect a CMP message.
@@ -28,6 +30,7 @@ type macCredentialConfig struct {
 	owfParameters  []byte               // raw ASN.1 params for PBM OWF echo-back
 	macParameters  []byte               // raw ASN.1 params for PBM MAC echo-back
 	protectionAlg  *AlgorithmIdentifier // raw AlgID from WithProtectionAlgorithm
+	err            error                // invalid option, reported by NewMACCredentials
 }
 
 // WithPBM configures PasswordBasedMac protection (RFC 4210 §5.1.3.1).
@@ -35,6 +38,71 @@ type macCredentialConfig struct {
 // RECOMMENDED algorithm per RFC 9481 §7.
 func WithPBM() MACCredentialOption {
 	return func(c *macCredentialConfig) { c.algorithm = oidPasswordBasedMac }
+}
+
+// WithPBMAlgorithms configures PasswordBasedMac protection (RFC 4210 §5.1.3.1)
+// with the given one-way function and HMAC hash.
+//
+// The default is SHA-256 with HMAC-SHA256. RFC 4210 Appendix D.2 makes SHA-1
+// with HMAC-SHA1 the mandatory combination, so WithPBMAlgorithms(crypto.SHA1,
+// crypto.SHA1) suits a peer that implements only RFC 4210. RFC 9481 §7.1
+// deprecates SHA-1. The supported hashes are SHA-1, SHA-224, SHA-256, SHA-384
+// and SHA-512. The MAC digest must not be longer than the OWF output.
+// [NewMACCredentials] reports any other choice.
+func WithPBMAlgorithms(owf, mac crypto.Hash) MACCredentialOption {
+	return func(c *macCredentialConfig) {
+		c.algorithm = oidPasswordBasedMac
+		owfOID, macOID, err := pbmAlgorithmOIDs(owf, mac)
+		if err != nil {
+			c.err = err
+			return
+		}
+		c.owf = owfOID
+		c.mac = macOID
+	}
+}
+
+// pbmAlgorithmOIDs maps a PasswordBasedMac OWF and HMAC hash to their algorithm identifiers.
+func pbmAlgorithmOIDs(owf, mac crypto.Hash) (asn1.ObjectIdentifier, asn1.ObjectIdentifier, error) {
+	owfOIDs := map[crypto.Hash]asn1.ObjectIdentifier{
+		crypto.SHA1:   oidSHA1,
+		crypto.SHA224: oidSHA224,
+		crypto.SHA256: oidSHA256,
+		crypto.SHA384: oidSHA384,
+		crypto.SHA512: oidSHA512,
+	}
+	// HMAC-SHA1 uses the identifier RFC 4210 Appendix D.2 names, which is the
+	// one an RFC 4210 peer recognizes.
+	macOIDs := map[crypto.Hash]asn1.ObjectIdentifier{
+		crypto.SHA1:   oidPBMMac_HMACSHA1,
+		crypto.SHA224: oidHMACWithSHA224,
+		crypto.SHA256: oidHMACWithSHA256,
+		crypto.SHA384: oidHMACWithSHA384,
+		crypto.SHA512: oidHMACWithSHA512,
+	}
+	owfOID, ok := owfOIDs[owf]
+	if !ok {
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("unsupported PasswordBasedMac OWF %v", owf),
+		}
+	}
+	macOID, ok := macOIDs[mac]
+	if !ok {
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("unsupported PasswordBasedMac HMAC hash %v", mac),
+		}
+	}
+	// The key is the OWF output. Deriving a longer one (RFC 4210 §5.1.3.1 key
+	// expansion) is not implemented.
+	if mac.Size() > owf.Size() {
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("HMAC hash %v is longer than PasswordBasedMac OWF %v", mac, owf),
+		}
+	}
+	return owfOID, macOID, nil
 }
 
 // WithMACIterationCount sets the PBKDF iteration count.
@@ -68,7 +136,8 @@ type MACCredentials struct {
 // Returns an error if the secret is empty.
 // The secret is copied — the caller may safely mutate the original slice after this call.
 // By default, PBMAC1 (RFC 8018) with HMAC-SHA-256 is used, which is the
-// RECOMMENDED algorithm per RFC 9481 §7. Use [WithPBM] for PasswordBasedMac.
+// RECOMMENDED algorithm per RFC 9481 §7. Use [WithPBM] or [WithPBMAlgorithms]
+// for PasswordBasedMac.
 // Use [WithMACIterationCount] to override the iteration count.
 // Use [WithProtectionAlgorithm] to echo protection parameters from a received message.
 func NewMACCredentials(secret []byte, opts ...MACCredentialOption) (*MACCredentials, error) {
@@ -80,6 +149,9 @@ func NewMACCredentials(secret []byte, opts ...MACCredentialOption) (*MACCredenti
 	c := &MACCredentials{secret: s}
 	for _, opt := range opts {
 		opt(&c.cfg)
+	}
+	if c.cfg.err != nil {
+		return nil, c.cfg.err
 	}
 	return c, nil
 }
@@ -136,10 +208,19 @@ func NewSignatureCredentials(key crypto.Signer, cert *x509.Certificate, chain ..
 	if cert == nil {
 		return nil, &ProtectionError{Reason: ReasonMissingSigner, Err: fmt.Errorf("certificate is nil")}
 	}
-	pubDER, err1 := x509.MarshalPKIXPublicKey(key.Public())
-	certPubDER, err2 := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	// crypto/x509 leaves PublicKey nil for composite ML-DSA certificates, so
+	// the key is read from the certificate's SubjectPublicKeyInfo instead.
+	certPub := cert.PublicKey
+	if certPub == nil {
+		certPub, _ = compositex509.ParsePKIXPublicKey(cert.RawSubjectPublicKeyInfo)
+	}
+	pubDER, err1 := compositex509.MarshalPKIXPublicKey(key.Public())
+	certPubDER, err2 := compositex509.MarshalPKIXPublicKey(certPub)
 	if err1 != nil || err2 != nil || subtle.ConstantTimeCompare(pubDER, certPubDER) != 1 {
-		return nil, &ProtectionError{Reason: ReasonMissingSigner, Err: fmt.Errorf("private key does not match certificate public key")}
+		return nil, &ProtectionError{
+			Reason: ReasonMissingSigner,
+			Err:    fmt.Errorf("private key does not match certificate public key"),
+		}
 	}
 	return &SignatureCredentials{key: key, cert: cert, chain: chain}, nil
 }

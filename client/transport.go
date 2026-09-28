@@ -11,8 +11,10 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/internal/certpath"
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -20,6 +22,233 @@ import (
 // request → response → [poll] → certConf → pkiConf
 // (RFC 9810 §5.3.1–§5.3.4, Appendix C.4).
 func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions, requestedKey crypto.PublicKey) (*EnrollResult, error) {
+	certReqIDs, err := answeringCertReqIDs(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
+	msg, err := c.newRequest(reqBody, creds, opts)
+	if err != nil {
+		return nil, err
+	}
+
+	cmpResp, vr, err := c.exchangeFirst(ctx, msg, creds)
+	if err != nil {
+		return nil, err
+	}
+	resp := cmpResp.message
+	// Keep the signer authenticated here so the rest of the operation can still
+	// be verified when the server stops sending extraCerts.
+	var knownSigner *x509.Certificate
+	if vr != nil {
+		knownSigner = vr.ProtectionCertificate
+	}
+
+	if resp.Body.Type == pkicmp.BodyTypeError {
+		return nil, cmpResp.wrapError(parseErrorResponse(resp))
+	}
+
+	if resp.Body.Type != expectedRepType {
+		return nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unexpected response body type: %d", resp.Body.Type)})
+	}
+
+	certResp, rep, err := extractCertRespAndRep(resp, expectedRepType)
+	if err != nil {
+		return nil, cmpResp.wrapError(err)
+	}
+
+	if certResp.Status.Status == pkicmp.StatusWaiting {
+		if err := checkCertReqID(certResp, certReqIDs); err != nil {
+			return nil, cmpResp.wrapError(err)
+		}
+		cmpResp, vr, err = c.poll(ctx, msg.Header, resp, creds, certResp.CertReqID, knownSigner)
+		if err != nil {
+			return nil, err
+		}
+		resp = cmpResp.message
+		if vr != nil && vr.ProtectionCertificate != nil {
+			knownSigner = vr.ProtectionCertificate
+		}
+		certResp, rep, err = extractCertRespAndRep(resp, expectedRepType)
+		if err != nil {
+			return nil, cmpResp.wrapError(err)
+		}
+	}
+
+	if certResp.Status.Status != pkicmp.StatusAccepted && certResp.Status.Status != pkicmp.StatusGrantedWithMods {
+		return nil, cmpResp.wrapError(certResp.Status.AsError())
+	}
+
+	cert, err := extractCertificate(certResp)
+	if err != nil {
+		return nil, cmpResp.wrapError(err)
+	}
+
+	caPubs := parseCMPCertificates(rep.CAPubs)
+	extraCerts := parseCMPCertificates(resp.ExtraCerts)
+	trustPool := c.enrollmentTrustPool(vr, caPubs)
+
+	conf := &certConfirmation{req: msg, resp: resp, creds: creds, trustPool: trustPool, knownSigner: knownSigner}
+
+	// The rejection repeats the CA's certReqId, since that is the value the CA
+	// uses to find the certificate.
+	if err := checkCertReqID(certResp, certReqIDs); err != nil {
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+			"certReqId does not match the request", cmpResp.wrapError(err))
+	}
+
+	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
+	if trustPool != nil {
+		if err := verifyIssuedCertificate(cert, trustPool, slices.Concat(extraCerts, caPubs)); err != nil {
+			return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+				"certificate validation failed", cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err}))
+		}
+	}
+
+	if err := checkIssuedKey(cert, requestedKey); err != nil {
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+			"certificate does not certify the requested public key", cmpResp.wrapError(err))
+	}
+
+	// RFC 9810 requires an explicit hash when the signature does not identify one.
+	certStatus, err := pkicmp.NewCertStatus(cert, certResp.CertReqID)
+	if err != nil {
+		return nil, cmpResp.wrapError(&Error{Op: "compute certHash", Err: err})
+	}
+	if err := c.sendCertConf(ctx, conf, certStatus); err != nil {
+		return nil, err
+	}
+
+	return &EnrollResult{
+		Certificate:       cert,
+		CAPubs:            caPubs,
+		ExtraCertificates: extraCerts,
+	}, nil
+}
+
+// parseCMPCertificates parses certs and skips the entries that do not parse.
+func parseCMPCertificates(certs []pkicmp.CMPCertificate) []*x509.Certificate {
+	var parsed []*x509.Certificate
+	for _, cert := range certs {
+		if pc, err := cert.Parse(); err == nil {
+			parsed = append(parsed, pc)
+		}
+	}
+	return parsed
+}
+
+// enrollmentTrustPool returns the configured trusted CAs extended with caPubs when the response was MAC-verified.
+func (c *Client) enrollmentTrustPool(vr *pkicmp.VerifyResult, caPubs []*x509.Certificate) *x509.CertPool {
+	// caPubs extend the configured trusted CAs only when the response was
+	// protected with the shared secret (RFC 9810 §5.3.2).
+	if vr == nil || !vr.MACVerified || len(caPubs) == 0 {
+		return c.trustedCAs
+	}
+	var pool *x509.CertPool
+	if c.trustedCAs != nil {
+		pool = c.trustedCAs.Clone()
+	} else {
+		pool = x509.NewCertPool()
+	}
+	for _, ca := range caPubs {
+		pool.AddCert(ca)
+	}
+	return pool
+}
+
+// verifyIssuedCertificate verifies that cert chains to roots, taking issuers from candidates.
+func verifyIssuedCertificate(cert *x509.Certificate, roots *x509.CertPool, candidates []*x509.Certificate) error {
+	// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
+	// path. A CA that issues from an intermediate returns that intermediate
+	// there, so without it the chain cannot be completed against a trust
+	// anchor that is the root. caPubs are candidates too, because a composite
+	// ML-DSA issuer is only found among the candidates, even when it is also
+	// a trust anchor.
+	return certpath.Verify(cert, roots, candidates, time.Now())
+}
+
+// certConfirmation holds what a certConf needs from the enrollment exchange it confirms.
+type certConfirmation struct {
+	req         *pkicmp.PKIMessage // first request of the operation
+	resp        *pkicmp.PKIMessage // response that carried the certificate
+	creds       pkicmp.Credentials
+	trustPool   *x509.CertPool
+	knownSigner *x509.Certificate
+}
+
+// sendCertConf sends a certConf carrying status and checks that the CA answers with pkiConf.
+func (c *Client) sendCertConf(ctx context.Context, conf *certConfirmation, status pkicmp.CertStatus) error {
+	confMsg := pkicmp.NewPKIMessage(
+		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{status}),
+		pkicmp.MessageOptions{
+			Sender:     conf.req.Header.Sender,
+			Recipient:  conf.req.Header.Recipient,
+			RecipNonce: conf.resp.Header.SenderNonce,
+		},
+	)
+	confMsg.Header.TransactionID = conf.req.Header.TransactionID
+	// Preserve senderKID across all messages in this transaction (RFC 9810 §5.1.1).
+	// For signature-based creds, ProtectWithSignature will overwrite this with the
+	// cert SubjectKeyId; for MAC-based creds it must be set explicitly.
+	confMsg.Header.SenderKID = conf.req.Header.SenderKID
+
+	if err := conf.creds.Protect(confMsg); err != nil {
+		return &Error{Op: "protect certConf", Err: err}
+	}
+
+	confDER, err := confMsg.MarshalBinary()
+	if err != nil {
+		return &Error{Op: "marshal certConf", Err: err}
+	}
+
+	confHTTPResp, err := c.sendHTTP(ctx, confDER)
+	if err != nil {
+		return &Error{Op: "certConf exchange", Err: err}
+	}
+
+	// RFC 9810 §5.3.18: The server MUST respond with PKIConf.
+	confCMPResp, err := confHTTPResp.parse("parse PKIConf")
+	if err != nil {
+		return err
+	}
+	confResp := confCMPResp.message
+
+	if _, err := c.verifyResponse(confMsg, confResp, conf.creds, conf.trustPool, conf.knownSigner); err != nil {
+		return confCMPResp.wrapError(withUnverifiedStatus(confResp, &Error{Op: "verify PKIConf", Err: err}))
+	}
+
+	if confResp.Body.Type == pkicmp.BodyTypeError {
+		return confCMPResp.wrapError(parseErrorResponse(confResp))
+	}
+
+	if confResp.Body.Type != pkicmp.BodyTypePKIConf {
+		return confCMPResp.wrapError(&Error{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)})
+	}
+	return nil
+}
+
+// rejectCertificate reports a refused certificate to the CA with a rejecting certConf and returns reason.
+func (c *Client) rejectCertificate(ctx context.Context, conf *certConfirmation, cert *x509.Certificate, certReqID int64, text string, reason error) error {
+	// RFC 9483 §3.6.1: an end entity that refuses a newly issued certificate
+	// MUST say so in certConf and await pkiConf, so the CA can revoke or log it
+	// instead of waiting for the confirmation to expire.
+	status, err := pkicmp.NewCertStatus(cert, certReqID)
+	if err == nil {
+		status.StatusInfo = &pkicmp.PKIStatusInfo{Status: pkicmp.StatusRejection, StatusString: pkicmp.PKIFreeText{text}}
+		err = c.sendCertConf(ctx, conf, status)
+	}
+	if err != nil {
+		// A CA treats a missing certConf as a rejection as well (RFC 9483
+		// §4.1.1), so the outcome stands. The failure is kept as text only, so
+		// that pkicmp.HasFailure reports the reason and not the CA's answer.
+		//nolint:errorlint // err must stay out of the chain so errors.As cannot find the CA's PKIStatusError.
+		return fmt.Errorf("%w (rejection not confirmed by the CA: %v)", reason, err)
+	}
+	return reason
+}
+
+// newRequest builds and protects the first message of an operation.
+func (c *Client) newRequest(reqBody *pkicmp.PKIBody, creds pkicmp.Credentials, opts *requestOptions) (*pkicmp.PKIMessage, error) {
 	if creds == nil {
 		return nil, &Error{Op: "protect request", Err: fmt.Errorf("no credentials provided")}
 	}
@@ -52,199 +281,66 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	if err := creds.Protect(msg); err != nil {
 		return nil, &Error{Op: "protect request", Err: err}
 	}
+	return msg, nil
+}
 
+// exchangeFirst sends the first request of an operation and returns its verified response.
+func (c *Client) exchangeFirst(ctx context.Context, msg *pkicmp.PKIMessage, creds pkicmp.Credentials) (*cmpHTTPResponse, *pkicmp.VerifyResult, error) {
 	reqDER, err := msg.MarshalBinary()
 	if err != nil {
-		return nil, &Error{Op: "marshal request", Err: err}
+		return nil, nil, &Error{Op: "marshal request", Err: err}
 	}
 
 	httpResp, err := c.sendHTTP(ctx, reqDER)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 
 	cmpResp, err := httpResp.parse("parse response")
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	resp := cmpResp.message
 
 	vr, err := c.verifyResponse(msg, resp, creds, c.trustedCAs, nil)
 	if err != nil {
-		return nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify response", Err: err}))
-	}
-	// Keep the signer authenticated here so the rest of the operation can still
-	// be verified when the server stops sending extraCerts.
-	var knownSigner *x509.Certificate
-	if vr != nil {
-		knownSigner = vr.ProtectionCertificate
+		return nil, nil, cmpResp.wrapError(withUnverifiedStatus(resp, &Error{Op: "verify response", Err: err}))
 	}
 
 	if resp.Header.PVNO < pkicmp.PVNO2 || resp.Header.PVNO > pkicmp.PVNO3 {
-		return nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)})
+		return nil, nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unsupported protocol version: %d", resp.Header.PVNO)})
 	}
-
-	if resp.Body.Type == pkicmp.BodyTypeError {
-		return nil, cmpResp.wrapError(parseErrorResponse(resp))
-	}
-
-	if resp.Body.Type != expectedRepType {
-		return nil, cmpResp.wrapError(&Error{Op: fmt.Sprintf("unexpected response body type: %d", resp.Body.Type)})
-	}
-
-	certResp, rep, err := extractCertRespAndRep(resp, expectedRepType)
-	if err != nil {
-		return nil, cmpResp.wrapError(err)
-	}
-
-	if certResp.Status.Status == pkicmp.StatusWaiting {
-		cmpResp, vr, err = c.poll(ctx, msg.Header, resp, creds, certResp.CertReqID, knownSigner)
-		if err != nil {
-			return nil, err
-		}
-		resp = cmpResp.message
-		if vr != nil && vr.ProtectionCertificate != nil {
-			knownSigner = vr.ProtectionCertificate
-		}
-		certResp, rep, err = extractCertRespAndRep(resp, expectedRepType)
-		if err != nil {
-			return nil, cmpResp.wrapError(err)
-		}
-	}
-
-	if certResp.Status.Status != pkicmp.StatusAccepted && certResp.Status.Status != pkicmp.StatusGrantedWithMods {
-		return nil, cmpResp.wrapError(certResp.Status.AsError())
-	}
-
-	cert, err := extractCertificate(certResp)
-	if err != nil {
-		return nil, cmpResp.wrapError(err)
-	}
-
-	// Build effective trust pool: start with pre-configured trusted CAs, add any
-	// caPubs bootstrapped via PBM (RFC 9810 §5.3.2).
-	effectiveTrustPool := c.trustedCAs
-	// D20: TrustedCAPubs removed; manually check MACVerified and iterate CAPubs.
-	if vr != nil && vr.MACVerified && len(rep.CAPubs) > 0 {
-		var caPubs []*x509.Certificate
-		for _, c := range rep.CAPubs {
-			parsed, err := c.Parse()
-			if err != nil {
-				continue
-			}
-			caPubs = append(caPubs, parsed)
-		}
-		if len(caPubs) > 0 {
-			if effectiveTrustPool != nil {
-				effectiveTrustPool = effectiveTrustPool.Clone()
-			} else {
-				effectiveTrustPool = x509.NewCertPool()
-			}
-			for _, ca := range caPubs {
-				effectiveTrustPool.AddCert(ca)
-			}
-		}
-	}
-
-	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
-	if effectiveTrustPool != nil {
-		// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
-		// path. A CA that issues from an intermediate returns that intermediate
-		// here, so without this pool the chain cannot be completed against a
-		// trust anchor that is the root.
-		intermediates := x509.NewCertPool()
-		for _, extraCert := range resp.ExtraCerts {
-			if parsed, err := extraCert.Parse(); err == nil {
-				intermediates.AddCert(parsed)
-			}
-		}
-		verifyOpts := x509.VerifyOptions{
-			Roots:         effectiveTrustPool,
-			Intermediates: intermediates,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		}
-		if _, err := cert.Verify(verifyOpts); err != nil {
-			return nil, cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err})
-		}
-	}
-
-	if err := checkIssuedKey(cert, requestedKey); err != nil {
-		return nil, cmpResp.wrapError(err)
-	}
-
-	var parsedCACerts []*x509.Certificate
-	for _, certPub := range rep.CAPubs {
-		if pc, err := certPub.Parse(); err == nil {
-			parsedCACerts = append(parsedCACerts, pc)
-		}
-	}
-
-	var parsedExtraCerts []*x509.Certificate
-	for _, extraCert := range resp.ExtraCerts {
-		if pc, err := extraCert.Parse(); err == nil {
-			parsedExtraCerts = append(parsedExtraCerts, pc)
-		}
-	}
-
-	// RFC 9810 requires an explicit hash when the signature does not identify one.
-	certStatus, err := pkicmp.NewCertStatus(cert, certResp.CertReqID)
-	if err != nil {
-		return nil, cmpResp.wrapError(&Error{Op: "compute certHash", Err: err})
-	}
-	confMsg := pkicmp.NewPKIMessage(
-		pkicmp.NewCertConfBody(&pkicmp.CertConfirmContent{certStatus}),
-		pkicmp.MessageOptions{
-			Sender:     sender,
-			Recipient:  recipient,
-			RecipNonce: resp.Header.SenderNonce,
-		},
-	)
-	confMsg.Header.TransactionID = msg.Header.TransactionID
-	// Preserve senderKID across all messages in this transaction (RFC 9810 §5.1.1).
-	// For signature-based creds, ProtectWithSignature will overwrite this with the
-	// cert SubjectKeyId; for MAC-based creds it must be set explicitly.
-	confMsg.Header.SenderKID = msg.Header.SenderKID
-
-	if err := creds.Protect(confMsg); err != nil {
-		return nil, &Error{Op: "protect certConf", Err: err}
-	}
-
-	confDER, err := confMsg.MarshalBinary()
-	if err != nil {
-		return nil, &Error{Op: "marshal certConf", Err: err}
-	}
-
-	confHTTPResp, err := c.sendHTTP(ctx, confDER)
-	if err != nil {
-		return nil, &Error{Op: "certConf exchange", Err: err}
-	}
-
-	// RFC 9810 §5.3.18: The server MUST respond with PKIConf.
-	confCMPResp, err := confHTTPResp.parse("parse PKIConf")
-	if err != nil {
-		return nil, err
-	}
-	confResp := confCMPResp.message
-
-	if _, err := c.verifyResponse(confMsg, confResp, creds, effectiveTrustPool, knownSigner); err != nil {
-		return nil, confCMPResp.wrapError(withUnverifiedStatus(confResp, &Error{Op: "verify PKIConf", Err: err}))
-	}
-
-	if confResp.Body.Type == pkicmp.BodyTypeError {
-		return nil, confCMPResp.wrapError(parseErrorResponse(confResp))
-	}
-
-	if confResp.Body.Type != pkicmp.BodyTypePKIConf {
-		return nil, confCMPResp.wrapError(&Error{Op: fmt.Sprintf("expected PKIConf but got body type %d", confResp.Body.Type)})
-	}
-
-	return &EnrollResult{
-		Certificate:       cert,
-		CAPubs:            parsedCACerts,
-		ExtraCertificates: parsedExtraCerts,
-	}, nil
+	return cmpResp, vr, nil
 }
 
+// answeringCertReqIDs returns the certReqId values a CertResponse may carry to answer the request in body.
+func answeringCertReqIDs(body *pkicmp.PKIBody) ([]int64, error) {
+	if body.Type == pkicmp.BodyTypeP10CR {
+		// A p10cr carries no certReqId. RFC 9810 §5.3.4 answers it with -1 and
+		// EJBCA answers it with 0. Either can only name the one certificate
+		// requested.
+		return []int64{-1, 0}, nil
+	}
+	msgs, err := body.CertReqMessages()
+	if err != nil {
+		return nil, &Error{Op: "read certReqId from request", Err: err}
+	}
+	ids := make([]int64, 0, len(*msgs))
+	for _, m := range *msgs {
+		ids = append(ids, m.CertReq.CertReqID)
+	}
+	return ids, nil
+}
+
+// checkCertReqID verifies that resp carries one of the certReqId values in ids.
+func checkCertReqID(resp *pkicmp.CertResponse, ids []int64) error {
+	if slices.Contains(ids, resp.CertReqID) {
+		return nil
+	}
+	return &Error{Op: fmt.Sprintf("response certReqId %d does not match the request", resp.CertReqID)}
+}
+
+// extractCertRespAndRep returns the single CertResponse of a certificate response together with its message.
 func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyType) (*pkicmp.CertResponse, *pkicmp.CertRepMessage, error) {
 	var rep *pkicmp.CertRepMessage
 	var err error
@@ -264,6 +360,13 @@ func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyT
 	}
 	if len(rep.Response) == 0 {
 		return nil, nil, &Error{Op: "empty response"}
+	}
+	// The client requests one certificate, so further entries cannot be matched
+	// to anything and are refused rather than silently dropped.
+	if len(rep.Response) > 1 {
+		return nil, nil, &Error{
+			Op: fmt.Sprintf("response carries %d CertResponse entries for one request", len(rep.Response)),
+		}
 	}
 	return &rep.Response[0], rep, nil
 }
@@ -407,7 +510,9 @@ func checkIssuedKey(cert *x509.Certificate, requested crypto.PublicKey) error {
 	type publicKeyComparer interface{ Equal(crypto.PublicKey) bool }
 	issued, ok := cert.PublicKey.(publicKeyComparer)
 	if !ok {
-		return &Error{Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey)}
+		return &Error{
+			Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey),
+		}
 	}
 	if !issued.Equal(requested) {
 		return &Error{Op: "issued certificate does not certify the requested public key"}
@@ -588,9 +693,10 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 			}
 			return nil
 		}(),
-		TrustPool:  trustedCAs,
-		ExtraCerts: candidates,
-		SenderKID:  resp.Header.SenderKID,
+		TrustPool:           trustedCAs,
+		ExtraCerts:          candidates,
+		SenderKID:           resp.Header.SenderKID,
+		AllowSHA1Signatures: c.allowSHA1Signatures,
 	})
 	if err != nil {
 		// The bare reason reads as an internal detail on a shared-secret client,
@@ -598,7 +704,9 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		// pool to check it against, so name the configuration that is missing.
 		var verifyErr *pkicmp.VerificationError
 		if trustedCAs == nil && errors.As(err, &verifyErr) && verifyErr.Reason == pkicmp.ReasonMissingTrustAnchors {
-			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: the response is signature-protected and no trusted CAs are configured, which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)", err)}
+			const hint = "the response is signature-protected and no trusted CAs are configured, " +
+				"which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)"
+			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: %s", err, hint)}
 		}
 		return nil, &Error{Op: "verify protection", Err: err}
 	}

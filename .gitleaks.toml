@@ -3,6 +3,21 @@ title = "go-pkicmp gitleaks config"
 [extend]
 useDefault = true
 
+[[allowlists]]
+description = "Untracked local state, tool binaries, build output and integration test artifacts"
+paths = [
+  # Ignored paths checked for tracked files by the gitleaks Make target.
+  '''^local/''',
+  '''^\.cache/''',
+  '''^bin/''',
+  '''^dist/''',
+  # Throwaway EJBCA administrator credentials that setup-ejbca writes.
+  '''^test/integration/ejbca/testdata/[^/]+\.(?:pem|p12)$''',
+  # The cloned Siemens CMP test suite and the reports of its runs carry the suite's test keys.
+  '''^test/integration/cmp-test-suite/testdata/cmp-test-suite/''',
+  '''^test/integration/cmp-test-suite/reports/''',
+]
+
 [[rules]]
 id = "pkicmp-secret-assignment"
 description = "Detects CMP shared secret and key password assignments with lower entropy tolerance"

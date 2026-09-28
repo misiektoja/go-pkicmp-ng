@@ -17,10 +17,11 @@ import (
 	"slices"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 func TestEJBCAInitializeECDSAP384(t *testing.T) {
@@ -243,7 +244,7 @@ func TestEJBCAMultipleSequentialEnrollments(t *testing.T) {
 	admin := newEJBCAAdminClient(t)
 	serials := make(map[string]bool)
 
-	for i := 0; i < 3; i++ {
+	for i := range 3 {
 		name := fmt.Sprintf("integration-test-seq-%d", i)
 		secret := "enrollment-secret"
 		admin.CreateEndEntity(t, name, secret)

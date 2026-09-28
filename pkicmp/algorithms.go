@@ -12,6 +12,9 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"time"
+
+	compositemldsa "github.com/misiektoja/go-composite-mldsa"
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 )
 
 var (
@@ -21,6 +24,10 @@ var (
 	oidSHA256 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 1}
 	oidSHA384 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
 	oidSHA512 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}
+
+	// Deprecated SHA-1 signature algorithms, accepted only on request (RFC 9481 §7.1).
+	oidSHA1WithRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 5}
+	oidECDSAWithSHA1         = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 1}
 
 	// Signature Algorithms (RFC 9481 §3).
 	oidSHA256WithRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
@@ -36,8 +43,10 @@ var (
 
 	// MAC Algorithms (RFC 9481 §6.1, RFC 9810 §5.1.3.4).
 	oidPasswordBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 13}
-	oidPBMMac_HMACSHA1  = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 8, 1, 2} // Deprecated: SHOULD NOT be used (RFC 9481 §7.1)
-	// oidKemBasedMac      = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16} // Unused but reserved for KEM-based MAC (RFC 9810 §5.1.3.4)
+	// Deprecated: SHOULD NOT be used (RFC 9481 §7.1).
+	oidPBMMac_HMACSHA1 = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 8, 1, 2}
+	// Unused but reserved for KEM-based MAC (RFC 9810 §5.1.3.4):
+	// oidKemBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16}
 	oidPBMAC1 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 14}
 
 	// PBKDF2 (RFC 8018 §A.2).
@@ -118,15 +127,51 @@ func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
 	return x509.UnknownSignatureAlgorithm, &ParseError{Detail: fmt.Sprintf("unsupported signature algorithm: %v", oid)}
 }
 
-// signatureAlgorithm validates parameters before resolving a signature identifier.
-func signatureAlgorithm(alg AlgorithmIdentifier) (x509.SignatureAlgorithm, error) {
-	if (alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)) && len(alg.Parameters) != 0 {
+// sha1SigAlgFromOID maps a deprecated SHA-1 signature OID to x509.SignatureAlgorithm.
+func sha1SigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, bool) {
+	switch {
+	case oid.Equal(oidSHA1WithRSAEncryption):
+		return x509.SHA1WithRSA, true
+	case oid.Equal(oidECDSAWithSHA1):
+		return x509.ECDSAWithSHA1, true
+	}
+	return x509.UnknownSignatureAlgorithm, false
+}
+
+// signatureAlgorithm validates parameters before resolving a signature
+// identifier, including SHA-1 ones when allowSHA1 is set.
+func signatureAlgorithm(alg AlgorithmIdentifier, allowSHA1 bool) (x509.SignatureAlgorithm, error) {
+	isMLDSA := alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)
+	if isMLDSA && len(alg.Parameters) != 0 {
 		return x509.UnknownSignatureAlgorithm, &ParseError{Detail: "ML-DSA parameters must be absent"}
+	}
+	if sigAlg, ok := sha1SigAlgFromOID(alg.Algorithm); ok {
+		if !allowSHA1 {
+			return x509.UnknownSignatureAlgorithm, &VerificationError{
+				Reason: ReasonUnsupportedAlgorithm,
+				Err:    fmt.Errorf("SHA-1 signature algorithm %v is deprecated and not enabled", alg.Algorithm),
+			}
+		}
+		return sigAlg, nil
 	}
 	return sigAlgFromOID(alg.Algorithm)
 }
 
-// NewCertStatus computes confirmation with an explicit SHA-512 identifier for ML-DSA certificates.
+// compositeSignatureAlgorithm resolves a composite ML-DSA signature identifier,
+// whose parameters must be absent (draft-ietf-lamps-pq-composite-sigs-19 §7).
+func compositeSignatureAlgorithm(alg AlgorithmIdentifier) (compositemldsa.Algorithm, bool, error) {
+	composite, ok := compositemldsa.AlgorithmFromOID(alg.Algorithm)
+	if !ok {
+		return 0, false, nil
+	}
+	if len(alg.Parameters) != 0 {
+		return 0, false, &ParseError{Detail: "composite ML-DSA parameters must be absent"}
+	}
+	return composite, true, nil
+}
+
+// NewCertStatus computes confirmation with an explicit hash identifier for
+// ML-DSA and composite ML-DSA certificates.
 func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) {
 	status := CertStatus{CertReqID: certReqID}
 	switch cert.SignatureAlgorithm {
@@ -137,17 +182,27 @@ func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) 
 		return status, nil
 	default:
 		hash, err := CertHash(cert)
+		if err != nil {
+			return status, err
+		}
 		status.CertHash = hash
-		return status, err
+		// The pre-hash is named in the composite algorithm, but receivers
+		// without composite support can only learn it from an explicit hashAlg.
+		if composite, ok, err := compositex509.SignatureAlgorithm(cert.Raw); err == nil && ok {
+			status.HashAlg = &AlgorithmIdentifier{Algorithm: hashOID(composite.PreHash())}
+		}
+		return status, nil
 	}
 }
 
 // CertHash computes the certHash of a certificate with the hash matching its
 // signature algorithm, as RFC 9810 §5.3.18 and RFC 9481 §3 require.
 func CertHash(cert *x509.Certificate) ([]byte, error) {
-	hash := hashFromSigAlg(cert.SignatureAlgorithm)
+	hash := certHashFunc(cert)
 	if hash == 0 || !hash.Available() {
-		return nil, &ParseError{Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm)}
+		return nil, &ParseError{
+			Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm),
+		}
 	}
 	h := hash.New()
 	h.Write(cert.Raw)
@@ -174,6 +229,31 @@ func (s *CertStatus) CertificateHash(cert *x509.Certificate) ([]byte, error) {
 	return h.Sum(nil), nil
 }
 
+// certHashFunc returns the hash that created and verifies the certificate
+// signature. A composite ML-DSA signature is computed over its pre-hash, so
+// the pre-hash is that hash (RFC 9810 §5.3.18).
+func certHashFunc(cert *x509.Certificate) crypto.Hash {
+	if hash := hashFromSigAlg(cert.SignatureAlgorithm); hash != 0 {
+		return hash
+	}
+	if composite, ok, err := compositex509.SignatureAlgorithm(cert.Raw); err == nil && ok {
+		return composite.PreHash()
+	}
+	return 0
+}
+
+// hashOID maps the SHA-2 hashes used by composite pre-hashing to their OIDs.
+func hashOID(hash crypto.Hash) asn1.ObjectIdentifier {
+	switch hash {
+	case crypto.SHA256:
+		return oidSHA256
+	case crypto.SHA384:
+		return oidSHA384
+	default:
+		return oidSHA512
+	}
+}
+
 // hashFromSigAlg maps x509.SignatureAlgorithm to crypto.Hash.
 func hashFromSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
 	switch sigAlg {
@@ -188,8 +268,10 @@ func hashFromSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
 	case x509.PureEd25519:
 		// RFC 9481 §3.3: EdDSA uses SHA-512 for certHash.
 		return crypto.SHA512
+	default:
+		// Zero tells callers that no certHash algorithm is defined for sigAlg.
+		return 0
 	}
-	return 0
 }
 
 func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto.Hash, error) {
@@ -227,6 +309,9 @@ func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto
 			return oidMLDSA87, crypto.Hash(0), nil
 		}
 		return nil, 0, &ParseError{Detail: "unsupported ML-DSA parameters"}
+	case *compositemldsa.PublicKey:
+		// Composite signing covers the whole message with an empty context.
+		return pub.Algorithm().OID(), crypto.Hash(0), nil
 	default:
 		return nil, 0, &ParseError{Detail: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}

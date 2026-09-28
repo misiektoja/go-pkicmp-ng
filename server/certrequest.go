@@ -1,11 +1,8 @@
 package server
 
 import (
+	"context"
 	"crypto"
-	"crypto/ecdsa"
-	"crypto/ed25519"
-	"crypto/mldsa"
-	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
@@ -15,12 +12,11 @@ import (
 )
 
 type parsedCRMF struct {
-	certReqID   int64
-	subject     pkix.Name
-	publicKey   crypto.PublicKey
-	extensions  []pkix.Extension
-	popMissing  bool // POP not present in request
-	popRequired bool // Key type requires POP (signature-capable)
+	certReqID    int64
+	subject      pkix.Name
+	publicKey    crypto.PublicKey
+	extensions   []pkix.Extension
+	signaturePOP bool // request carries a signature proof of possession
 }
 
 // parseCRMFMsg extracts fields from a CRMF request body.
@@ -35,16 +31,16 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 	case pkicmp.BodyTypeKUR:
 		msgs, err = msg.Body.KUR()
 	default:
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest}
+		return nil, rejection(pkicmp.FailBadRequest, "")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if len(*msgs) == 0 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "empty CertReqMessages"}
+		return nil, rejection(pkicmp.FailBadDataFormat, "empty CertReqMessages")
 	}
 	if len(*msgs) > 1 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "multiple CertReqMsg not supported"}
+		return nil, rejection(pkicmp.FailBadRequest, "multiple CertReqMsg not supported")
 	}
 
 	reqMsg := (*msgs)[0]
@@ -61,16 +57,12 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 	if len(reqMsg.CertReq.CertTemplate.PublicKey) > 0 {
 		pub, err := x509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
 		if err != nil {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: err.Error()}
+			return nil, rejection(pkicmp.FailBadAlg, err.Error())
 		}
 		result.publicKey = pub
-
-		// Check if key type requires POP (signature-capable keys).
-		result.popRequired = isSignatureCapableKey(pub)
 	}
 
-	// Check if POP is missing.
-	result.popMissing = reqMsg.Popo == nil || reqMsg.Popo.Signature == nil
+	result.signaturePOP = reqMsg.Popo != nil && reqMsg.Popo.Signature != nil
 
 	// Extract extensions.
 	if len(reqMsg.CertReq.CertTemplate.Extensions) > 0 {
@@ -95,19 +87,19 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 // applies the same rule, so a request usually passes it once in the policy and
 // once here, which costs one extra public key operation and keeps either layer
 // correct on its own.
-func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
+func enforceProofOfPossession(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	switch msg.Body.Type {
 	case pkicmp.BodyTypeP10CR:
 		csr, err := msg.Body.P10CR()
 		if err != nil {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+			return rejection(pkicmp.FailBadDataFormat, "")
 		}
 		// For PKCS#10 the self-signature over the request is the proof.
 		if err := csr.CheckSignature(); err != nil {
 			if errors.Is(err, x509.ErrUnsupportedAlgorithm) {
-				return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "unsupported signature algorithm"}
+				return rejection(pkicmp.FailBadAlg, "unsupported signature algorithm")
 			}
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: err.Error()}
+			return rejection(pkicmp.FailBadPOP, err.Error())
 		}
 		return nil
 
@@ -116,29 +108,39 @@ func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
 		if err != nil {
 			return err
 		}
-		if err := verifyPOPMsg(msg); err != nil {
+		if err := verifyPOPMsg(msg, pkicmp.POPOptions{AllowSHA1Signatures: sha1SignaturesAllowed(ctx)}); err != nil {
 			failInfo := pkicmp.FailBadPOP
+			var verr *pkicmp.VerificationError
+			if errors.As(err, &verr) && verr.Reason == pkicmp.ReasonUnsupportedAlgorithm {
+				failInfo = pkicmp.FailBadAlg
+			}
 			// RFC 9810 §5.2.8.1: An end entity MUST NOT use raVerified.
 			var parseErr *pkicmp.ParseError
 			if errors.As(err, &parseErr) && parseErr.Detail == "raVerified POP not supported" {
 				failInfo = pkicmp.FailNotAuthorized
 			}
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: failInfo, StatusText: err.Error()}
+			return rejection(failInfo, err.Error())
 		}
-		// A signature-capable key must carry the signature proof. Without this
-		// a request that simply omits popo would be accepted, since there is
-		// then nothing for verifyPOPMsg to check.
-		if crmf.popRequired && crmf.popMissing {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: "POP required for signature key"}
+		if crmf.publicKey == nil {
+			return rejection(pkicmp.FailBadCertTemplate, "public key required")
+		}
+		// verifyPOPMsg checks only a signature proof and passes a request that
+		// omits popo or uses another variant. A key that cannot sign would need
+		// the indirect method of RFC 9810 §5.2.8.3, which is not implemented, so
+		// such requests are refused rather than issued for an unproven key.
+		if !crmf.signaturePOP {
+			return rejection(pkicmp.FailBadPOP, "proof of possession by signature required")
 		}
 		return nil
+	default:
+		// Only certificate requests carry a proof of possession.
+		return nil
 	}
-	return nil
 }
 
 // verifyPOPMsg verifies the Proof of Possession for CRMF requests.
 // RFC 4211 §4: Delegates to pkicmp.VerifyPOP.
-func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
+func verifyPOPMsg(msg *pkicmp.PKIMessage, opts pkicmp.POPOptions) error {
 	var msgs *pkicmp.CertReqMessages
 	var err error
 	switch msg.Body.Type {
@@ -155,17 +157,7 @@ func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
 		return err
 	}
 
-	return pkicmp.VerifyPOP(&(*msgs)[0])
-}
-
-// isSignatureCapableKey identifies keys that require signature proof of possession.
-func isSignatureCapableKey(pub crypto.PublicKey) bool {
-	switch pub.(type) {
-	case *rsa.PublicKey, *ecdsa.PublicKey, ed25519.PublicKey, *mldsa.PublicKey:
-		return true
-	default:
-		return false
-	}
+	return pkicmp.VerifyPOPWithOptions(&(*msgs)[0], opts)
 }
 
 // oidBasicConstraints identifies the RFC 5280 §4.2.1.9 BasicConstraints extension.
@@ -181,7 +173,8 @@ type basicConstraints struct {
 	MaxPathLen int  `asn1:"optional"`
 }
 
-// decodeBasicConstraints returns every BasicConstraints extension in the list, and an error if any one of them is malformed.
+// decodeBasicConstraints returns every BasicConstraints extension in the list
+// and an error if any one of them is malformed.
 func decodeBasicConstraints(extensions []pkix.Extension) ([]basicConstraints, error) {
 	var out []basicConstraints
 	for _, ext := range extensions {
@@ -196,18 +189,15 @@ func decodeBasicConstraints(extensions []pkix.Extension) ([]basicConstraints, er
 		var bc basicConstraints
 		rest, err := asn1.Unmarshal(ext.Value, &bc)
 		if err != nil || len(rest) != 0 {
-			return nil, &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailBadCertTemplate,
-				StatusText:  "malformed BasicConstraints",
-			}
+			return nil, rejection(pkicmp.FailBadCertTemplate, "malformed BasicConstraints")
 		}
 		out = append(out, bc)
 	}
 	return out, nil
 }
 
-// checkBasicConstraints rejects a malformed BasicConstraints extension, an invalid path length and any request for a CA certificate.
+// checkBasicConstraints rejects a malformed BasicConstraints extension, an
+// invalid path length and any request for a CA certificate.
 func checkBasicConstraints(extensions []pkix.Extension) error {
 	all, err := decodeBasicConstraints(extensions)
 	if err != nil {
@@ -217,20 +207,12 @@ func checkBasicConstraints(extensions []pkix.Extension) error {
 		// RFC 5280 §4.2.1.9: pathLenConstraint is meaningful only when cA is
 		// true, and it is never negative.
 		if bc.MaxPathLen < 0 || (!bc.IsCA && bc.MaxPathLen != 0) {
-			return &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailBadCertTemplate,
-				StatusText:  "invalid path-length in BasicConstraints",
-			}
+			return rejection(pkicmp.FailBadCertTemplate, "invalid path-length in BasicConstraints")
 		}
 	}
 	for _, bc := range all {
 		if bc.IsCA {
-			return &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailNotAuthorized,
-				StatusText:  "CA certificates not allowed",
-			}
+			return rejection(pkicmp.FailNotAuthorized, "CA certificates not allowed")
 		}
 	}
 	return nil

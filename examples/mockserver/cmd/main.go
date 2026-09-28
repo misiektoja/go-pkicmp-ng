@@ -39,7 +39,7 @@ func main() {
 	//   - WithConfirmWaitTime: how long to keep transactions waiting for certConf
 	//     before CleanupExpired considers them stale. Default is 10 seconds.
 	//   - WithSecretLookup: enables MAC (shared-secret) protection for IR/CR.
-	//   - WithCertificateLookup: enables signature protection for KUR/certConf.
+	//   - WithCertificateLookup: enables signature protection for KUR/certConf/RR.
 	srv := server.NewCAServer(ca,
 		server.LightweightPolicy(),
 		server.WithSigner(ca.Key(), ca.Cert()),

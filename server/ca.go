@@ -20,7 +20,9 @@ type CA interface {
 	// The CA may modify the template before signing (e.g., enforce policy on
 	// validity period, add extensions). Return Response.Waiting to trigger
 	// the polling flow for async issuance.
-	IssueCertificate(ctx context.Context, reqType RequestType, template *x509.Certificate, sender *SenderIdentity) (*Response, error)
+	IssueCertificate(
+		ctx context.Context, reqType RequestType, template *x509.Certificate, sender *SenderIdentity,
+	) (*Response, error)
 }
 
 // PendingChecker is an optional interface for CAs that support async issuance.
@@ -90,6 +92,22 @@ func contextWithPollRef(ctx context.Context, pollRef string) context.Context {
 	return context.WithValue(ctx, pollRefKey{}, pollRef)
 }
 
+// sha1SignaturesKey is the context key that carries the WithSHA1Signatures
+// setting to proof of possession checks, which run inside handlers that do not
+// see the server configuration.
+type sha1SignaturesKey struct{}
+
+// contextWithSHA1Signatures marks ctx so proof of possession checks accept SHA-1 signatures.
+func contextWithSHA1Signatures(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sha1SignaturesKey{}, true)
+}
+
+// sha1SignaturesAllowed reports whether ctx permits SHA-1 signatures in proof of possession.
+func sha1SignaturesAllowed(ctx context.Context) bool {
+	v, _ := ctx.Value(sha1SignaturesKey{}).(bool)
+	return v
+}
+
 // caHandler implements Handler by delegating to a CA.
 type caHandler struct {
 	ca CA
@@ -97,6 +115,7 @@ type caHandler struct {
 
 // NewCAHandler creates a Handler that delegates certificate issuance to a CA.
 // It handles CRMF/P10CR parsing, template building, and the CMP ceremony.
+// Revocation requests go to the CA when it implements [Revoker].
 //
 // Use with middleware for policy enforcement:
 //
@@ -117,9 +136,11 @@ func (h *caHandler) HandleCMP(ctx context.Context, msg *pkicmp.PKIMessage, sende
 	case pkicmp.BodyTypeCertConf:
 		return h.handleCertConf(ctx, msg)
 	case pkicmp.BodyTypePollReq:
-		return h.handlePollReq(ctx, msg, sender)
+		return h.handlePollReq(ctx, sender)
+	case pkicmp.BodyTypeRR:
+		return nil, h.handleRevocation(ctx, msg, sender)
 	default:
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest}
+		return nil, rejection(pkicmp.FailBadRequest, "")
 	}
 }
 
@@ -132,7 +153,7 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	// server may be built without a policy wrapper and a certificate issued for
 	// a key the requester does not hold is an authorization failure rather than
 	// a matter of site policy.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return nil, err
 	}
 
@@ -140,7 +161,7 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	case pkicmp.BodyTypeP10CR:
 		csr, err := msg.Body.P10CR()
 		if err != nil {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+			return nil, rejection(pkicmp.FailBadDataFormat, "")
 		}
 		subject, pubKey, extensions = csr.Subject, csr.PublicKey, csr.Extensions
 	default:
@@ -161,9 +182,9 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	// Compute SubjectKeyIdentifier from public key per RFC 5280 §4.2.1.2.
 	pubDER, err := x509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: err.Error()}
+		return nil, rejection(pkicmp.FailBadAlg, err.Error())
 	}
-	ski := sha1.Sum(pubDER) // #nosec G401 -- SHA-1 hash of SPKI for SKI (opaque identifier, collision resistance not required)
+	ski := sha1.Sum(pubDER) // #nosec G401 -- SHA-1 of SPKI for SKI (opaque identifier, collision resistance not required)
 
 	// Build template with data from the request only. The CA sets serial and
 	// validity, and decides what else to honor.
@@ -193,38 +214,37 @@ func (h *caHandler) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage) 
 
 	conf, err := msg.Body.CertConf()
 	if err != nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+		return nil, rejection(pkicmp.FailBadDataFormat, "")
 	}
 
 	// Get the issued certificate from context (set by Server.handleCertConf).
 	cert := IssuedCertFromContext(ctx)
 	if cert == nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "no issued certificate"}
+		return nil, rejection(pkicmp.FailBadRequest, "no issued certificate")
 	}
 
 	issueRef := IssueRefFromContext(ctx)
 
-	for _, cs := range *conf {
-		status := ConfirmAccepted
-		if cs.StatusInfo != nil && cs.StatusInfo.Status == pkicmp.StatusRejection {
-			status = ConfirmRejected
-		}
-		if err := confirmer.ConfirmCertificate(ctx, cert, status, issueRef); err != nil {
-			return nil, err
-		}
+	// The server has checked that every CertStatus names this certificate and
+	// that they agree, so the CA is told once. RFC 4210 and RFC 9810 §5.3.18:
+	// a certConf without a CertStatus for an issued certificate rejects it.
+	status := ConfirmRejected
+	if len(*conf) > 0 && !certStatusRejects(&(*conf)[0]) {
+		status = ConfirmAccepted
 	}
-	return nil, nil
+	return nil, confirmer.ConfirmCertificate(ctx, cert, status, issueRef)
 }
 
-func (h *caHandler) handlePollReq(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) (*Response, error) {
+// handlePollReq asks the CA for the result of the pending request that the pollRef in ctx identifies.
+func (h *caHandler) handlePollReq(ctx context.Context, sender *SenderIdentity) (*Response, error) {
 	checker, ok := h.ca.(PendingChecker)
 	if !ok {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "polling not supported"}
+		return nil, rejection(pkicmp.FailBadRequest, "polling not supported")
 	}
 
 	pollRef, ok := PollRefFromContext(ctx)
 	if !ok {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "no pending certificate"}
+		return nil, rejection(pkicmp.FailBadRequest, "no pending certificate")
 	}
 
 	return checker.CheckPending(ctx, pollRef, sender)
@@ -246,7 +266,8 @@ func bodyTypeToRequestType(t pkicmp.BodyType) RequestType {
 }
 
 // NewCAServer creates a complete CMP server from a CA implementation.
-// The CA is responsible only for certificate issuance. Configure request
+// The CA is responsible only for certificate issuance, and for revocation when
+// it implements [Revoker]. Configure request
 // verification separately with [WithSecretLookup] and/or
 // [WithCertificateLookup]. Use policy enforcement wrappers (e.g., [LightweightPolicy]).
 // Use [WithSigner] and [WithExtraCerts] options to configure the signing

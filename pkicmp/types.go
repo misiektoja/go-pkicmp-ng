@@ -5,6 +5,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"errors"
+	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -145,13 +146,13 @@ func NewDirectoryNameFromRawDER(rawName []byte) GeneralName {
 
 // Internal cryptobyte helpers
 
-func (a *AlgorithmIdentifier) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (a *AlgorithmIdentifier) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-		a.marshalInner(mctx, b)
+		a.marshalInner(b)
 	})
 }
 
-func (a *AlgorithmIdentifier) marshalInner(mctx *marshalContext, b *cryptobyte.Builder) {
+func (a *AlgorithmIdentifier) marshalInner(b *cryptobyte.Builder) {
 	b.AddASN1ObjectIdentifier(a.Algorithm)
 	if len(a.Parameters) > 0 {
 		b.AddBytes(a.Parameters)
@@ -186,7 +187,7 @@ func (a *AlgorithmIdentifier) unmarshalInner(seq *cryptobyte.String) error {
 	return nil
 }
 
-func (itv *InfoTypeAndValue) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (itv *InfoTypeAndValue) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		b.AddASN1ObjectIdentifier(itv.InfoType)
 		if len(itv.InfoValue) > 0 {
@@ -209,7 +210,7 @@ func (itv *InfoTypeAndValue) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (ft *PKIFreeText) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (ft *PKIFreeText) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	if len(*ft) == 0 {
 		return
 	}
@@ -237,7 +238,7 @@ func (ft *PKIFreeText) unmarshal(s *cryptobyte.String) error {
 	return nil
 }
 
-func (gn *GeneralName) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (gn *GeneralName) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	// If parsed from wire (Raw is set), write back verbatim to preserve encoding.
 	if len(gn.Raw) > 0 {
 		b.AddBytes(gn.Raw)
@@ -335,7 +336,7 @@ func parseRDNSequence(s *cryptobyte.String, rdn *pkix.RDNSequence) error {
 	return err
 }
 
-func (c *CMPCertificate) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (c *CMPCertificate) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	// CMPCertificate ::= CHOICE { x509v3PKCert Certificate, ... }
 	// x509v3PKCert is Certificate (SEQUENCE).
 	b.AddBytes(c.Raw)
@@ -358,13 +359,13 @@ type envelopedData struct {
 	Raw []byte
 }
 
-func (e *envelopedData) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (e *envelopedData) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
-		e.marshalInner(mctx, b)
+		e.marshalInner(b)
 	})
 }
 
-func (e *envelopedData) marshalInner(mctx *marshalContext, b *cryptobyte.Builder) {
+func (e *envelopedData) marshalInner(b *cryptobyte.Builder) {
 	// Raw contains the full SEQUENCE, so we need to strip it if we want the inner content.
 	content, err := stripSequence(e.Raw)
 	if err != nil {
@@ -393,13 +394,14 @@ func (e *envelopedData) unmarshalInner(s *cryptobyte.String) error {
 }
 
 // encryptedValue per RFC 4211 §2.1.
+//
 // Deprecated: use envelopedData instead.
 type encryptedValue struct {
 	// Raw contains the DER-encoded encryptedValue CHOICE value.
 	Raw []byte
 }
 
-func (e *encryptedValue) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (e *encryptedValue) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddBytes(e.Raw)
 }
 
@@ -430,7 +432,7 @@ func (k *encryptedKey) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 		mctx.MinRequiredPVNO = PVNO3
 		// envelopedData [0] envelopedData (IMPLICIT)
 		b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-			k.envelopedData.marshalInner(mctx, b)
+			k.envelopedData.marshalInner(b)
 		})
 	} else if k.encryptedValue != nil {
 		k.encryptedValue.marshal(mctx, b)
@@ -482,6 +484,35 @@ func marshalImplicitInt64(val int64) []byte {
 	var content cryptobyte.String
 	s.ReadASN1(&content, cbasn1.INTEGER)
 	return content
+}
+
+// marshalImplicitBigInt returns the content octets of an INTEGER for use under an implicit tag.
+func marshalImplicitBigInt(n *big.Int) []byte {
+	var b cryptobyte.Builder
+	b.AddASN1BigInt(n)
+	der := b.BytesOrPanic()
+	s := cryptobyte.String(der)
+	var content cryptobyte.String
+	s.ReadASN1(&content, cbasn1.INTEGER)
+	return content
+}
+
+// unmarshalImplicitBigInt decodes the content octets of an implicitly tagged INTEGER, rejecting non-minimal encodings.
+func unmarshalImplicitBigInt(content []byte) (*big.Int, error) {
+	var b cryptobyte.Builder
+	b.AddASN1(cbasn1.INTEGER, func(b *cryptobyte.Builder) {
+		b.AddBytes(content)
+	})
+	der, err := b.Bytes()
+	if err != nil {
+		return nil, err
+	}
+	s := cryptobyte.String(der)
+	n := new(big.Int)
+	if !s.ReadASN1Integer(n) {
+		return nil, &ParseError{Detail: "invalid integer"}
+	}
+	return n, nil
 }
 
 func unmarshalImplicitInt64(content []byte) (int64, error) {

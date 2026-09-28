@@ -32,6 +32,11 @@ func (e *Error) Error() string {
 	return msg
 }
 
+// rejection returns an Error that rejects the request with failInfo and StatusText text.
+func rejection(failInfo pkicmp.PKIFailureInfo, text string) *Error {
+	return &Error{Status: pkicmp.StatusRejection, FailureInfo: failInfo, StatusText: text}
+}
+
 // errorToStatusInfo maps a handler error to PKIStatusInfo for CMP responses.
 // Only the text a Handler put in [Error.StatusText] reaches the peer, so an
 // error carrying internal detail is not disclosed by returning it.
@@ -39,8 +44,7 @@ func errorToStatusInfo(err error) pkicmp.PKIStatusInfo {
 	if err == nil {
 		return pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}
 	}
-	var se *Error
-	if errors.As(err, &se) {
+	if se, ok := errors.AsType[*Error](err); ok {
 		si := pkicmp.PKIStatusInfo{
 			Status:   se.Status,
 			FailInfo: se.FailureInfo,

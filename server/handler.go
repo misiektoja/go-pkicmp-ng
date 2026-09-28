@@ -5,8 +5,11 @@ import (
 	"crypto/sha256"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"encoding/binary"
 	"errors"
 	"fmt"
+	"io"
+	"slices"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
@@ -28,8 +31,8 @@ func (f HandlerFunc) HandleCMP(ctx context.Context, req *pkicmp.PKIMessage, send
 // The first wrapper in the list is the outermost.
 func MiddlewareChain(mw ...func(Handler) Handler) func(Handler) Handler {
 	return func(h Handler) Handler {
-		for i := len(mw) - 1; i >= 0; i-- {
-			h = mw[i](h)
+		for _, wrap := range slices.Backward(mw) {
+			h = wrap(h)
 		}
 		return h
 	}
@@ -69,6 +72,10 @@ type SenderIdentity struct {
 	SenderKID []byte
 	// MACVerified is true when protection was verified via shared secret.
 	MACVerified bool
+	// RA identifies the registration authority that forwarded the request in a
+	// nested message, once [RAAuthorizer] accepted it. It is nil for a request
+	// sent directly.
+	RA *SenderIdentity
 
 	// secret is the verified shared secret, cached to avoid redundant lookups
 	// when protecting the response.
@@ -77,20 +84,52 @@ type SenderIdentity struct {
 	// protectionParams captures the decoded MAC parameters from the verified
 	// request, used to protect responses with the same algorithm suite.
 	protectionParams pkicmp.MACCredentialOption
+
+	// headerSender is the sender field of a MAC-protected message, which
+	// together with SenderKID names the shared secret.
+	headerSender pkicmp.GeneralName
 }
 
 // credentialID returns a hash identifying the credentials used for protection.
 // Used to verify that follow-up messages use the same credentials per RFC 9483 §3.2.
 func (s *SenderIdentity) credentialID() ([]byte, error) {
 	h := sha256.New()
-	if s.MACVerified {
-		h.Write(s.SenderKID)
-	} else if s.Certificate != nil {
+	switch {
+	case s.MACVerified:
+		// SecretLookup may find the secret by senderKID, by the sender name or by
+		// both. RFC 4210 §5.1.1 tells a sender whose name identifies the secret
+		// to omit senderKID. Keying on senderKID alone would give all such
+		// clients one identity. RFC 4210 Appendix D.4 keeps both fields the same
+		// for the whole transaction. The prefix keeps this input apart from a
+		// certificate, whose DER encoding starts with a SEQUENCE tag.
+		h.Write([]byte("cmp-mac"))
+		writeLengthPrefixed(h, s.SenderKID)
+		writeLengthPrefixed(h, senderNameKey(s.headerSender))
+	case s.Certificate != nil:
 		h.Write(s.Certificate.Raw)
-	} else {
+	default:
 		return nil, errors.New("no credentials in SenderIdentity")
 	}
 	return h.Sum(nil), nil
+}
+
+// senderNameKey returns a stable encoding of a header sender for credential binding.
+func senderNameKey(name pkicmp.GeneralName) []byte {
+	// The decoded form lets a directory name match however its strings are
+	// encoded, as SecretLookup sees it. Other GeneralName variants, including
+	// the NULL-DN, are compared by their DER encoding.
+	if len(name.DirectoryName) > 0 {
+		return []byte("dn:" + name.DirectoryName.String())
+	}
+	return name.Raw
+}
+
+// writeLengthPrefixed writes b preceded by its length, so that adjacent fields cannot run into each other.
+func writeLengthPrefixed(w io.Writer, b []byte) {
+	var n [4]byte
+	binary.BigEndian.PutUint32(n[:], uint32(len(b))) // #nosec G115 -- header fields are bounded by MaxRequestBodySize
+	_, _ = w.Write(n[:])
+	_, _ = w.Write(b)
 }
 
 // WaitingResponse tells the server to respond with "waiting" status.

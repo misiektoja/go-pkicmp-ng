@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto/mldsa"
 	"crypto/x509"
 	"errors"
@@ -37,7 +38,7 @@ func TestMLDSARequiresProof(t *testing.T) {
 				if err != nil {
 					t.Fatal(err)
 				}
-				err = enforceProofOfPossession(parsed)
+				err = enforceProofOfPossession(context.Background(), parsed)
 				if proof && err != nil {
 					t.Fatal(err)
 				}

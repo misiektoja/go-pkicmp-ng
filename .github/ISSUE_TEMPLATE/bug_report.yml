@@ -1,0 +1,63 @@
+name: Bug report
+description: A CMP peer fails against the client or server, or behavior does not match the documentation or an RFC
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Do not report a suspected vulnerability here. Follow [SECURITY.md](https://github.com/misiektoja/go-pkicmp-ng/blob/main/SECURITY.md) instead.
+
+        Never paste shared secrets, private keys, full CSRs or CMP messages captured from a production system into an issue.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you expected, and what you got instead. Cite the RFC section when the library deviates from it.
+    validations:
+      required: true
+
+  - type: textarea
+    id: reproduce
+    attributes:
+      label: How to reproduce
+      description: The steps and the client or server options you use. Redact hostnames and credentials.
+      render: go
+    validations:
+      required: true
+
+  - type: textarea
+    id: error
+    attributes:
+      label: Error and log
+      description: The returned error, the PKIStatusInfo or failInfo the peer sent and the peer's log lines around it.
+      render: shell
+    validations:
+      required: false
+
+  - type: input
+    id: version
+    attributes:
+      label: go-pkicmp-ng version
+      placeholder: v0.1.0 or commit
+    validations:
+      required: true
+
+  - type: input
+    id: peer
+    attributes:
+      label: Go version and CMP peer
+      description: The CA, RA or client on the other side and its version.
+      placeholder: go1.27.1, EJBCA 9.3.7
+    validations:
+      required: true
+
+  - type: input
+    id: protection
+    attributes:
+      label: Message protection
+      description: MAC or signature protection and the algorithms in use.
+      placeholder: PasswordBasedMac with SHA-256, ECDSA P-256 signature, ML-DSA-65
+    validations:
+      required: false

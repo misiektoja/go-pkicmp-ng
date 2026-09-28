@@ -16,11 +16,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
-	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // postCMP sends a CMP message and returns the parsed response.
@@ -323,8 +324,8 @@ func TestMACRequestWithoutSenderOrSenderKIDIsRejected(t *testing.T) {
 	assert.Equal(t, pkicmp.BodyTypeError, resp.Body.Type)
 }
 
-// WithStrictProfileValidation restores the four RFC 9483 construction checks
-// that are relaxed by default, so a conformance suite can be run against it.
+// WithStrictProfileValidation restores the RFC 9483 construction checks that
+// are relaxed by default, so a conformance suite can be run against it.
 func TestStrictProfileValidation(t *testing.T) {
 	ca := &certyaml.Certificate{Subject: "CN=Test CA"}
 	caCert, err := ca.X509Certificate()
@@ -439,6 +440,38 @@ func TestStrictProfileValidation(t *testing.T) {
 
 		resp := postCMP(t, ts, confMsg)
 		assert.Equal(t, pkicmp.BodyTypeError, resp.Body.Type)
+	})
+
+	// newMACIR returns a MAC-protected IR after mutate adjusts its header.
+	newMACIR := func(t *testing.T, subject string, mutate func(*pkicmp.PKIHeader)) *pkicmp.PKIMessage {
+		t.Helper()
+		key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+		require.NoError(t, err)
+		msg := pkicmp.NewPKIMessage(
+			pkicmp.NewIRBody(&pkicmp.CertReqMessages{newCertReqMsg(t, key, subject)}),
+			macMessageOpts(),
+		)
+		mutate(&msg.Header)
+		protectMAC(msg, secret)
+		return msg
+	}
+
+	t.Run("rejects a request without transactionID", func(t *testing.T) {
+		msg := newMACIR(t, "strict-no-transaction-id", func(h *pkicmp.PKIHeader) { h.TransactionID = nil })
+		status := errorStatus(t, postCMP(t, ts, msg))
+		assert.Equal(t, pkicmp.FailBadDataFormat, status.FailInfo)
+	})
+
+	t.Run("rejects a senderNonce shorter than 128 bits", func(t *testing.T) {
+		msg := newMACIR(t, "strict-short-nonce", func(h *pkicmp.PKIHeader) { h.SenderNonce = []byte("12345678") })
+		status := errorStatus(t, postCMP(t, ts, msg))
+		assert.Equal(t, pkicmp.FailBadSenderNonce, status.FailInfo)
+	})
+
+	t.Run("rejects a request without senderNonce", func(t *testing.T) {
+		msg := newMACIR(t, "strict-no-nonce", func(h *pkicmp.PKIHeader) { h.SenderNonce = nil })
+		status := errorStatus(t, postCMP(t, ts, msg))
+		assert.Equal(t, pkicmp.FailBadSenderNonce, status.FailInfo)
 	})
 }
 

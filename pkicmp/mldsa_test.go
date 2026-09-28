@@ -20,8 +20,10 @@ import (
 func TestMessageSignatures(t *testing.T) {
 	_, ed, err := ed25519.GenerateKey(rand.Reader)
 	require.NoError(t, err)
-	keys := []crypto.Signer{ed}
-	for _, params := range []mldsa.Parameters{mldsa.MLDSA44(), mldsa.MLDSA65(), mldsa.MLDSA87()} {
+	mldsaParams := []mldsa.Parameters{mldsa.MLDSA44(), mldsa.MLDSA65(), mldsa.MLDSA87()}
+	keys := make([]crypto.Signer, 0, 1+len(mldsaParams))
+	keys = append(keys, ed)
+	for _, params := range mldsaParams {
 		key, err := mldsa.GenerateKey(params)
 		require.NoError(t, err)
 		keys = append(keys, key)
@@ -79,7 +81,7 @@ func TestMLDSAProofAndConfirmation(t *testing.T) {
 			require.NoError(t, err)
 			algorithm, err := sigAlgFromOID(oid)
 			require.NoError(t, err)
-			_, err = signatureAlgorithm(AlgorithmIdentifier{Algorithm: oid, Parameters: asn1.NullBytes})
+			_, err = signatureAlgorithm(AlgorithmIdentifier{Algorithm: oid, Parameters: asn1.NullBytes}, false)
 			require.Error(t, err)
 			cert := &x509.Certificate{Raw: []byte("certificate bytes"), SignatureAlgorithm: algorithm}
 			status, err := NewCertStatus(cert, 7)

@@ -19,11 +19,7 @@ func LightweightPolicy() func(Handler) Handler {
 			// identifies the secret, so only the absence of both is rejected
 			// here. WithStrictProfileValidation applies the profile rule.
 			if sender.MACVerified && len(msg.Header.Sender.DirectoryName) == 0 && len(msg.Header.SenderKID) == 0 {
-				return nil, &Error{
-					Status:      pkicmp.StatusRejection,
-					FailureInfo: pkicmp.FailBadMessageCheck,
-					StatusText:  "MAC protection requires a sender name or senderKID",
-				}
+				return nil, rejection(pkicmp.FailBadMessageCheck, "MAC protection requires a sender name or senderKID")
 			}
 
 			// The RFC 9483 §3.3 rules on extraCerts, that it is present for
@@ -35,6 +31,13 @@ func LightweightPolicy() func(Handler) Handler {
 			// default would reject deployed clients over a field the server
 			// ignores. Outgoing responses always follow §3.3.
 
+			if msg.Body.Type == pkicmp.BodyTypeRR {
+				if err := validateRR(msg, sender); err != nil {
+					return nil, err
+				}
+				return next.HandleCMP(ctx, msg, sender)
+			}
+
 			// Only validate cert requests further.
 			if !isCertRequest(msg.Body.Type) {
 				return next.HandleCMP(ctx, msg, sender)
@@ -42,23 +45,21 @@ func LightweightPolicy() func(Handler) Handler {
 
 			// RFC 9483 §4.1.3: KUR MUST be signature-protected.
 			if msg.Body.Type == pkicmp.BodyTypeKUR && sender.MACVerified {
-				return nil, &Error{
-					Status:      pkicmp.StatusRejection,
-					FailureInfo: pkicmp.FailWrongIntegrity,
-					StatusText:  "KUR requires signature protection",
-				}
+				return nil, rejection(pkicmp.FailWrongIntegrity, "KUR requires signature protection")
 			}
 
 			// Validate based on request type.
 			switch msg.Body.Type {
 			case pkicmp.BodyTypeP10CR:
-				if err := validateP10CR(msg); err != nil {
+				if err := validateP10CR(ctx, msg); err != nil {
 					return nil, err
 				}
 			case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR:
-				if err := validateCRMF(msg); err != nil {
+				if err := validateCRMF(ctx, msg); err != nil {
 					return nil, err
 				}
+			default:
+				// isCertRequest above lets no other body type through.
 			}
 
 			return next.HandleCMP(ctx, msg, sender)
@@ -66,33 +67,53 @@ func LightweightPolicy() func(Handler) Handler {
 	}
 }
 
+// isCertRequest reports whether t is the body type of a certificate request.
 func isCertRequest(t pkicmp.BodyType) bool {
 	switch t {
 	case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR, pkicmp.BodyTypeP10CR:
 		return true
+	default:
+		return false
 	}
-	return false
 }
 
-func validateP10CR(msg *pkicmp.PKIMessage) error {
+func validateP10CR(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	csr, err := msg.Body.P10CR()
 	if err != nil {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+		return rejection(pkicmp.FailBadDataFormat, "")
 	}
 	// RFC 4211 §4: the CSR self-signature proves possession of the key.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return err
 	}
 	// RFC 9483 §4.1.1: Subject required.
 	if len(csr.Subject.String()) == 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertTemplate, StatusText: "subject required"}
+		return rejection(pkicmp.FailBadCertTemplate, "subject required")
 	}
 	// RFC 5280 §4.2.1.9 path-length rules, plus the policy decision to refuse a
 	// request for a CA certificate.
 	return checkBasicConstraints(csr.Extensions)
 }
 
-func validateCRMF(msg *pkicmp.PKIMessage) error {
+// validateRR applies the RFC 9483 §4.2 rules to a revocation request.
+func validateRR(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
+	// RFC 9483 §4.2 and §5.3.2: the request is signed, either with the
+	// certificate being revoked or by a PKI management entity.
+	if sender.MACVerified {
+		return rejection(pkicmp.FailWrongIntegrity, "revocation requires signature protection")
+	}
+	req, err := parseRevocationRequest(msg)
+	if err != nil {
+		return err
+	}
+	// RFC 9483 §4.2: crlEntryDetails MUST contain a reasonCode.
+	if !req.hasReason {
+		return rejection(pkicmp.FailBadRequest, "reasonCode required")
+	}
+	return nil
+}
+
+func validateCRMF(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	crmf, err := parseCRMFMsg(msg)
 	if err != nil {
 		return err
@@ -100,18 +121,18 @@ func validateCRMF(msg *pkicmp.PKIMessage) error {
 
 	// RFC 9483 §4.1.3: certReqId MUST be 0.
 	if crmf.certReqID != 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "certReqId must be 0"}
+		return rejection(pkicmp.FailBadRequest, "certReqId must be 0")
 	}
 
 	// RFC 4211 §4 and RFC 9483 §5.1.1: the request must prove possession of the
 	// requested key.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return err
 	}
 
 	// RFC 9483 §4.1.1: Subject required.
 	if len(crmf.subject.String()) == 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertTemplate, StatusText: "subject required"}
+		return rejection(pkicmp.FailBadCertTemplate, "subject required")
 	}
 
 	// RFC 5280 §4.2.1.9 path-length rules, plus the policy decision to refuse a

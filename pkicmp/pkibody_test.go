@@ -5,6 +5,7 @@ import (
 	"crypto/rsa"
 	"crypto/x509"
 	"crypto/x509/pkix"
+	"math/big"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -153,6 +154,26 @@ func TestPKIBodyGetters(t *testing.T) {
 		assert.Equal(t, (*rep)[0].CheckAfter, (*got)[0].CheckAfter)
 	})
 
+	t.Run("RR", func(t *testing.T) {
+		req := &RevReqContent{{CertDetails: CertTemplate{SerialNumber: big.NewInt(5)}}}
+		body := NewRRBody(req)
+		assert.Equal(t, BodyTypeRR, body.Type)
+
+		got, err := body.RR()
+		require.NoError(t, err)
+		assert.Equal(t, int64(5), (*got)[0].CertDetails.SerialNumber.Int64())
+	})
+
+	t.Run("RP", func(t *testing.T) {
+		rep := &RevRepContent{Status: []PKIStatusInfo{{Status: StatusAccepted}}}
+		body := NewRPBody(rep)
+		assert.Equal(t, BodyTypeRP, body.Type)
+
+		got, err := body.RP()
+		require.NoError(t, err)
+		assert.Equal(t, StatusAccepted, got.Status[0].Status)
+	})
+
 	t.Run("Error", func(t *testing.T) {
 		e := &ErrorMsgContent{
 			PKIStatusInfo: PKIStatusInfo{Status: StatusRejection},
@@ -179,6 +200,8 @@ func TestPKIBodyGetterMismatches(t *testing.T) {
 	t.Run("CertConfMismatch", func(t *testing.T) { _, err := body.CertConf(); assert.Error(t, err) })
 	t.Run("PollReqMismatch", func(t *testing.T) { _, err := body.PollReq(); assert.Error(t, err) })
 	t.Run("PollRepMismatch", func(t *testing.T) { _, err := body.PollRep(); assert.Error(t, err) })
+	t.Run("RRMismatch", func(t *testing.T) { _, err := body.RR(); assert.Error(t, err) })
+	t.Run("RPMismatch", func(t *testing.T) { _, err := body.RP(); assert.Error(t, err) })
 	t.Run("ErrorMismatch", func(t *testing.T) { _, err := body.Error(); assert.Error(t, err) })
 }
 

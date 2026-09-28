@@ -5,10 +5,22 @@ import (
 	"fmt"
 )
 
+// POPOptions configures [VerifyPOPWithOptions].
+type POPOptions struct {
+	// AllowSHA1Signatures accepts a signature proof made with
+	// sha1WithRSAEncryption or ecdsa-with-SHA1, which RFC 9481 §7.1 deprecates.
+	AllowSHA1Signatures bool
+}
+
 // VerifyPOP verifies the Proof of Possession signature on a CertReqMsg.
 // RFC 4211 §4: Only signature POP is supported; raVerified is rejected.
 // Returns nil if POP is valid or not present.
 func VerifyPOP(reqMsg *CertReqMsg) error {
+	return VerifyPOPWithOptions(reqMsg, POPOptions{})
+}
+
+// VerifyPOPWithOptions verifies the Proof of Possession signature on a CertReqMsg as [VerifyPOP] does, applying opts.
+func VerifyPOPWithOptions(reqMsg *CertReqMsg, opts POPOptions) error {
 	if reqMsg.Popo == nil {
 		return nil // No POP present — allowed for some profiles.
 	}
@@ -35,7 +47,7 @@ func VerifyPOP(reqMsg *CertReqMsg) error {
 	}
 
 	// Verify signature using the algorithm from popoSigningKey.
-	sigAlg, err := signatureAlgorithm(reqMsg.Popo.Signature.Algorithm)
+	sigAlg, err := signatureAlgorithm(reqMsg.Popo.Signature.Algorithm, opts.AllowSHA1Signatures)
 	if err != nil {
 		return err
 	}

@@ -11,16 +11,17 @@ import (
 
 // Client handles CMP message transport and polling.
 type Client struct {
-	endpoint           string
-	httpClient         *http.Client
-	recipient          pkix.Name
-	extraCerts         []*x509.Certificate
-	trustedCAs         *x509.CertPool
-	responseProtection pkicmp.ProtectionMechanism
-	maxResponseBytes   int64
-	maxPolls           int
-	minCheckAfter      time.Duration
-	maxCheckAfter      time.Duration
+	endpoint            string
+	httpClient          *http.Client
+	recipient           pkix.Name
+	extraCerts          []*x509.Certificate
+	trustedCAs          *x509.CertPool
+	responseProtection  pkicmp.ProtectionMechanism
+	maxResponseBytes    int64
+	maxPolls            int
+	minCheckAfter       time.Duration
+	maxCheckAfter       time.Duration
+	allowSHA1Signatures bool
 }
 
 const (
@@ -104,8 +105,23 @@ func WithExtraCerts(certs []*x509.Certificate) Option {
 // (RFC 9810 §5.3.21), so without a pool a rejection such as transactionIdInUse
 // arrives unverifiable, as an [UnverifiedStatusError]. Some CAs sign every
 // response, which a client with no anchor cannot complete at all.
+//
+// A CA with a composite ML-DSA key is trusted as an issuer only when the
+// response also carries its certificate in extraCerts or caPubs. The pool
+// entry still decides whether that certificate is trusted.
 func WithTrustedCAs(trustedCAs *x509.CertPool) Option {
 	return func(c *Client) { c.trustedCAs = trustedCAs }
+}
+
+// WithSHA1Signatures accepts responses signed with sha1WithRSAEncryption or
+// ecdsa-with-SHA1, which RFC 4210 era CAs may still use.
+//
+// RFC 9481 §7.1 deprecates SHA-1, so such responses fail verification by
+// default. The option covers only the message signature: the signer
+// certificate and the issued certificate are still validated by crypto/x509,
+// which rejects SHA-1 certificate signatures.
+func WithSHA1Signatures() Option {
+	return func(c *Client) { c.allowSHA1Signatures = true }
 }
 
 // WithMaxResponseBytes sets the maximum number of bytes accepted from a CMP

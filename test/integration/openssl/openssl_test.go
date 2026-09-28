@@ -13,13 +13,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-)
 
-func intPtr(i int) *int { return &i }
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+)
 
 func TestOpenSSLInitialize(t *testing.T) {
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
@@ -232,8 +231,8 @@ func TestOpenSSLSpecificFailInfo(t *testing.T) {
 	// Do NOT use SendError: true, as it makes the OpenSSL mock server framework
 	// return a generic badRequest error instead of the requested failInfo.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
-		PKIStatus: intPtr(int(pkicmp.StatusRejection)),
-		Failure:   intPtr(0), // badAlg
+		PKIStatus: new(int(pkicmp.StatusRejection)),
+		Failure:   new(0), // badAlg
 	})
 
 	newKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
@@ -320,8 +319,8 @@ func TestOpenSSLComplexFailure(t *testing.T) {
 	// Configure server to return multiple failure bits and a status string.
 	// badAlg (0) | badTime (3) -> bits: 1<<0 | 1<<3 = 1 | 8 = 9.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
-		PKIStatus:    intPtr(int(pkicmp.StatusRejection)),
-		FailureBits:  intPtr(9),
+		PKIStatus:    new(int(pkicmp.StatusRejection)),
+		FailureBits:  new(9),
 		StatusString: "policy violation: custom test reason",
 	})
 
@@ -362,7 +361,7 @@ func TestOpenSSLComplexFailure(t *testing.T) {
 func TestOpenSSLGrantedWithMods(t *testing.T) {
 	// Status 1 is a success state.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
-		PKIStatus: intPtr(int(pkicmp.StatusGrantedWithMods)),
+		PKIStatus: new(int(pkicmp.StatusGrantedWithMods)),
 	})
 
 	newKey := srv.RspKey
@@ -391,7 +390,7 @@ func TestOpenSSLGrantedWithMods(t *testing.T) {
 func TestOpenSSLPermanentWaiting(t *testing.T) {
 	// Configure server to stay in waiting state.
 	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
-		PKIStatus:  intPtr(int(pkicmp.StatusWaiting)),
+		PKIStatus:  new(int(pkicmp.StatusWaiting)),
 		PollCount:  1, // return pollRep once, then return the waiting IP response.
 		CheckAfter: 1,
 	})
@@ -452,4 +451,44 @@ func TestOpenSSLInitializeP10CRWrongSecret(t *testing.T) {
 	assert.Equal(t, pkicmp.ReasonBadMAC, ve.Reason)
 
 	t.Logf("Expected error: %v", err)
+}
+
+func TestOpenSSLRevoke(t *testing.T) {
+	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{})
+
+	// RFC 9483 §4.2: the request is signed with the certificate being revoked.
+	creds, err := pkicmp.NewSignatureCredentials(srv.RspKey, srv.RspCert)
+	require.NoError(t, err)
+
+	c := client.NewClient(srv.Endpoint,
+		client.WithRecipient(srv.CACert.Subject),
+		client.WithTrustedCAs(srv.TrustedCAs()),
+	)
+	err = c.SendRR(context.Background(), srv.RspCert, pkicmp.CRLReasonKeyCompromise, creds)
+	require.NoError(t, err, "SendRR")
+}
+
+func TestOpenSSLRevokeRejected(t *testing.T) {
+	// The mock server answers rr with the configured status in the rp body.
+	srv := newOpenSSLCMPServer(t, opensslCMPServerOpts{
+		PKIStatus: new(int(pkicmp.StatusRejection)),
+		Failure:   new(10), // certRevoked
+	})
+
+	creds, err := pkicmp.NewSignatureCredentials(srv.RspKey, srv.RspCert)
+	require.NoError(t, err)
+
+	c := client.NewClient(srv.Endpoint,
+		client.WithRecipient(srv.CACert.Subject),
+		client.WithTrustedCAs(srv.TrustedCAs()),
+	)
+	err = c.SendRR(context.Background(), srv.RspCert, pkicmp.CRLReasonSuperseded, creds)
+	require.Error(t, err)
+
+	var statusErr *pkicmp.PKIStatusError
+	require.ErrorAs(t, err, &statusErr)
+	assert.Equal(t, pkicmp.StatusRejection, statusErr.Status)
+	assert.True(t, pkicmp.HasFailure(err, pkicmp.FailCertRevoked), "FailInfo should have certRevoked bit set")
+
+	t.Logf("Expected revocation failure: %v", err)
 }

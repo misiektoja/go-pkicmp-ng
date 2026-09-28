@@ -5,15 +5,16 @@ import (
 	"crypto/x509/pkix"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // signedMessage returns a parsed, signature-protected message with the given sender.
 func signedMessage(t *testing.T, sender pkicmp.GeneralName) (*pkicmp.PKIMessage, *x509.CertPool) {
 	t.Helper()
-	_, caCert, signerKey, signerCert := generateCAAndSigner(t)
+	caCert, signerKey, signerCert := generateCAAndSigner(t)
 
 	msg := pkicmp.NewPKIMessage(pkicmp.NewPKIConfBody(), pkicmp.MessageOptions{Sender: sender})
 	mustProtectSig(t, msg, signerKey, signerCert)
@@ -80,7 +81,7 @@ func TestVerifySignatureBindsSenderToCertificate(t *testing.T) {
 func TestVerifyTrustedCertBindsSenderToCertificate(t *testing.T) {
 	trustedCertMessage := func(t *testing.T, sender pkicmp.GeneralName) (*pkicmp.PKIMessage, *x509.Certificate) {
 		t.Helper()
-		_, _, signerKey, signerCert := generateCAAndSigner(t)
+		_, signerKey, signerCert := generateCAAndSigner(t)
 
 		msg := pkicmp.NewPKIMessage(pkicmp.NewPKIConfBody(), pkicmp.MessageOptions{Sender: sender})
 		mustProtectSig(t, msg, signerKey, signerCert)

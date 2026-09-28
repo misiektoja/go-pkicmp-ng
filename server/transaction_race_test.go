@@ -11,10 +11,11 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
-	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // The documented deployment runs CleanupExpired from a background goroutine

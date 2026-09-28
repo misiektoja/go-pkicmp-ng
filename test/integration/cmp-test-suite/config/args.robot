@@ -8,6 +8,8 @@ config/skip_tests.py
 minimal
 --include
 pbmac1
+--include
+adding-protection
 --exclude
 revocation
 --exclude
@@ -15,7 +17,7 @@ kga
 --exclude
 genm
 --exclude
-nested
+batching
 --exclude
 pq
 --exclude

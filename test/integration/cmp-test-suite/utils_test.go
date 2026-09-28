@@ -29,7 +29,10 @@ func envOrDefault(key, fallback string) string {
 
 // configData holds template variables for custom.robot.tmpl.
 type configData struct {
-	Port int
+	Port    int
+	RAKey   string // PEM private key of the trusted registration authority
+	RACert  string // PEM certificate of the trusted registration authority
+	RAChain string // PEM chain from the RA certificate to the CA certificate
 }
 
 // renderConfig renders the custom.robot.tmpl template into the config directory.

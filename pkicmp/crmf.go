@@ -7,6 +7,7 @@ import (
 	"crypto/x509/pkix"
 	"encoding/asn1"
 	"fmt"
+	"math/big"
 
 	"golang.org/x/crypto/cryptobyte"
 	cbasn1 "golang.org/x/crypto/cryptobyte/asn1"
@@ -221,7 +222,7 @@ func (r *CertRequest) unmarshal(s *cryptobyte.String) error {
 		return &ParseError{Detail: "invalid CertRequest sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {
-		return &ParseError{Detail: "invalid certReqId"}
+		return &ParseError{Detail: detailInvalidCertReqID}
 	}
 	if err := r.CertTemplate.unmarshal(&seq); err != nil {
 		return err
@@ -312,18 +313,38 @@ func (a *AttributeTypeAndValue) unmarshal(s *cryptobyte.String) error {
 
 // CertTemplate per RFC 4211 §2.
 //
-// Only subject [5], publicKey [6], and extensions [9] are supported.
-// Other fields (version, serialNumber, issuer, validity, issuerUID, subjectUID)
-// are silently skipped during parsing.
+// Only serialNumber [1], issuer [3], subject [5], publicKey [6] and extensions [9]
+// are supported. Other fields (version, signingAlg, validity, issuerUID,
+// subjectUID) are silently skipped during parsing.
 type CertTemplate struct {
+	// SerialNumber identifies an existing certificate, as in a revocation request.
+	SerialNumber *big.Int
+	Issuer       []byte // Raw DER Name, such as x509.Certificate.RawIssuer
 	// Subject is the requested certificate subject DN.
 	Subject    GeneralName
 	PublicKey  []byte // Raw DER SubjectPublicKeyInfo
 	Extensions []byte // Raw DER Extensions
 }
 
-func (t *CertTemplate) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (t *CertTemplate) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
+		if t.SerialNumber != nil {
+			// serialNumber [1] INTEGER OPTIONAL (IMPLICIT)
+			b.AddASN1(cbasn1.Tag(1).ContextSpecific(), func(b *cryptobyte.Builder) {
+				b.AddBytes(marshalImplicitBigInt(t.SerialNumber))
+			})
+		}
+		if len(t.Issuer) > 0 {
+			// issuer [3] Name OPTIONAL
+			// Name is a CHOICE, so the tag is EXPLICIT and wraps the SEQUENCE.
+			if !isSingleElement(t.Issuer, cbasn1.SEQUENCE) {
+				b.SetError(fmt.Errorf("pkicmp: invalid issuer DER"))
+				return
+			}
+			b.AddASN1(cbasn1.Tag(3).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
+				b.AddBytes(t.Issuer)
+			})
+		}
 		if len(t.Subject.DirectoryName) > 0 {
 			// subject [5] Name OPTIONAL
 			// Name is CHOICE { rdnSequence RDNSequence }
@@ -375,6 +396,25 @@ func (t *CertTemplate) unmarshal(s *cryptobyte.String) error {
 		}
 
 		switch tag {
+		case cbasn1.Tag(1).ContextSpecific():
+			var content cryptobyte.String
+			if !sub.ReadASN1(&content, tag) {
+				return &ParseError{Detail: "invalid serialNumber tag"}
+			}
+			serial, err := unmarshalImplicitBigInt(content)
+			if err != nil {
+				return err
+			}
+			t.SerialNumber = serial
+		case cbasn1.Tag(3).ContextSpecific().Constructed():
+			var content, name cryptobyte.String
+			if !sub.ReadASN1(&content, tag) {
+				return &ParseError{Detail: "invalid issuer tag"}
+			}
+			if !content.ReadASN1Element(&name, cbasn1.SEQUENCE) || !content.Empty() {
+				return &ParseError{Detail: "invalid issuer name"}
+			}
+			t.Issuer = name
 		case cbasn1.Tag(5).ContextSpecific().Constructed():
 			var content cryptobyte.String
 			if !sub.ReadASN1(&content, tag) {
@@ -422,21 +462,22 @@ type proofOfPossession struct {
 }
 
 func (p *proofOfPossession) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
-	if p.RAVerified {
+	switch {
+	case p.RAVerified:
 		// raVerified [0] NULL (IMPLICIT)
 		b.AddASN1(cbasn1.Tag(0).ContextSpecific(), func(b *cryptobyte.Builder) {})
-	} else if p.Signature != nil {
+	case p.Signature != nil:
 		// signature [1] popoSigningKey (IMPLICIT)
 		// popoSigningKey is a SEQUENCE.
 		b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.Signature.marshalInner(mctx, b)
 		})
-	} else if p.KeyEncipherment != nil {
+	case p.KeyEncipherment != nil:
 		// keyEncipherment [2] popoPrivKey (EXPLICIT because popoPrivKey is a CHOICE)
 		b.AddASN1(cbasn1.Tag(2).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.KeyEncipherment.marshal(mctx, b)
 		})
-	} else if p.KeyAgreement != nil {
+	case p.KeyAgreement != nil:
 		// keyAgreement [3] popoPrivKey (EXPLICIT because popoPrivKey is a CHOICE)
 		b.AddASN1(cbasn1.Tag(3).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.KeyAgreement.marshal(mctx, b)
@@ -500,7 +541,7 @@ func (p *popoPrivKey) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 		// encryptedKey [4] envelopedData (IMPLICIT)
 		// envelopedData is a SEQUENCE.
 		b.AddASN1(cbasn1.Tag(4).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-			p.encryptedKey.marshalInner(mctx, b)
+			p.encryptedKey.marshalInner(b)
 		})
 	}
 }
@@ -558,7 +599,7 @@ func (c *challenge) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 			mctx.MinRequiredPVNO = PVNO3
 			// encryptedRand [0] envelopedData (IMPLICIT)
 			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				c.EncryptedRand.marshalInner(mctx, b)
+				c.EncryptedRand.marshalInner(b)
 			})
 		}
 	})

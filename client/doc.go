@@ -5,7 +5,7 @@
 // registration), [Client.SendCR] (certification), [Client.SendKUR] (key update),
 // and [Client.SendP10CR] (PKCS#10 request). All handle the full lifecycle
 // transparently: protection, response verification, polling, and certificate
-// confirmation.
+// confirmation. [Client.SendRR] asks the CA to revoke a certificate.
 //
 // # Initial enrollment with MAC protection
 //
@@ -58,6 +58,24 @@
 // when newCreds is a [pkicmp.SignatureCredentials]. Custom credential types can
 // provide the certificate with [WithOldCertificate].
 //
+// # Revocation
+//
+// RFC 9483 §4.2 expects the request to be signed with the certificate being
+// revoked:
+//
+//	creds, err := pkicmp.NewSignatureCredentials(certKey, cert)
+//	if err != nil {
+//	    log.Fatal(err)
+//	}
+//	err = c.SendRR(context.Background(), cert, pkicmp.CRLReasonKeyCompromise, creds)
+//	if pkicmp.HasFailure(err, pkicmp.FailCertRevoked) {
+//	    fmt.Println("certificate was already revoked")
+//	}
+//
+// [pkicmp.CRLReasonCertificateHold] suspends a certificate and
+// [pkicmp.CRLReasonRemoveFromCRL] releases it, if the CA supports holds. A CA
+// that delays its answer is polled as described below, without certConf.
+//
 // # Asynchronous enrollment and polling
 //
 // When a CA cannot issue immediately it replies with a "waiting" status. The
@@ -95,6 +113,8 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
+// A response signed with SHA-1 is refused unless [WithSHA1Signatures] is set.
+//
 // A shared-secret enrollment completes without a pool, but errors are signed
 // however the request was protected (RFC 9810 §5.3.21), so without one a
 // rejection such as transactionIdInUse arrives as an [UnverifiedStatusError]:
@@ -113,10 +133,16 @@
 // its first response, the certificate authenticated earlier in the operation is
 // retained and retried for later messages, under the same checks.
 //
+// A certificate response must hold exactly one CertResponse with the certReqId
+// of the request. A p10cr has no certReqId, so both -1 (RFC 9810 §5.3.4) and 0
+// are accepted. A rejection is reported whatever certReqId it carries.
+//
 // The issued certificate must certify the requested public key and must validate
 // against the configured anchors, using response extraCerts to complete the path.
 // Its subject is not checked, because a CA may return grantedWithMods having
-// changed it.
+// changed it. A certificate that fails these checks or arrives under another
+// certReqId is rejected in certConf before the error is returned, so the CA
+// learns of it at once (RFC 9483 §3.6.1).
 //
 // # Limits
 //

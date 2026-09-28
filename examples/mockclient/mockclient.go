@@ -1,4 +1,4 @@
-// Package mockclient provides reusable enrollment helpers built on top of the
+// Package mockclient provides reusable enrollment and revocation helpers built on top of the
 // [client] and [pkicmp] packages. See cmd/ for a step-by-step tutorial that
 // calls the APIs directly.
 package mockclient
@@ -77,4 +77,21 @@ func Renew(ctx context.Context, endpoint string, oldKey crypto.Signer, oldCert *
 	}
 
 	return result, newKey, nil
+}
+
+// Revoke performs a Revocation Request (RR) signed with the certificate being
+// revoked, as RFC 9483 §4.2 expects. key is the private key of cert,
+// trustedCAs verify the server's response, and caCerts are included in
+// extraCerts.
+func Revoke(ctx context.Context, endpoint string, key crypto.Signer, cert *x509.Certificate, reason pkicmp.CRLReason, trustedCAs *x509.CertPool, caCerts []*x509.Certificate) error {
+	creds, err := pkicmp.NewSignatureCredentials(key, cert, caCerts...)
+	if err != nil {
+		return fmt.Errorf("creating signature credentials: %w", err)
+	}
+
+	c := client.NewClient(endpoint, client.WithTrustedCAs(trustedCAs))
+	if err := c.SendRR(ctx, cert, reason, creds); err != nil {
+		return fmt.Errorf("RR: %w", err)
+	}
+	return nil
 }

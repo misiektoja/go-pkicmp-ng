@@ -15,11 +15,12 @@ import (
 	"sync/atomic"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // testPKI holds certificates and keys for tests.
@@ -46,12 +47,12 @@ func newTestPKI() testPKI {
 
 // mockCMPServer creates a mock CMP server that responds with the given body type and handles certConf.
 func mockCMPServer(pki testPKI, respBodyFn func(req *pkicmp.PKIMessage) *pkicmp.PKIBody, secret []byte) *httptest.Server {
-	callCount := int32(0)
+	var callCount atomic.Int32
 	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
 
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -313,12 +314,12 @@ func TestSendP10CRHappyPath(t *testing.T) {
 
 func TestPollingHappyPath(t *testing.T) {
 	pki := newTestPKI()
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		switch {
@@ -396,16 +397,16 @@ func TestPollingHappyPath(t *testing.T) {
 	result, err := c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	require.NoError(t, err)
 	assert.Equal(t, pki.eeCert.SerialNumber, result.Certificate.SerialNumber)
-	assert.Equal(t, int32(4), atomic.LoadInt32(&callCount))
+	assert.Equal(t, int32(4), callCount.Load())
 }
 
 func TestPollingMaxRetries(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -459,12 +460,12 @@ func TestPollingMaxRetries(t *testing.T) {
 }
 
 func TestPollingContextCancellation(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -512,7 +513,7 @@ func TestPollingContextCancellation(t *testing.T) {
 	ctx, cancel := context.WithCancel(context.Background())
 	// Cancel after the first poll reply is received (checkAfter=5 will block)
 	go func() {
-		for atomic.LoadInt32(&callCount) < 2 {
+		for callCount.Load() < 2 {
 		}
 		cancel()
 	}()
@@ -886,12 +887,12 @@ func TestServerReturnsMissingProtection(t *testing.T) {
 }
 
 func TestPollingServerReturnsErrorDuringPoll(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -949,11 +950,11 @@ func TestSendIRWithRSAKey(t *testing.T) {
 	ee := &certyaml.Certificate{Subject: "cn=rsa-ee", Issuer: ca, KeyType: certyaml.KeyTypeRSA}
 	eeCert, _ := ee.X509Certificate()
 
-	var callCount int32
+	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1012,11 +1013,11 @@ func TestSendIRWithP384Key(t *testing.T) {
 	ee := &certyaml.Certificate{Subject: "cn=p384-ee", Issuer: ca, KeyType: certyaml.KeyTypeEC, KeySize: 384}
 	eeCert, _ := ee.X509Certificate()
 
-	var callCount int32
+	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1075,11 +1076,11 @@ func TestSendIRWithP521Key(t *testing.T) {
 	ee := &certyaml.Certificate{Subject: "cn=p521-ee", Issuer: ca, KeyType: certyaml.KeyTypeEC, KeySize: 521}
 	eeCert, _ := ee.X509Certificate()
 
-	var callCount int32
+	var callCount atomic.Int32
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1131,12 +1132,12 @@ func TestSendIRWithP521Key(t *testing.T) {
 }
 
 func TestPollingHTTPErrorDuringPoll(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		if count == 1 {
 			// First: return waiting
@@ -1249,12 +1250,12 @@ func TestCAPubsWithExistingTrustedCAs(t *testing.T) {
 func TestCertConfServerReturnsError(t *testing.T) {
 	// Tests the path where certConf exchange returns an error body.
 	pki := newTestPKI()
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1310,12 +1311,12 @@ func TestCertConfServerReturnsError(t *testing.T) {
 func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 	// Tests the path where certConf response is not PKIConf or Error.
 	pki := newTestPKI()
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1375,12 +1376,12 @@ func TestCertConfServerReturnsUnexpectedType(t *testing.T) {
 
 func TestCertConfHTTPError(t *testing.T) {
 	pki := newTestPKI()
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		if count == 1 {
 			resp := &pkicmp.PKIMessage{
@@ -1466,12 +1467,12 @@ func TestServerReturnsEncryptedCert(t *testing.T) {
 }
 
 func TestPollingVerificationErrorDuringPoll(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {
@@ -1526,12 +1527,12 @@ func TestPollingVerificationErrorDuringPoll(t *testing.T) {
 }
 
 func TestPollingUnsupportedPVNODuringPoll(t *testing.T) {
-	var callCount int32
+	var callCount atomic.Int32
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		body, _ := io.ReadAll(r.Body)
 		req, _ := pkicmp.ParsePKIMessage(body)
-		count := atomic.AddInt32(&callCount, 1)
+		count := callCount.Add(1)
 
 		var resp *pkicmp.PKIMessage
 		if count == 1 {

@@ -61,12 +61,14 @@ type PKIBody struct {
 	p10cr    *x509.CertificateRequest
 	kur      *CertReqMessages
 	kup      *CertRepMessage
+	rr       *RevReqContent
+	rp       *RevRepContent
 	certConf *CertConfirmContent
 	pkiConf  *PKIConfirmContent
 	pollReq  *PollReqContent
 	pollRep  *PollRepContent
 	errorMsg *ErrorMsgContent
-	nested   *PKIMessage
+	nested   []*PKIMessage
 }
 
 type BodyType cbasn1.Tag
@@ -84,8 +86,10 @@ const (
 	BodyTypeP10CR    = BodyType(4 | classContextSpecific | classConstructed)
 	BodyTypeKUR      = BodyType(7 | classContextSpecific | classConstructed)
 	BodyTypeKUP      = BodyType(8 | classContextSpecific | classConstructed)
+	BodyTypeRR       = BodyType(11 | classContextSpecific | classConstructed)
+	BodyTypeRP       = BodyType(12 | classContextSpecific | classConstructed)
 	BodyTypePKIConf  = BodyType(19 | classContextSpecific | classConstructed)
-	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: nested [20] NestedMessageContent
+	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: NestedMessageContent
 	BodyTypeError    = BodyType(23 | classContextSpecific | classConstructed)
 	BodyTypeCertConf = BodyType(24 | classContextSpecific | classConstructed)
 	BodyTypePollReq  = BodyType(25 | classContextSpecific | classConstructed)
@@ -109,6 +113,10 @@ func (t BodyType) String() string {
 		return "kur"
 	case BodyTypeKUP:
 		return "kup"
+	case BodyTypeRR:
+		return "rr"
+	case BodyTypeRP:
+		return "rp"
 	case BodyTypePKIConf:
 		return "pkiconf"
 	case BodyTypeNested:
@@ -162,6 +170,10 @@ func (b *PKIBody) marshal(mctx *marshalContext, builder *cryptobyte.Builder) {
 			b.kur.marshal(mctx, builder)
 		case BodyTypeKUP:
 			b.kup.marshal(mctx, builder)
+		case BodyTypeRR:
+			b.rr.marshal(mctx, builder)
+		case BodyTypeRP:
+			b.rp.marshal(mctx, builder)
 		case BodyTypeCertConf:
 			b.certConf.marshal(mctx, builder)
 		case BodyTypePKIConf:
@@ -173,14 +185,24 @@ func (b *PKIBody) marshal(mctx *marshalContext, builder *cryptobyte.Builder) {
 		case BodyTypeError:
 			b.errorMsg.marshal(mctx, builder)
 		case BodyTypeNested:
-			// NestedMessageContent ::= PKIMessage (RFC 9810 §5.1.3.5)
-			// The inner PKIMessage is encoded as a full DER SEQUENCE inside the [20] tag.
-			der, err := b.nested.MarshalBinary()
-			if err != nil {
-				builder.SetError(err)
+			if len(b.nested) == 0 {
+				builder.SetError(&ParseError{Detail: "nested body requires at least one message"})
 				return
 			}
-			builder.AddBytes(der)
+			builder.AddASN1(cbasn1.SEQUENCE, func(builder *cryptobyte.Builder) {
+				for _, msg := range b.nested {
+					if msg == nil {
+						builder.SetError(&ParseError{Detail: "nil message in nested body"})
+						return
+					}
+					der, err := msg.marshalForNesting()
+					if err != nil {
+						builder.SetError(err)
+						return
+					}
+					builder.AddBytes(der)
+				}
+			})
 		default:
 			// Should not happen if correctly constructed
 			builder.AddBytes(b.Raw)
@@ -301,6 +323,30 @@ func (b *PKIBody) IP() (*CertRepMessage, error) {
 	return b.ip, b.err
 }
 
+// RR returns the revocation request content (RFC 9810 §5.3.9).
+func (b *PKIBody) RR() (*RevReqContent, error) {
+	if b.Type != BodyTypeRR {
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not rr (type %s)", b.Type)}
+	}
+	if b.rr == nil && b.err == nil {
+		b.rr = &RevReqContent{}
+		b.err = b.unmarshalBodyContent(b.rr)
+	}
+	return b.rr, b.err
+}
+
+// RP returns the revocation response content (RFC 9810 §5.3.10).
+func (b *PKIBody) RP() (*RevRepContent, error) {
+	if b.Type != BodyTypeRP {
+		return nil, &ParseError{Detail: fmt.Sprintf("body is not rp (type %s)", b.Type)}
+	}
+	if b.rp == nil && b.err == nil {
+		b.rp = &RevRepContent{}
+		b.err = b.unmarshalBodyContent(b.rp)
+	}
+	return b.rp, b.err
+}
+
 func (b *PKIBody) CertConf() (*CertConfirmContent, error) {
 	if b.Type != BodyTypeCertConf {
 		return nil, &ParseError{Detail: fmt.Sprintf("body is not certConf (type %s)", b.Type)}
@@ -356,23 +402,43 @@ func (b *PKIBody) Error() (*ErrorMsgContent, error) {
 	return b.errorMsg, b.err
 }
 
-// Nested returns the inner PKIMessage from a nested [20] body.
-// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
-func (b *PKIBody) Nested() (*PKIMessage, error) {
+// Nested returns the messages carried by a nested [20] body.
+//
+// RFC 9810 §5.1.3.5 and RFC 4210 §5.1.3.4 both define NestedMessageContent as
+// PKIMessages, a SEQUENCE SIZE (1..MAX) OF PKIMessage.
+func (b *PKIBody) Nested() ([]*PKIMessage, error) {
 	if b.Type != BodyTypeNested {
 		return nil, &ParseError{Detail: fmt.Sprintf("body is not nested (type %s)", b.Type)}
 	}
 	if b.nested == nil && b.err == nil {
-		// Parse the inner PKIMessage from the body content bytes.
-		s := cryptobyte.String(b.Raw)
-		var content cryptobyte.String
-		if !s.ReadASN1(&content, cbasn1.Tag(b.Type)) {
-			b.err = &ParseError{Detail: "invalid nested body content"}
-			return nil, b.err
-		}
-		b.nested, b.err = ParsePKIMessage([]byte(content))
+		b.nested, b.err = parseNestedMessages(b.Raw)
 	}
 	return b.nested, b.err
+}
+
+// parseNestedMessages decodes the PKIMessages inside a DER nested [20] body element.
+func parseNestedMessages(raw []byte) ([]*PKIMessage, error) {
+	s := cryptobyte.String(raw)
+	var content, seq cryptobyte.String
+	if !s.ReadASN1(&content, cbasn1.Tag(BodyTypeNested)) || !content.ReadASN1(&seq, cbasn1.SEQUENCE) || !content.Empty() {
+		return nil, &ParseError{Detail: "invalid nested body content"}
+	}
+	var msgs []*PKIMessage
+	for !seq.Empty() {
+		var elem cryptobyte.String
+		if !seq.ReadASN1Element(&elem, cbasn1.SEQUENCE) {
+			return nil, &ParseError{Detail: "invalid message in nested body"}
+		}
+		msg, err := ParsePKIMessage(elem)
+		if err != nil {
+			return nil, &ParseError{Detail: "nested message", Err: err}
+		}
+		msgs = append(msgs, msg)
+	}
+	if len(msgs) == 0 {
+		return nil, &ParseError{Detail: "nested body contains no messages"}
+	}
+	return msgs, nil
 }
 
 func (b *PKIBody) unmarshalBodyContent(p interface {
@@ -427,6 +493,16 @@ func NewIPBody(rep *CertRepMessage) *PKIBody {
 	return &PKIBody{Type: BodyTypeIP, ip: rep, dirty: true}
 }
 
+// NewRRBody creates a revocation request body (RFC 9810 §5.3.9).
+func NewRRBody(req *RevReqContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeRR, rr: req, dirty: true}
+}
+
+// NewRPBody creates a revocation response body (RFC 9810 §5.3.10).
+func NewRPBody(rep *RevRepContent) *PKIBody {
+	return &PKIBody{Type: BodyTypeRP, rp: rep, dirty: true}
+}
+
 func NewCertConfBody(conf *CertConfirmContent) *PKIBody {
 	return &PKIBody{Type: BodyTypeCertConf, certConf: conf, dirty: true}
 }
@@ -447,8 +523,11 @@ func NewErrorBody(err *ErrorMsgContent) *PKIBody {
 	return &PKIBody{Type: BodyTypeError, errorMsg: err, dirty: true}
 }
 
-// NewNestedBody creates a nested [20] body wrapping a single inner PKIMessage.
-// RFC 9810 §5.1.3.5: NestedMessageContent ::= PKIMessage.
-func NewNestedBody(msg *PKIMessage) *PKIBody {
-	return &PKIBody{Type: BodyTypeNested, nested: msg, dirty: true}
+// NewNestedBody creates a nested [20] body carrying one or more messages (RFC 9810 §5.1.3.5).
+//
+// A protected message keeps the exact header and body bytes its protection was
+// computed over, so a received message is forwarded without breaking its
+// protection. An unprotected message is encoded from its fields.
+func NewNestedBody(msgs ...*PKIMessage) *PKIBody {
+	return &PKIBody{Type: BodyTypeNested, nested: msgs, dirty: true}
 }

@@ -88,6 +88,11 @@ func (s *Server) buildErrorResponse(req *pkicmp.PKIMessage, sender *SenderIdenti
 	return s.buildResponse(req, pkicmp.NewErrorBody(&pkicmp.ErrorMsgContent{PKIStatusInfo: si}), sender)
 }
 
+// buildRevRepResponse creates an rp with one status for the single revocation requested.
+func (s *Server) buildRevRepResponse(req *pkicmp.PKIMessage, si pkicmp.PKIStatusInfo, sender *SenderIdentity) *pkicmp.PKIMessage {
+	return s.buildResponse(req, pkicmp.NewRPBody(&pkicmp.RevRepContent{Status: []pkicmp.PKIStatusInfo{si}}), sender)
+}
+
 // buildCertRepResponseForType creates a CertRepMessage with the specified response type.
 func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID int64, si pkicmp.PKIStatusInfo, cert *x509.Certificate, caCerts []*x509.Certificate, sender *SenderIdentity, reqType RequestType, protectionParams ...pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
 	certResp := pkicmp.CertResponse{
@@ -182,7 +187,10 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 	if resp.Waiting != nil {
 		si := pkicmp.PKIStatusInfo{Status: pkicmp.StatusWaiting}
 		respMsg := s.buildCertRepResponseForType(msg, certReqID, si, nil, nil, sender, reqType)
-		if !s.setPending(credID, txnID, reqType, resp.Waiting.PollRef, respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Time{}) {
+		if !s.setPending(
+			credID, txnID, reqType, resp.Waiting.PollRef,
+			respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Time{},
+		) {
 			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailSystemFailure,
 			})
@@ -193,7 +201,9 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 	// Certificate issued.
 	si := pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}
 	protectionParams := sender.protectionParams
-	respMsg := s.buildCertRepResponseForType(msg, certReqID, si, resp.Certificate, resp.CACerts, sender, reqType, protectionParams)
+	respMsg := s.buildCertRepResponseForType(
+		msg, certReqID, si, resp.Certificate, resp.CACerts, sender, reqType, protectionParams,
+	)
 
 	if resp.Certificate != nil {
 		if s.cfg.implicitConfirm && requestHasImplicitConfirm(msg) {
@@ -205,12 +215,13 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 			if s.cfg.confirmer != nil {
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
-		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams, msg.Header.ProtectionAlg) {
-				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
-					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
-				})
-			}
+		} else if !s.setIssued(
+			credID, txnID, reqType, certReqID, resp.Certificate, resp.IssueRef,
+			respMsg.Header.SenderNonce, msg.Header.SenderNonce, protectionParams, msg.Header.ProtectionAlg,
+		) {
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
+				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
+			})
 		}
 	}
 
@@ -290,7 +301,10 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 		}
 		pollRep := pkicmp.PollRepContent{item}
 		respMsg := s.buildResponse(msg, pkicmp.NewPollRepBody(&pollRep), sender)
-		if !s.setPending(credID, txnID, pending.reqType, resp.Waiting.PollRef, respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Now()) {
+		if !s.setPending(
+			credID, txnID, pending.reqType, resp.Waiting.PollRef,
+			respMsg.Header.SenderNonce, resp.Waiting.CheckAfter, time.Now(),
+		) {
 			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailSystemFailure,
 			})
@@ -312,12 +326,13 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 			if s.cfg.confirmer != nil {
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
-		} else {
-			if !s.setIssued(credID, txnID, resp.Certificate, resp.IssueRef, respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams, msg.Header.ProtectionAlg) {
-				return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
-					Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
-				})
-			}
+		} else if !s.setIssued(
+			credID, txnID, pending.reqType, certReqID, resp.Certificate, resp.IssueRef,
+			respMsg.Header.SenderNonce, msg.Header.SenderNonce, sender.protectionParams, msg.Header.ProtectionAlg,
+		) {
+			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
+				Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailTransactionIdInUse,
+			})
 		}
 	}
 	return respMsg

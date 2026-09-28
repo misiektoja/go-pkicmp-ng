@@ -8,11 +8,56 @@
 # Test binary, built with `go test -c`
 *.test
 
-# Output of the go coverage tool, specifically when used with LiteIDE
+# Code coverage profiles and other test artifacts
 *.out
+coverage.*
+*.coverprofile
+profile.cov
 
-# Dependency directories (remove the comment below to include it)
-# vendor/
+# Go workspace file
+go.work
+go.work.sum
+
+# env file
+.env*
+
+# Editor/IDE
+.idea/
+.vscode/
+.cursor/
+.cursorignore
+.cursorindexingignore
+*.sublime-project
+*.sublime-workspace
+*.swp
+*.swo
+
+# Tool binaries, build output and caches
+bin/
+dist/
+.cache/
+
+# Dependency directories
+vendor/
+
+# Local development and temporary files
+/local
+tmp/
+
+# Credentials, certificates, keys and backups
+*.pem
+*.key
+*.crt
+*.p12
+*.jks
+*.der
+*.token
+*.secret
+*.bak
+*.old
+*.orig
+# DER encoded CMP messages are golden test vectors, not credentials.
+!pkicmp/testdata/*.der
 
 # OS-specific files
 .DS_Store
@@ -23,11 +68,9 @@
 ehthumbs.db
 Thumbs.db
 
-# Project-specific ignores
-coverage.out
+# Integration test state
 test/integration/ejbca/testdata/*.pem
 test/integration/ejbca/testdata/*.p12
 test/integration/cmp-test-suite/reports/
 test/integration/cmp-test-suite/config/custom.robot
 test/integration/cmp-test-suite/testdata/cmp-test-suite/
-

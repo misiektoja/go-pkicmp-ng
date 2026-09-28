@@ -1,0 +1,129 @@
+# Runs the client against a hosted Nokia NCM instance: P10CR enrollment with PasswordBasedMac and with a
+# signature, P10CR re-enrollment and key update with a new and with the existing key.
+#
+# This is the only workflow that talks to a CMP server outside the repository. It needs the repository
+# secrets that test/integration/ncm/README.md lists. It runs for pushes to dev and main, once a week and on
+# request. It never runs for pull requests. Without the secrets the preflight job reports what is missing
+# and the test job is skipped, so a fork stays green.
+#
+# One job runs per configured transport, so the requests of the two runs come from different runners.
+name: NCM interoperability
+
+on:
+  push:
+    branches: [dev, main]
+  schedule:
+    - cron: "41 4 * * 2"
+  workflow_dispatch:
+
+permissions: {}
+
+# A run is not cancelled halfway, so NCM never holds a transaction that was issued but not confirmed.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Check the NCM configuration
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    outputs:
+      transports: ${{ steps.check.outputs.transports }}
+    steps:
+      - name: Report which transports and credentials are configured
+        id: check
+        env:
+          HTTP_URL: ${{ secrets.NCM_CMP_HTTP_URL }}
+          HTTPS_URL: ${{ secrets.NCM_CMP_HTTPS_URL }}
+          RECIPIENT_DN: ${{ secrets.NCM_CMP_RECIPIENT_DN }}
+          RESPONSE_TRUST: ${{ secrets.NCM_CMP_RESPONSE_TRUST }}
+          PBM_REFERENCE: ${{ secrets.NCM_CMP_PBM_REFERENCE }}
+          PBM_SECRET: ${{ secrets.NCM_CMP_PBM_SECRET }}
+          BOOTSTRAP_CERT: ${{ secrets.NCM_CMP_BOOTSTRAP_CERT }}
+          BOOTSTRAP_KEY: ${{ secrets.NCM_CMP_BOOTSTRAP_KEY }}
+        run: |
+          # Only whether each value is present is reported. No value is printed.
+          present() { if [ -n "$1" ]; then echo true; else echo false; fi; }
+          ca=false
+          if [ -n "$RECIPIENT_DN" ] && [ -n "$RESPONSE_TRUST" ]; then
+            ca=true
+          fi
+          passwordbasedmac=false
+          if [ -n "$PBM_REFERENCE" ] && [ -n "$PBM_SECRET" ]; then
+            passwordbasedmac=true
+          fi
+          signature=false
+          if [ -n "$BOOTSTRAP_CERT" ] && [ -n "$BOOTSTRAP_KEY" ]; then
+            signature=true
+          fi
+
+          transports=()
+          if [ "$ca" = true ] && { [ "$passwordbasedmac" = true ] || [ "$signature" = true ]; }; then
+            if [ -n "$HTTP_URL" ]; then
+              transports+=('"HTTP"')
+            fi
+            if [ -n "$HTTPS_URL" ]; then
+              transports+=('"HTTPS"')
+            fi
+          fi
+          list="[$(IFS=,; echo "${transports[*]}")]"
+          echo "transports=${list}" >> "$GITHUB_OUTPUT"
+
+          {
+            echo "| Setting | Configured |"
+            echo "| --- | --- |"
+            echo "| HTTP endpoint | $(present "$HTTP_URL") |"
+            echo "| HTTPS endpoint | $(present "$HTTPS_URL") |"
+            echo "| Recipient and response trust | ${ca} |"
+            echo "| PasswordBasedMac | ${passwordbasedmac} |"
+            echo "| Signature | ${signature} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+          if [ "$list" = "[]" ]; then
+            echo "NCM is not configured for this repository, so the tests are skipped."
+          fi
+
+  ncm:
+    name: NCM over ${{ matrix.transport }}
+    needs: preflight
+    if: needs.preflight.outputs.transports != '[]'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        transport: ${{ fromJSON(needs.preflight.outputs.transports) }}
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Only the URL of the transport under test is passed, so each job exercises one endpoint.
+      - name: Run the NCM tests
+        env:
+          NCM_CMP_HTTP_URL: ${{ matrix.transport == 'HTTP' && secrets.NCM_CMP_HTTP_URL || '' }}
+          NCM_CMP_HTTPS_URL: ${{ matrix.transport == 'HTTPS' && secrets.NCM_CMP_HTTPS_URL || '' }}
+          NCM_CMP_RECIPIENT_DN: ${{ secrets.NCM_CMP_RECIPIENT_DN }}
+          NCM_CMP_RESPONSE_TRUST: ${{ secrets.NCM_CMP_RESPONSE_TRUST }}
+          NCM_CMP_HTTPS_TRUST: ${{ secrets.NCM_CMP_HTTPS_TRUST }}
+          NCM_CMP_PBM_REFERENCE: ${{ secrets.NCM_CMP_PBM_REFERENCE }}
+          NCM_CMP_PBM_SECRET: ${{ secrets.NCM_CMP_PBM_SECRET }}
+          NCM_CMP_BOOTSTRAP_CERT: ${{ secrets.NCM_CMP_BOOTSTRAP_CERT }}
+          NCM_CMP_BOOTSTRAP_KEY: ${{ secrets.NCM_CMP_BOOTSTRAP_KEY }}
+          NCM_CMP_BOOTSTRAP_CHAIN: ${{ secrets.NCM_CMP_BOOTSTRAP_CHAIN }}
+          NCM_CMP_COMMON_NAME: ${{ vars.NCM_CMP_COMMON_NAME }}
+          NCM_CMP_COUNTRY: ${{ vars.NCM_CMP_COUNTRY }}
+          NCM_CMP_ORGANIZATION: ${{ vars.NCM_CMP_ORGANIZATION }}
+          NCM_CMP_KUR: ${{ vars.NCM_CMP_KUR }}
+          NCM_CMP_KUR_SAME_KEY: ${{ vars.NCM_CMP_KUR_SAME_KEY }}
+          NCM_CMP_REENROLL: ${{ vars.NCM_CMP_REENROLL }}
+        run: make test-integration-ncm

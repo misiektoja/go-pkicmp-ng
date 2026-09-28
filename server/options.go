@@ -71,7 +71,9 @@ type serverConfig struct {
 	maxTransactions              int
 	maxTransactionsPerCredential int
 	strictProfile                bool
+	allowSHA1Signatures          bool
 	messageTimeTolerance         time.Duration
+	raAuthorizer                 RAAuthorizer
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
 
 	// Built once by New from signerKey and signerCert. signerErr records a
@@ -81,7 +83,8 @@ type serverConfig struct {
 }
 
 // WithSigner configures signature-based response protection. The key must match
-// the certificate; [New] reports a mismatch through [Server.Err].
+// the certificate; [New] reports a mismatch through [Server.Err]. The key may be
+// a composite ML-DSA key from github.com/misiektoja/go-composite-mldsa.
 func WithSigner(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) Option {
 	return func(c *serverConfig) {
 		c.signerKey = key
@@ -138,23 +141,44 @@ func WithImplicitConfirm() Option {
 
 // WithStrictProfileValidation enforces the RFC 9483 message construction rules
 // that a receiver can check but does not need to authenticate a peer. It adds
-// four rejections:
+// seven rejections:
 //
 //   - a MAC-protected message whose sender is not a directoryName naming the
-//     shared secret (§3.1),
-//   - a signature-protected request that carries no extraCerts (§3.3),
+//     shared secret (§3.1), unless it is a nested message (§5.2.2.1),
+//   - a signature-protected request or nested message that carries no
+//     extraCerts (§3.3, §5.2.2),
 //   - a signature-protected request whose extraCerts do not lead with the CMP
 //     protection certificate followed by its issuer chain (§3.3),
-//   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1).
+//   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1),
+//   - a request without a transactionID (§3.5), which RFC 4210 and RFC 9810
+//     let the server assign instead,
+//   - a message whose senderNonce is missing or shorter than 128 bits (§3.5),
+//     which RFC 4210 and RFC 9810 leave optional,
+//   - a certConf with more than one CertStatus (§4.1.1).
 //
-// Off by default because deployed clients fail all four: Nokia ssh-cmpclient
+// Off by default because deployed clients fail them: Nokia ssh-cmpclient
 // sends a NULL-DN sender, omits its own certificate and reuses the senderNonce,
-// and openssl cmp omits a self-signed issuer. None of them affects
+// openssl cmp omits a self-signed issuer and RFC 4210 clients may omit the
+// transactionID or send a shorter senderNonce. None of them affects
 // authentication, which comes from senderKID or CertificateLookup plus
 // recipNonce. Turn it on for a conformance suite or a known-conforming fleet.
 func WithStrictProfileValidation() Option {
 	return func(c *serverConfig) {
 		c.strictProfile = true
+	}
+}
+
+// WithSHA1Signatures accepts requests signed with sha1WithRSAEncryption or
+// ecdsa-with-SHA1, in the message protection and in the CRMF proof of
+// possession.
+//
+// RFC 4210 era devices may still sign this way, but RFC 9481 §7.1 deprecates
+// SHA-1, so the server refuses such requests with badAlg by default. The option
+// does not cover DSA. A p10cr whose CSR is signed with SHA-1 is accepted either
+// way, because crypto/x509 allows SHA-1 on certificate requests.
+func WithSHA1Signatures() Option {
+	return func(c *serverConfig) {
+		c.allowSHA1Signatures = true
 	}
 }
 
@@ -168,6 +192,16 @@ func WithStrictProfileValidation() Option {
 func WithMessageTimeTolerance(tolerance time.Duration) Option {
 	return func(c *serverConfig) {
 		c.messageTimeTolerance = tolerance
+	}
+}
+
+// WithRAAuthorizer accepts requests that a registration authority forwards in a
+// nested message, as far as authorizer allows (RFC 9483 §5.2.2.1). Without it,
+// nested messages are rejected with badRequest. Batches of several messages
+// are always rejected.
+func WithRAAuthorizer(authorizer RAAuthorizer) Option {
+	return func(c *serverConfig) {
+		c.raAuthorizer = authorizer
 	}
 }
 
