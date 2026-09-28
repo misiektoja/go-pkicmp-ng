@@ -6,6 +6,8 @@ import (
 	"crypto/x509"
 	"encoding/asn1"
 	"fmt"
+
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 )
 
 // Credentials is the interface representing material used to protect a CMP message.
@@ -206,8 +208,14 @@ func NewSignatureCredentials(key crypto.Signer, cert *x509.Certificate, chain ..
 	if cert == nil {
 		return nil, &ProtectionError{Reason: ReasonMissingSigner, Err: fmt.Errorf("certificate is nil")}
 	}
-	pubDER, err1 := x509.MarshalPKIXPublicKey(key.Public())
-	certPubDER, err2 := x509.MarshalPKIXPublicKey(cert.PublicKey)
+	// crypto/x509 leaves PublicKey nil for composite ML-DSA certificates, so
+	// the key is read from the certificate's SubjectPublicKeyInfo instead.
+	certPub := cert.PublicKey
+	if certPub == nil {
+		certPub, _ = compositex509.ParsePKIXPublicKey(cert.RawSubjectPublicKeyInfo)
+	}
+	pubDER, err1 := compositex509.MarshalPKIXPublicKey(key.Public())
+	certPubDER, err2 := compositex509.MarshalPKIXPublicKey(certPub)
 	if err1 != nil || err2 != nil || subtle.ConstantTimeCompare(pubDER, certPubDER) != 1 {
 		return nil, &ProtectionError{
 			Reason: ReasonMissingSigner,
