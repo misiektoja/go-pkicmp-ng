@@ -72,7 +72,7 @@ fuzz: ## Fuzz every target in pkicmp for FUZZTIME each. Failing inputs are saved
 ##@ Integration
 
 .PHONY: test-integration
-test-integration: test-integration-ejbca test-integration-openssl test-integration-cmp-test-suite ## Run all integration tests.
+test-integration: test-integration-ejbca test-integration-openssl test-integration-cmp-test-suite test-integration-ncm ## Run all integration tests. The NCM tests skip unless NCM_CMP_* is set.
 
 .PHONY: test-integration-ejbca
 test-integration-ejbca: ## Run the client against EJBCA. Needs make setup-ejbca.
@@ -85,6 +85,10 @@ test-integration-openssl: ## Run the client and server against OpenSSL. Needs Op
 .PHONY: test-integration-cmp-test-suite
 test-integration-cmp-test-suite: ## Run the server against the Siemens CMP test suite. Needs make setup-cmp-test-suite.
 	go test -v -count=1 -tags integration -timeout 15m ./test/integration/cmp-test-suite
+
+.PHONY: test-integration-ncm
+test-integration-ncm: ## Run the client against a Nokia NCM instance described by the NCM_CMP_* variables.
+	go test -v -count=1 -tags integration -timeout 20m ./test/integration/ncm
 
 .PHONY: setup
 setup: setup-ejbca setup-cmp-test-suite ## Set up all integration environments.
