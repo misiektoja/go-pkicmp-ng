@@ -279,19 +279,32 @@ func (s *Server) verifyRecipient(msg *pkicmp.PKIMessage) error {
 
 // validateHeader validates PKIHeader fields per RFC 9483 §4.1.
 func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
-	// RFC 9483 §4.1: transactionID MUST be present.
+	// Determine if this is a first message (starts a new transaction).
+	isFirstMessage := isInitialRequest(msg.Body.Type)
+
+	// RFC 4210 and RFC 9810 §5.1.1 let a client omit transactionID from the
+	// first request and have the server assign one, which every later message
+	// must then carry. Only RFC 9483 §3.5 requires the client to set it.
 	if len(msg.Header.TransactionID) == 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "missing transactionID"}
+		if s.cfg.strictProfile || !isFirstMessage {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "missing transactionID"}
+		}
+		// Protection was verified over the received header, so assigning the
+		// field now only changes what the handler sees and the response echoes.
+		msg.Header.TransactionID = newTransactionID()
 	}
 
-	// RFC 9483 §4.1: senderNonce MUST be present.
-	if len(msg.Header.SenderNonce) == 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "missing senderNonce"}
-	}
-
-	// RFC 9483 §4.1: senderNonce MUST be at least 128 bits (16 bytes).
-	if len(msg.Header.SenderNonce) < 16 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "senderNonce too short"}
+	// RFC 9483 §3.5 requires a senderNonce of at least 128 bits. RFC 4210 and
+	// RFC 9810 §5.1.1 make it optional and only "typically" 128 bits. The
+	// client's nonce protects the client, while follow-up messages are bound to
+	// the server's own nonce through recipNonce, so the profile rule is optional.
+	if s.cfg.strictProfile {
+		if len(msg.Header.SenderNonce) == 0 {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "missing senderNonce"}
+		}
+		if len(msg.Header.SenderNonce) < 16 {
+			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "senderNonce too short"}
+		}
 	}
 
 	// RFC 9483 §3.5: a present messageTime must be close to reliable receiver
@@ -304,9 +317,6 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadTime, StatusText: "messageTime outside allowed tolerance"}
 		}
 	}
-
-	// Determine if this is a first message (starts a new transaction).
-	isFirstMessage := isInitialRequest(msg.Body.Type)
 
 	// RFC 9483 §4.1: recipNonce MUST NOT be present in first message.
 	if isFirstMessage && len(msg.Header.RecipNonce) > 0 {

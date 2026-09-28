@@ -139,7 +139,7 @@ func WithImplicitConfirm() Option {
 
 // WithStrictProfileValidation enforces the RFC 9483 message construction rules
 // that a receiver can check but does not need to authenticate a peer. It adds
-// four rejections:
+// six rejections:
 //
 //   - a MAC-protected message whose sender is not a directoryName naming the
 //     shared secret (§3.1), unless it is a nested message (§5.2.2.1),
@@ -147,11 +147,16 @@ func WithImplicitConfirm() Option {
 //     extraCerts (§3.3, §5.2.2),
 //   - a signature-protected request whose extraCerts do not lead with the CMP
 //     protection certificate followed by its issuer chain (§3.3),
-//   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1).
+//   - a certConf whose senderNonce repeats one used earlier in the transaction (§3.1),
+//   - a request without a transactionID (§3.5), which RFC 4210 and RFC 9810
+//     let the server assign instead,
+//   - a message whose senderNonce is missing or shorter than 128 bits (§3.5),
+//     which RFC 4210 and RFC 9810 leave optional.
 //
-// Off by default because deployed clients fail all four: Nokia ssh-cmpclient
+// Off by default because deployed clients fail them: Nokia ssh-cmpclient
 // sends a NULL-DN sender, omits its own certificate and reuses the senderNonce,
-// and openssl cmp omits a self-signed issuer. None of them affects
+// openssl cmp omits a self-signed issuer and RFC 4210 clients may omit the
+// transactionID or send a shorter senderNonce. None of them affects
 // authentication, which comes from senderKID or CertificateLookup plus
 // recipNonce. Turn it on for a conformance suite or a known-conforming fleet.
 func WithStrictProfileValidation() Option {

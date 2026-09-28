@@ -101,7 +101,9 @@ func (s *Server) RestoreTransactions(data []byte, decodeIssueRef func(json.RawMe
 			}
 			entry.cert = cert
 		}
-		if saved.State == stateIssued && (entry.cert == nil || len(entry.issuedSenderNonce) < 16 || len(entry.clientSenderNonce) < 16) {
+		// The client's senderNonce is not checked: RFC 4210 makes it optional and
+		// only WithStrictProfileValidation requires 128 bits.
+		if saved.State == stateIssued && (entry.cert == nil || len(entry.issuedSenderNonce) < 16) {
 			return errors.New("issued transaction is incomplete")
 		}
 		if saved.State == statePending && (saved.PollRef == "" || len(saved.SenderNonce) < 16 || saved.CheckAfter < 0) {
