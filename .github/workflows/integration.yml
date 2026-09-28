@@ -1,0 +1,167 @@
+# Runs the client and server against independent CMP implementations: OpenSSL in both directions,
+# EJBCA as a CA for the client and the Siemens CMP test suite as a client for the server.
+name: Integration
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+  workflow_dispatch:
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  openssl:
+    permissions:
+      contents: read
+    name: OpenSSL
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # OpenSSL 3.2 added the CMP mock server options the tests use, such as -port and -rsp_key.
+      # ubuntu-latest ships an older 3.x release, so an LTS release is built and cached instead.
+      OPENSSL_VERSION: "3.5.6"
+      OPENSSL_SHA256: deae7c80cba99c4b4f940ecadb3c3338b13cb77418409238e57d7f31f2a3b736
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Cache OpenSSL
+        id: cache-openssl
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: /opt/openssl-lts
+          key: ${{ runner.os }}-openssl-${{ env.OPENSSL_VERSION }}
+
+      # The tarball is checked against the SHA-256 digest openssl.org publishes for the release.
+      - name: Build OpenSSL
+        if: steps.cache-openssl.outputs.cache-hit != 'true'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential zlib1g-dev perl
+          tarball="openssl-${OPENSSL_VERSION}.tar.gz"
+          curl -fsSLo "$tarball" "https://www.openssl.org/source/${tarball}"
+          echo "${OPENSSL_SHA256}  ${tarball}" | sha256sum -c -
+          tar -xf "$tarball"
+          cd "openssl-${OPENSSL_VERSION}"
+          ./config --prefix=/opt/openssl-lts --openssldir=/opt/openssl-lts shared zlib
+          make -j"$(nproc)" > /dev/null
+          sudo make install_sw > /dev/null
+
+      - name: Put OpenSSL on the path
+        run: |
+          echo "/opt/openssl-lts/bin" >> "$GITHUB_PATH"
+          echo "LD_LIBRARY_PATH=/opt/openssl-lts/lib64${LD_LIBRARY_PATH:+:$LD_LIBRARY_PATH}" >> "$GITHUB_ENV"
+
+      - name: Run the OpenSSL tests
+        run: |
+          openssl version
+          make test-integration-openssl
+
+  ejbca:
+    permissions:
+      contents: read
+    name: EJBCA
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Start and configure EJBCA
+        run: make setup-ejbca
+
+      - name: Run the EJBCA tests
+        run: make test-integration-ejbca
+
+      - name: Stop EJBCA
+        if: always()
+        run: make teardown-ejbca
+
+  cmp-test-suite:
+    permissions:
+      contents: read
+    name: CMP test suite
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      # liboqs-python compiles the native liboqs library on first import. It installs to ~/_oqs by
+      # default, so it is redirected into .venv to be cached with the Python environment.
+      OQS_INSTALL_PATH: ${{ github.workspace }}/test/integration/cmp-test-suite/testdata/cmp-test-suite/.venv/_oqs
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      - name: Setup uv
+        uses: astral-sh/setup-uv@08807647e7069bb48b6ef5acd8ec9567f424441b # v8.1.0
+        with:
+          version: "0.11.12"
+          enable-cache: true
+
+      # The setup is split into clone, cache and sync steps instead of one make setup-cmp-test-suite,
+      # because the clone must exist before its pyproject.toml can key the cache and the cache must be
+      # restored before uv sync so packages are not downloaded again. The suite has no uv.lock, so
+      # pyproject.toml, which declares the dependencies, is the cache key.
+      - name: Clone the CMP test suite
+        run: make _clone-cmp-test-suite
+
+      - name: Cache the CMP test suite Python environment
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: test/integration/cmp-test-suite/testdata/cmp-test-suite/.venv
+          key: ${{ runner.os }}-cmp-test-suite-${{ hashFiles('test/integration/cmp-test-suite/testdata/cmp-test-suite/pyproject.toml') }}
+
+      - name: Install the CMP test suite dependencies
+        run: make _sync-cmp-test-suite
+
+      # Importing oqs once compiles the native library so it is cached with .venv. This may need
+      # updating if the suite changes its post-quantum dependencies.
+      - name: Build the liboqs native library
+        working-directory: test/integration/cmp-test-suite/testdata/cmp-test-suite
+        run: uv run python -c "import oqs"
+
+      - name: Run the CMP test suite
+        run: make test-integration-cmp-test-suite
+
+  required:
+    name: Integration gate
+    if: always()
+    needs: [openssl, ejbca, cmp-test-suite]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions: {}
+    steps:
+      - name: Require every integration job
+        env:
+          OPENSSL: ${{ needs.openssl.result }}
+          EJBCA: ${{ needs.ejbca.result }}
+          CMP_TEST_SUITE: ${{ needs.cmp-test-suite.result }}
+        run: |
+          echo "OpenSSL: ${OPENSSL}, EJBCA: ${EJBCA}, CMP test suite: ${CMP_TEST_SUITE}"
+          test "$OPENSSL" = success && test "$EJBCA" = success && test "$CMP_TEST_SUITE" = success

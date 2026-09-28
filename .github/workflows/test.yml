@@ -1,0 +1,71 @@
+name: Tests
+
+on:
+  push:
+    branches: [dev, main]
+  pull_request:
+    branches: [dev, main]
+
+permissions: {}
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    permissions:
+      contents: read
+    name: Unit tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      # The toolchain follows go.mod rather than the newest stable release, so a Go release cannot
+      # change what CI runs without a commit.
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # go mod tidy rewrites tracked files, so running it without this check would let CI repair a
+      # stale go.mod and report success on a tree that no longer matches the commit.
+      - name: Verify the module files are tidy
+        run: make tidy-check
+
+      - name: Check formatting
+        run: make fmt-check
+
+      # The race detector matters because the documented server deployment sweeps expired
+      # transactions from a background goroutine while it serves requests.
+      - name: Run the tests
+        run: make test
+
+  fuzz:
+    permissions:
+      contents: read
+    name: Bounded fuzzing
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Clone the code
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Setup Go
+        uses: actions/setup-go@b7ad1dad31e06c5925ef5d2fc7ad053ef454303e # v7.0.0
+        with:
+          go-version-file: go.mod
+
+      # Every parser here consumes bytes chosen by a peer, and protection is verified before anything
+      # establishes who that peer is. A short run on each change will not exhaust the input space, but
+      # it catches a regression that reintroduces a crash on a nearby input. The Makefile disables
+      # input minimization because a worker still minimizing when the budget expires makes Go fail the
+      # run with "context deadline exceeded" (golang/go#75804).
+      - name: Fuzz parsing and protection paths
+        run: make fuzz FUZZTIME=30s
