@@ -45,7 +45,21 @@ func (s *Server) SnapshotTransactions() ([]byte, error) {
 	var snapshotErr error
 	s.transactions.Range(func(key, value any) bool {
 		entry := value.(*transactionEntry)
-		saved := savedTransaction{Key: key.(transactionKey), Credential: entry.credentialKey, State: entry.state, LastActivity: entry.lastActivity, RequestType: entry.reqType, PollRef: entry.pollRef, SenderNonce: entry.senderNonce, LastPollTime: entry.lastPollTime, CheckAfter: entry.checkAfter, IssuedSenderNonce: entry.issuedSenderNonce, ClientSenderNonce: entry.clientSenderNonce, ProtectionAlgorithm: entry.protectionAlgorithm, CertReqID: entry.certReqID}
+		saved := savedTransaction{
+			Key:                 key.(transactionKey),
+			Credential:          entry.credentialKey,
+			State:               entry.state,
+			LastActivity:        entry.lastActivity,
+			RequestType:         entry.reqType,
+			PollRef:             entry.pollRef,
+			SenderNonce:         entry.senderNonce,
+			LastPollTime:        entry.lastPollTime,
+			CheckAfter:          entry.checkAfter,
+			IssuedSenderNonce:   entry.issuedSenderNonce,
+			ClientSenderNonce:   entry.clientSenderNonce,
+			ProtectionAlgorithm: entry.protectionAlgorithm,
+			CertReqID:           entry.certReqID,
+		}
 		if entry.cert != nil {
 			saved.Certificate = entry.cert.Raw
 		}
@@ -65,7 +79,9 @@ func (s *Server) SnapshotTransactions() ([]byte, error) {
 	if snapshotErr != nil {
 		return nil, snapshotErr
 	}
-	sort.Slice(snapshot.Entries, func(i, j int) bool { return bytes.Compare(snapshot.Entries[i].Key[:], snapshot.Entries[j].Key[:]) < 0 })
+	sort.Slice(snapshot.Entries, func(i, j int) bool {
+		return bytes.Compare(snapshot.Entries[i].Key[:], snapshot.Entries[j].Key[:]) < 0
+	})
 	data, err := json.Marshal(snapshot)
 	if len(data) > 64<<20 {
 		return nil, errors.New("transaction snapshot exceeds 64 MiB")
@@ -93,10 +109,24 @@ func (s *Server) RestoreTransactions(data []byte, decodeIssueRef func(json.RawMe
 	}
 	next := newTransactionTracker(s.maxTransactions, s.maxTransactionsPerCredential)
 	for _, saved := range snapshot.Entries {
-		if saved.State < stateActive || saved.State > stateCompleted || saved.LastActivity.IsZero() || saved.LastActivity.After(time.Now().Add(time.Minute)) {
+		if saved.State < stateActive || saved.State > stateCompleted ||
+			saved.LastActivity.IsZero() || saved.LastActivity.After(time.Now().Add(time.Minute)) {
 			return errors.New("invalid saved transaction state or timestamp")
 		}
-		entry := &transactionEntry{state: saved.State, credentialKey: saved.Credential, lastActivity: saved.LastActivity, reqType: saved.RequestType, pollRef: saved.PollRef, senderNonce: saved.SenderNonce, lastPollTime: saved.LastPollTime, checkAfter: saved.CheckAfter, issuedSenderNonce: saved.IssuedSenderNonce, clientSenderNonce: saved.ClientSenderNonce, protectionAlgorithm: saved.ProtectionAlgorithm, certReqID: saved.CertReqID}
+		entry := &transactionEntry{
+			state:               saved.State,
+			credentialKey:       saved.Credential,
+			lastActivity:        saved.LastActivity,
+			reqType:             saved.RequestType,
+			pollRef:             saved.PollRef,
+			senderNonce:         saved.SenderNonce,
+			lastPollTime:        saved.LastPollTime,
+			checkAfter:          saved.CheckAfter,
+			issuedSenderNonce:   saved.IssuedSenderNonce,
+			clientSenderNonce:   saved.ClientSenderNonce,
+			protectionAlgorithm: saved.ProtectionAlgorithm,
+			certReqID:           saved.CertReqID,
+		}
 		if len(saved.Certificate) > 0 {
 			cert, err := x509.ParseCertificate(saved.Certificate)
 			if err != nil {

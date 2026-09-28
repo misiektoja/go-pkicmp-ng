@@ -35,7 +35,9 @@ type RAAuthorizer interface {
 }
 
 // RAAuthorizerFunc adapts a function to the RAAuthorizer interface.
-type RAAuthorizerFunc func(ctx context.Context, ra *SenderIdentity, req *pkicmp.PKIMessage, sender *SenderIdentity) error
+type RAAuthorizerFunc func(
+	ctx context.Context, ra *SenderIdentity, req *pkicmp.PKIMessage, sender *SenderIdentity,
+) error
 
 // AuthorizeRA calls f(ctx, ra, req, sender).
 func (f RAAuthorizerFunc) AuthorizeRA(ctx context.Context, ra *SenderIdentity, req *pkicmp.PKIMessage, sender *SenderIdentity) error {

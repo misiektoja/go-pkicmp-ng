@@ -46,10 +46,10 @@ type credentialKey [sha256.Size]byte
 func makeKey(credentialID, transactionID []byte) transactionKey {
 	h := sha256.New()
 	var buf [4]byte
-	binary.BigEndian.PutUint32(buf[:], uint32(len(credentialID))) // #nosec G115 -- length prefix for domain separation; CMP IDs are bounded by message size
+	binary.BigEndian.PutUint32(buf[:], uint32(len(credentialID))) // #nosec G115 -- CMP IDs are bounded by message size
 	h.Write(buf[:])
 	h.Write(credentialID)
-	binary.BigEndian.PutUint32(buf[:], uint32(len(transactionID))) // #nosec G115 -- length prefix for domain separation; CMP IDs are bounded by message size
+	binary.BigEndian.PutUint32(buf[:], uint32(len(transactionID))) // #nosec G115 -- CMP IDs are bounded by message size
 	h.Write(buf[:])
 	h.Write(transactionID)
 	var key transactionKey
@@ -74,10 +74,12 @@ func newTransactionID() []byte {
 type txnState int
 
 const (
-	stateActive    txnState = iota // Transaction started, awaiting CA response
-	statePending                   // CA returned "waiting", awaiting poll
-	stateIssued                    // Certificate issued, awaiting certConf
-	stateCompleted                 // Transaction done (implicit confirm granted); kept until cleanupExpired to block transactionID reuse
+	stateActive  txnState = iota // Transaction started, awaiting CA response
+	statePending                 // CA returned "waiting", awaiting poll
+	stateIssued                  // Certificate issued, awaiting certConf
+	// Transaction done (implicit confirm granted), kept until cleanupExpired to
+	// block transactionID reuse.
+	stateCompleted
 )
 
 // transactionEntry holds all state for a single transaction.
@@ -97,7 +99,10 @@ type transactionEntry struct {
 	checkAfter   time.Duration // minimum interval between polls
 
 	// Set when state == stateIssued
-	certReqID           *int64 // certReqId of the CertResponse that carried cert, nil when restored from a snapshot without it
+	//
+	// certReqID is the certReqId of the CertResponse that carried cert. It is nil
+	// when the entry was restored from a snapshot without it.
+	certReqID           *int64
 	cert                *x509.Certificate
 	issueRef            any    // opaque CA reference for CertificateConfirmer
 	issuedSenderNonce   []byte // server's senderNonce from the issued response

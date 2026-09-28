@@ -48,7 +48,9 @@ func New(handler Handler, opts ...Option) *Server {
 	// certificate is caught here rather than silently dropping protection from
 	// every response.
 	if s.cfg.signerKey != nil || s.cfg.signerCert != nil {
-		s.cfg.signerCreds, s.cfg.signerErr = pkicmp.NewSignatureCredentials(s.cfg.signerKey, s.cfg.signerCert, s.cfg.signerChain...)
+		s.cfg.signerCreds, s.cfg.signerErr = pkicmp.NewSignatureCredentials(
+			s.cfg.signerKey, s.cfg.signerCert, s.cfg.signerChain...,
+		)
 	}
 	return s
 }
@@ -200,8 +202,7 @@ func (s *Server) process(ctx context.Context, msg *pkicmp.PKIMessage, fwd *forwa
 
 	// RFC 9483 §4.1: Validate header fields.
 	if err := s.validateHeader(msg, sender); err != nil {
-		var srvErr *Error
-		if errors.As(err, &srvErr) {
+		if srvErr, ok := errors.AsType[*Error](err); ok {
 			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       srvErr.Status,
 				FailInfo:     srvErr.FailureInfo,
@@ -265,12 +266,13 @@ func (s *Server) CleanupExpired() {
 func (s *Server) verifyRecipient(msg *pkicmp.PKIMessage) error {
 	// Determine server's identity name.
 	var serverName pkix.Name
-	if len(s.cfg.sender.CommonName) > 0 || len(s.cfg.sender.Organization) > 0 {
+	switch {
+	case len(s.cfg.sender.CommonName) > 0 || len(s.cfg.sender.Organization) > 0:
 		serverName = s.cfg.sender
-	} else if s.cfg.signerCert != nil {
+	case s.cfg.signerCert != nil:
 		serverName = s.cfg.signerCert.Subject
-	} else {
-		// No server identity configured — skip validation.
+	default:
+		// No server identity is configured, so validation is skipped.
 		return nil
 	}
 
@@ -284,7 +286,7 @@ func (s *Server) verifyRecipient(msg *pkicmp.PKIMessage) error {
 	recipientName.FillFromRDNSequence(&msg.Header.Recipient.DirectoryName)
 
 	if recipientName.String() != serverName.String() {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "recipient does not match server identity"}
+		return rejection(pkicmp.FailBadRequest, "recipient does not match server identity")
 	}
 	return nil
 }
@@ -299,7 +301,7 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 	// must then carry. Only RFC 9483 §3.5 requires the client to set it.
 	if len(msg.Header.TransactionID) == 0 {
 		if s.cfg.strictProfile || !isFirstMessage {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "missing transactionID"}
+			return rejection(pkicmp.FailBadDataFormat, "missing transactionID")
 		}
 		// Protection was verified over the received header, so assigning the
 		// field now only changes what the handler sees and the response echoes.
@@ -312,10 +314,10 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 	// the server's own nonce through recipNonce, so the profile rule is optional.
 	if s.cfg.strictProfile {
 		if len(msg.Header.SenderNonce) == 0 {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "missing senderNonce"}
+			return rejection(pkicmp.FailBadSenderNonce, "missing senderNonce")
 		}
 		if len(msg.Header.SenderNonce) < 16 {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadSenderNonce, StatusText: "senderNonce too short"}
+			return rejection(pkicmp.FailBadSenderNonce, "senderNonce too short")
 		}
 	}
 
@@ -325,29 +327,30 @@ func (s *Server) validateHeader(msg *pkicmp.PKIMessage, sender *SenderIdentity) 
 	// check by sending the zero GeneralizedTime.
 	if s.cfg.messageTimeTolerance > 0 && msg.Header.HasMessageTime() {
 		now := time.Now()
-		if msg.Header.MessageTime.Before(now.Add(-s.cfg.messageTimeTolerance)) || msg.Header.MessageTime.After(now.Add(s.cfg.messageTimeTolerance)) {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadTime, StatusText: "messageTime outside allowed tolerance"}
+		tolerance := s.cfg.messageTimeTolerance
+		if msg.Header.MessageTime.Before(now.Add(-tolerance)) || msg.Header.MessageTime.After(now.Add(tolerance)) {
+			return rejection(pkicmp.FailBadTime, "messageTime outside allowed tolerance")
 		}
 	}
 
 	// RFC 9483 §4.1: recipNonce MUST NOT be present in first message.
 	if isFirstMessage && len(msg.Header.RecipNonce) > 0 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRecipientNonce, StatusText: "recipNonce in first message"}
+		return rejection(pkicmp.FailBadRecipientNonce, "recipNonce in first message")
 	}
 
 	// RFC 9483 §4.1: Check for duplicate transactionID (scoped to this client's credentials).
 	credID, err := sender.credentialID()
 	if err != nil {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "invalid sender credentials"}
+		return rejection(pkicmp.FailBadMessageCheck, "invalid sender credentials")
 	}
 	txnID := msg.Header.TransactionID
 	if isFirstMessage {
 		alreadyExists, err := s.startIfAbsent(credID, txnID)
 		if err != nil {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSystemUnavail, StatusText: err.Error()}
+			return rejection(pkicmp.FailSystemUnavail, err.Error())
 		}
 		if alreadyExists {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailTransactionIdInUse, StatusText: "transactionID already in use"}
+			return rejection(pkicmp.FailTransactionIdInUse, "transactionID already in use")
 		}
 	}
 
@@ -364,7 +367,8 @@ func isInitialRequest(bodyType pkicmp.BodyType) bool {
 	}
 }
 
-// validateProfileSender applies the RFC 9483 §3.1 rule that a MAC-protected message names the shared secret in the sender field.
+// validateProfileSender applies the RFC 9483 §3.1 rule that a MAC-protected
+// message names the shared secret in the sender field.
 func validateProfileSender(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
 	if sender == nil || !sender.MACVerified {
 		return nil

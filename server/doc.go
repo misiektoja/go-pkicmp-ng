@@ -297,7 +297,9 @@
 //
 //	func myPolicy() func(server.Handler) server.Handler {
 //	    return func(next server.Handler) server.Handler {
-//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	        return server.HandlerFunc(func(
+//	            ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity,
+//	        ) (*server.Response, error) {
 //	            if !isAllowed(sender) {
 //	                return nil, &server.Error{
 //	                    Status:      pkicmp.StatusRejection,
@@ -312,7 +314,9 @@
 //
 //	func auditLog(logger *slog.Logger) func(server.Handler) server.Handler {
 //	    return func(next server.Handler) server.Handler {
-//	        return server.HandlerFunc(func(ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity) (*server.Response, error) {
+//	        return server.HandlerFunc(func(
+//	            ctx context.Context, msg *pkicmp.PKIMessage, sender *server.SenderIdentity,
+//	        ) (*server.Response, error) {
 //	            logger.Info("CMP request received", "type", msg.Body.Type, "sender", sender.Sender)
 //	            resp, err := next.HandleCMP(ctx, msg, sender)
 //	            if err != nil {

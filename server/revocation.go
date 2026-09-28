@@ -34,7 +34,8 @@ type Revoker interface {
 	RevokeCertificate(ctx context.Context, req *RevocationRequest, sender *SenderIdentity) error
 }
 
-// RevocationAuthorizer is an optional interface for CAs that accept revocation requests not signed with the certificate being revoked.
+// RevocationAuthorizer is an optional interface for CAs that accept revocation
+// requests not signed with the certificate being revoked.
 type RevocationAuthorizer interface {
 	// AuthorizeRevocation decides whether sender may revoke the certificate req
 	// identifies, for example a registration authority acting for an end entity
@@ -65,55 +66,59 @@ type RevocationRequest struct {
 	hasReason bool             // whether crlEntryDetails carried a reasonCode
 }
 
-// Match returns a badCertId Error unless cert is the certificate the request identifies, including any subject or public key the template names.
+// Match returns a badCertId Error unless cert is the certificate the request
+// identifies, including any subject or public key the template names.
 func (r *RevocationRequest) Match(cert *x509.Certificate) error {
 	if cert == nil || !r.identifies(cert) {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "certificate not found"}
+		return rejection(pkicmp.FailBadCertId, "certificate not found")
 	}
 	if len(r.subject) > 0 {
 		var subject pkix.RDNSequence
-		if rest, err := asn1.Unmarshal(cert.RawSubject, &subject); err != nil || len(rest) > 0 || !equalRDNSequences(r.subject, subject) {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "subject does not match the certificate"}
+		rest, err := asn1.Unmarshal(cert.RawSubject, &subject)
+		if err != nil || len(rest) > 0 || !equalRDNSequences(r.subject, subject) {
+			return rejection(pkicmp.FailBadCertId, "subject does not match the certificate")
 		}
 	}
-	if len(r.publicKey) > 0 && !bytes.Equal(r.publicKey, cert.RawSubjectPublicKeyInfo) && !samePublicKey(r.publicKey, cert.PublicKey) {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "public key does not match the certificate"}
+	if len(r.publicKey) > 0 && !bytes.Equal(r.publicKey, cert.RawSubjectPublicKeyInfo) &&
+		!samePublicKey(r.publicKey, cert.PublicKey) {
+		return rejection(pkicmp.FailBadCertId, "public key does not match the certificate")
 	}
 	return nil
 }
 
 // identifies reports whether cert carries the issuer and serial number the request names.
 func (r *RevocationRequest) identifies(cert *x509.Certificate) bool {
-	return cert.SerialNumber != nil && r.SerialNumber.Cmp(cert.SerialNumber) == 0 && equalNames(r.RawIssuer, cert.RawIssuer)
+	return cert.SerialNumber != nil && r.SerialNumber.Cmp(cert.SerialNumber) == 0 &&
+		equalNames(r.RawIssuer, cert.RawIssuer)
 }
 
 // parseRevocationRequest extracts the single revocation RFC 9483 §4.2 allows in an rr body.
 func parseRevocationRequest(msg *pkicmp.PKIMessage) (*RevocationRequest, error) {
 	content, err := msg.Body.RR()
 	if err != nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "malformed revocation request"}
+		return nil, rejection(pkicmp.FailBadDataFormat, "malformed revocation request")
 	}
 	if len(*content) == 0 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "empty RevReqContent"}
+		return nil, rejection(pkicmp.FailBadDataFormat, "empty RevReqContent")
 	}
 	if len(*content) > 1 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "multiple RevDetails not supported"}
+		return nil, rejection(pkicmp.FailBadRequest, "multiple RevDetails not supported")
 	}
 	details := (*content)[0]
 	tmpl := details.CertDetails
 
 	// RFC 9483 §4.2 identifies the certificate by issuer and serial number.
 	if tmpl.SerialNumber == nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailAddInfoNotAvailable, StatusText: "serialNumber required"}
+		return nil, rejection(pkicmp.FailAddInfoNotAvailable, "serialNumber required")
 	}
 	var issuer pkix.RDNSequence
 	if len(tmpl.Issuer) > 0 {
 		if rest, err := asn1.Unmarshal(tmpl.Issuer, &issuer); err != nil || len(rest) > 0 {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "malformed issuer"}
+			return nil, rejection(pkicmp.FailBadDataFormat, "malformed issuer")
 		}
 	}
 	if len(issuer) == 0 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailAddInfoNotAvailable, StatusText: "issuer required"}
+		return nil, rejection(pkicmp.FailAddInfoNotAvailable, "issuer required")
 	}
 
 	req := &RevocationRequest{
@@ -126,7 +131,7 @@ func parseRevocationRequest(msg *pkicmp.PKIMessage) (*RevocationRequest, error) 
 
 	req.Extensions, err = details.CRLEntryExtensions()
 	if err != nil {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "malformed crlEntryDetails"}
+		return nil, rejection(pkicmp.FailBadDataFormat, "malformed crlEntryDetails")
 	}
 	for _, ext := range req.Extensions {
 		if !ext.Id.Equal(oidCRLReason) {
@@ -135,12 +140,12 @@ func parseRevocationRequest(msg *pkicmp.PKIMessage) (*RevocationRequest, error) 
 		// Two reason codes, such as a revocation and a release from hold, leave
 		// the request without a single meaning.
 		if req.hasReason {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "more than one reasonCode"}
+			return nil, rejection(pkicmp.FailBadRequest, "more than one reasonCode")
 		}
 		var code asn1.Enumerated
 		rest, err := asn1.Unmarshal(ext.Value, &code)
 		if err != nil || len(rest) > 0 || !pkicmp.CRLReason(code).Valid() {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "invalid reasonCode"}
+			return nil, rejection(pkicmp.FailBadDataFormat, "invalid reasonCode")
 		}
 		req.Reason = pkicmp.CRLReason(code)
 		req.hasReason = true
@@ -152,7 +157,7 @@ func parseRevocationRequest(msg *pkicmp.PKIMessage) (*RevocationRequest, error) 
 func (h *caHandler) handleRevocation(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
 	revoker, ok := h.ca.(Revoker)
 	if !ok {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "revocation not supported"}
+		return rejection(pkicmp.FailBadRequest, "revocation not supported")
 	}
 	req, err := parseRevocationRequest(msg)
 	if err != nil {
@@ -170,7 +175,7 @@ func (h *caHandler) handleRevocation(ctx context.Context, msg *pkicmp.PKIMessage
 	} else {
 		authorizer, ok := h.ca.(RevocationAuthorizer)
 		if !ok {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailNotAuthorized, StatusText: "revocation request must be signed with the certificate being revoked"}
+			return rejection(pkicmp.FailNotAuthorized, "revocation request must be signed with the certificate being revoked")
 		}
 		if err := authorizer.AuthorizeRevocation(ctx, req, sender); err != nil {
 			return err

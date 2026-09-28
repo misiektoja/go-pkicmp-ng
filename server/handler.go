@@ -9,6 +9,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"slices"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
@@ -30,8 +31,8 @@ func (f HandlerFunc) HandleCMP(ctx context.Context, req *pkicmp.PKIMessage, send
 // The first wrapper in the list is the outermost.
 func MiddlewareChain(mw ...func(Handler) Handler) func(Handler) Handler {
 	return func(h Handler) Handler {
-		for i := len(mw) - 1; i >= 0; i-- {
-			h = mw[i](h)
+		for _, wrap := range slices.Backward(mw) {
+			h = wrap(h)
 		}
 		return h
 	}

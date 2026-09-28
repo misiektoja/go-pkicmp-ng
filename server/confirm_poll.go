@@ -145,28 +145,29 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 	return s.buildResponseWithEchoProtection(msg, pkicmp.NewPKIConfBody(), sender, entry.protectionParams)
 }
 
-// checkCertStatuses verifies that every CertStatus of a certConf names the certificate issued in entry and that all of them agree.
+// checkCertStatuses verifies that every CertStatus of a certConf names the
+// certificate issued in entry and that all of them agree.
 func (s *Server) checkCertStatuses(statuses pkicmp.CertConfirmContent, entry *transactionEntry) *Error {
 	// RFC 9483 §4.1.1 allows exactly one CertStatus. RFC 4210 and RFC 9810
 	// allow one per certificate. A transaction here issues one certificate, so
 	// further entries can only repeat the first.
 	if s.cfg.strictProfile && len(statuses) > 1 {
-		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "more than one CertStatus"}
+		return rejection(pkicmp.FailBadRequest, "more than one CertStatus")
 	}
 	for i := range statuses {
 		cs := &statuses[i]
 		expectedHash, err := cs.CertificateHash(entry.cert)
 		if err != nil {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "cannot compute certHash"}
+			return rejection(pkicmp.FailBadAlg, "cannot compute certHash")
 		}
 		if !bytes.Equal(cs.CertHash, expectedHash) {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "certHash mismatch"}
+			return rejection(pkicmp.FailBadCertId, "certHash mismatch")
 		}
 		if !certReqIDMatches(entry, cs.CertReqID) {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertId, StatusText: "certReqId does not match the issued certificate"}
+			return rejection(pkicmp.FailBadCertId, "certReqId does not match the issued certificate")
 		}
 		if certStatusRejects(cs) != certStatusRejects(&statuses[0]) {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "CertStatus entries disagree"}
+			return rejection(pkicmp.FailBadRequest, "CertStatus entries disagree")
 		}
 	}
 	return nil

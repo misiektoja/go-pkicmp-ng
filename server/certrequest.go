@@ -31,16 +31,16 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 	case pkicmp.BodyTypeKUR:
 		msgs, err = msg.Body.KUR()
 	default:
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest}
+		return nil, rejection(pkicmp.FailBadRequest, "")
 	}
 	if err != nil {
 		return nil, err
 	}
 	if len(*msgs) == 0 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat, StatusText: "empty CertReqMessages"}
+		return nil, rejection(pkicmp.FailBadDataFormat, "empty CertReqMessages")
 	}
 	if len(*msgs) > 1 {
-		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "multiple CertReqMsg not supported"}
+		return nil, rejection(pkicmp.FailBadRequest, "multiple CertReqMsg not supported")
 	}
 
 	reqMsg := (*msgs)[0]
@@ -57,7 +57,7 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 	if len(reqMsg.CertReq.CertTemplate.PublicKey) > 0 {
 		pub, err := x509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
 		if err != nil {
-			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: err.Error()}
+			return nil, rejection(pkicmp.FailBadAlg, err.Error())
 		}
 		result.publicKey = pub
 	}
@@ -92,14 +92,14 @@ func enforceProofOfPossession(ctx context.Context, msg *pkicmp.PKIMessage) error
 	case pkicmp.BodyTypeP10CR:
 		csr, err := msg.Body.P10CR()
 		if err != nil {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
+			return rejection(pkicmp.FailBadDataFormat, "")
 		}
 		// For PKCS#10 the self-signature over the request is the proof.
 		if err := csr.CheckSignature(); err != nil {
 			if errors.Is(err, x509.ErrUnsupportedAlgorithm) {
-				return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "unsupported signature algorithm"}
+				return rejection(pkicmp.FailBadAlg, "unsupported signature algorithm")
 			}
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: err.Error()}
+			return rejection(pkicmp.FailBadPOP, err.Error())
 		}
 		return nil
 
@@ -119,21 +119,23 @@ func enforceProofOfPossession(ctx context.Context, msg *pkicmp.PKIMessage) error
 			if errors.As(err, &parseErr) && parseErr.Detail == "raVerified POP not supported" {
 				failInfo = pkicmp.FailNotAuthorized
 			}
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: failInfo, StatusText: err.Error()}
+			return rejection(failInfo, err.Error())
 		}
 		if crmf.publicKey == nil {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadCertTemplate, StatusText: "public key required"}
+			return rejection(pkicmp.FailBadCertTemplate, "public key required")
 		}
 		// verifyPOPMsg checks only a signature proof and passes a request that
 		// omits popo or uses another variant. A key that cannot sign would need
 		// the indirect method of RFC 9810 §5.2.8.3, which is not implemented, so
 		// such requests are refused rather than issued for an unproven key.
 		if !crmf.signaturePOP {
-			return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadPOP, StatusText: "proof of possession by signature required"}
+			return rejection(pkicmp.FailBadPOP, "proof of possession by signature required")
 		}
 		return nil
+	default:
+		// Only certificate requests carry a proof of possession.
+		return nil
 	}
-	return nil
 }
 
 // verifyPOPMsg verifies the Proof of Possession for CRMF requests.
@@ -171,7 +173,8 @@ type basicConstraints struct {
 	MaxPathLen int  `asn1:"optional"`
 }
 
-// decodeBasicConstraints returns every BasicConstraints extension in the list, and an error if any one of them is malformed.
+// decodeBasicConstraints returns every BasicConstraints extension in the list
+// and an error if any one of them is malformed.
 func decodeBasicConstraints(extensions []pkix.Extension) ([]basicConstraints, error) {
 	var out []basicConstraints
 	for _, ext := range extensions {
@@ -186,18 +189,15 @@ func decodeBasicConstraints(extensions []pkix.Extension) ([]basicConstraints, er
 		var bc basicConstraints
 		rest, err := asn1.Unmarshal(ext.Value, &bc)
 		if err != nil || len(rest) != 0 {
-			return nil, &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailBadCertTemplate,
-				StatusText:  "malformed BasicConstraints",
-			}
+			return nil, rejection(pkicmp.FailBadCertTemplate, "malformed BasicConstraints")
 		}
 		out = append(out, bc)
 	}
 	return out, nil
 }
 
-// checkBasicConstraints rejects a malformed BasicConstraints extension, an invalid path length and any request for a CA certificate.
+// checkBasicConstraints rejects a malformed BasicConstraints extension, an
+// invalid path length and any request for a CA certificate.
 func checkBasicConstraints(extensions []pkix.Extension) error {
 	all, err := decodeBasicConstraints(extensions)
 	if err != nil {
@@ -207,20 +207,12 @@ func checkBasicConstraints(extensions []pkix.Extension) error {
 		// RFC 5280 §4.2.1.9: pathLenConstraint is meaningful only when cA is
 		// true, and it is never negative.
 		if bc.MaxPathLen < 0 || (!bc.IsCA && bc.MaxPathLen != 0) {
-			return &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailBadCertTemplate,
-				StatusText:  "invalid path-length in BasicConstraints",
-			}
+			return rejection(pkicmp.FailBadCertTemplate, "invalid path-length in BasicConstraints")
 		}
 	}
 	for _, bc := range all {
 		if bc.IsCA {
-			return &Error{
-				Status:      pkicmp.StatusRejection,
-				FailureInfo: pkicmp.FailNotAuthorized,
-				StatusText:  "CA certificates not allowed",
-			}
+			return rejection(pkicmp.FailNotAuthorized, "CA certificates not allowed")
 		}
 	}
 	return nil
