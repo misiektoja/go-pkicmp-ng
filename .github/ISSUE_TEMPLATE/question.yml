@@ -22,6 +22,6 @@ body:
     id: version
     attributes:
       label: go-pkicmp-ng version and CMP peer
-      placeholder: v0.1.0, EJBCA 9.3.7
+      placeholder: v0.1.0, EJBCA 9.6.3
     validations:
       required: false

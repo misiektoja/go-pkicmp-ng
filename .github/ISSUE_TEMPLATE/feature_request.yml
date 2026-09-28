@@ -28,7 +28,7 @@ body:
     id: peer
     attributes:
       label: CMP peer this concerns
-      placeholder: EJBCA 9.3.7, OpenSSL 3.5.6, other
+      placeholder: EJBCA 9.6.3, OpenSSL 3.5.6, other
     validations:
       required: false
 
