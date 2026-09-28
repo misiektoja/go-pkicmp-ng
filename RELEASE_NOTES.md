@@ -18,6 +18,7 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 
 * **`SendRR`** asks the CA to revoke a certificate. A rejection such as `certRevoked` is returned as `*pkicmp.PKIStatusError`. Sign the request with the certificate being revoked, or with registration authority credentials when the CA allows that. A delayed answer is polled like enrollment.
 * **Refused certificates are reported to the CA.** When an issued certificate fails validation or certifies a different key, the client sends `certConf` with status rejection before returning the error. The CA previously learned of it only when its confirmation wait expired.
+* **Certificate responses must match the request.** The client accepts a response only when it holds one `CertResponse` with the certReqId of the request. A p10cr response may carry `-1` or `0`. A certificate under another certReqId is rejected in `certConf`. The client previously read the first `CertResponse` without checking its certReqId and ignored any others.
 * **`WithSHA1Signatures`** accepts responses signed with SHA-1 by RFC 4210 era CAs. Certificates signed with SHA-1 are still rejected, because crypto/x509 does not accept them.
 
 ### `server`
@@ -33,11 +34,11 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 
 ## v0.1.0 - 2026-09-27
 
-Enroll and confirm certificates with ML-DSA keys and signatures.
+Enroll and confirm certificates with **post-quantum ML-DSA keys and signatures**.
 
 ### `pkicmp`
 
-* **ML-DSA-44, ML-DSA-65 and ML-DSA-87** support covers certificate keys, CRMF proof of possession and pure message signatures. Algorithm parameters must be absent.
+* **ML-DSA-44, ML-DSA-65 and ML-DSA-87 (post-quantum)** support covers certificate keys, CRMF proof of possession and pure message signatures. Algorithm parameters must be absent.
 * **`NewCertStatus`** supplies the explicit SHA-512 confirmation hash identifier for ML-DSA-signed certificates.
 * **Ed25519 message protection** signs the original protected bytes instead of incorrectly prehashing them.
 
