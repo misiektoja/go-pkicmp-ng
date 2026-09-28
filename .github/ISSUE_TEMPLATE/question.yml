@@ -1,0 +1,27 @@
+name: Question
+description: Ask how to use the library or how it behaves against a CMP peer
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Check the [package documentation](https://pkg.go.dev/github.com/misiektoja/go-pkicmp-ng) and [SUPPORT.md](https://github.com/misiektoja/go-pkicmp-ng/blob/main/SUPPORT.md) first.
+
+        Never paste shared secrets, private keys, full CSRs or CMP messages captured from a production system into an issue.
+
+  - type: textarea
+    id: question
+    attributes:
+      label: Question
+      description: What you want to do and what you tried.
+    validations:
+      required: true
+
+  - type: input
+    id: version
+    attributes:
+      label: go-pkicmp-ng version and CMP peer
+      placeholder: v0.1.0, EJBCA 9.3.7
+    validations:
+      required: false
