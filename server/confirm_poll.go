@@ -110,7 +110,8 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 	// A repeated senderNonce is only rejected under WithStrictProfileValidation.
 	// RFC 9483 §3.1 tells the sender to generate a fresh nonce, but the
 	// receiver-side checks §3.5 requires are just that senderNonce is present
-	// and long enough and that recipNonce matches, both enforced above.
+	// and long enough, which validateHeader applies under the same option, and
+	// that recipNonce matches, which is enforced above for every client.
 	// Rejecting a repeat by default would discard an already-issued certificate
 	// over a peer-side generation defect that deployed clients exhibit.
 	if s.cfg.strictProfile {
