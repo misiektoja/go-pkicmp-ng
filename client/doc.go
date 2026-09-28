@@ -113,6 +113,8 @@
 //     are configured. If the server includes caPubs in an IP response,
 //     those may be used directly as trusted CAs.
 //
+// A response signed with SHA-1 is refused unless [WithSHA1Signatures] is set.
+//
 // A shared-secret enrollment completes without a pool, but errors are signed
 // however the request was protected (RFC 9810 §5.3.21), so without one a
 // rejection such as transactionIdInUse arrives as an [UnverifiedStatusError]:
