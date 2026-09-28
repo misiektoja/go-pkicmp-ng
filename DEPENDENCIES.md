@@ -5,6 +5,7 @@ go-pkicmp-ng is a modified derivative of [tsaarni/go-pkicmp](https://github.com/
 | Dependency | Use | License |
 | --- | --- | --- |
 | golang.org/x/crypto | ASN.1 encoding through `cryptobyte` and PBKDF2 key derivation in `pkicmp` | BSD-3-Clause |
+| github.com/misiektoja/go-composite-mldsa | Composite ML-DSA signatures and certificates | Apache-2.0 |
 | github.com/stretchr/testify | Test assertions | MIT |
 | github.com/tsaarni/certyaml | Test certificates and keys | Apache-2.0 |
 | EJBCA Community | CA for the client integration tests, run in Docker | LGPL-2.1 |
@@ -14,6 +15,7 @@ go-pkicmp-ng is a modified derivative of [tsaarni/go-pkicmp](https://github.com/
 
 Exact Go versions and checksums are in `go.mod` and `go.sum`. The EJBCA and nginx images are pinned in
 `test/integration/ejbca/docker-compose.yml`, the CMP test suite commit in the `Makefile` and the OpenSSL
-release in `.github/workflows/integration.yml`. Only golang.org/x/crypto is a dependency of the library
-itself. The others are used by its tests. Each dependency retains its own license and notices in the
+release in `.github/workflows/integration.yml`. Only golang.org/x/crypto and go-composite-mldsa are
+dependencies of the library itself. go-composite-mldsa has no dependencies beyond the Go standard
+library. The others are used by the tests. Each dependency retains its own license and notices in the
 downloaded module or distribution.
