@@ -4,10 +4,11 @@ Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags p
 
 ## v0.2.0 - TBD
 
-Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA. Devices that implement only RFC 4210 can enroll with the default settings. SHA-1 can be enabled for the ones that need it.
+A CA with a post-quantum composite ML-DSA key can sign CMP messages and the certificates it issues. Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA. Devices that implement only RFC 4210 can enroll with the default settings. SHA-1 can be enabled for the ones that need it.
 
 ### `pkicmp`
 
+* **Composite ML-DSA signatures** (draft-ietf-lamps-pq-composite-sigs) protect and verify CMP messages when the key comes from [go-composite-mldsa](https://github.com/misiektoja/go-composite-mldsa). **`NewSignatureCredentials`** accepts composite keys and certificates. Algorithm parameters must be absent. **`NewCertStatus`** and **`CertHash`** hash a certificate signed by a composite key with the hash that composite algorithm uses. `NewCertStatus` names that hash explicitly. With **`VerifyOptions.TrustPool`**, a certificate signed by a composite key is accepted only when its issuer is also in `ExtraCerts` and no certificate in the path has name constraints. Composite keys in certificate requests and proof of possession are not supported yet.
 * **`RevReqContent` and `RevRepContent`** encode and parse revocation request (`rr`) and response (`rp`) bodies. **`NewRevDetails`** names a certificate by issuer and serial number and adds a **`CRLReason`**.
 * **`CertTemplate`** supports the `serialNumber` and `issuer` fields.
 * **Nested message bodies use the encoding RFC 4210 and RFC 9810 define**, a sequence of one or more messages. They previously held a single message directly, which conforming peers could not parse. **`NewNestedBody`** takes one or more messages and **`Nested`** returns a slice. A protected message keeps the exact bytes its protection covers, so a received message can be forwarded without breaking its protection.
@@ -16,6 +17,7 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 
 ### `client`
 
+* **Certificates from a composite ML-DSA CA** are verified and confirmed. The CA certificate must arrive in extraCerts or caPubs, even when it is already in the pool passed to `WithTrustedCAs`.
 * **`SendRR`** asks the CA to revoke a certificate. A rejection such as `certRevoked` is returned as `*pkicmp.PKIStatusError`. Sign the request with the certificate being revoked, or with registration authority credentials when the CA allows that. A delayed answer is polled like enrollment.
 * **Refused certificates are reported to the CA.** When an issued certificate fails validation or certifies a different key, the client sends `certConf` with status rejection before returning the error. The CA previously learned of it only when its confirmation wait expired.
 * **Certificate responses must match the request.** The client accepts a response only when it holds one `CertResponse` with the certReqId of the request. A p10cr response may carry `-1` or `0`. A certificate under another certReqId is rejected in `certConf`. The client previously read the first `CertResponse` without checking its certReqId and ignored any others.
@@ -23,6 +25,7 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 
 ### `server`
 
+* **`WithSigner` accepts composite ML-DSA keys** and `WithStrictProfileValidation` checks composite signatures in the extraCerts chain. A CA issues with a composite key through `compositex509.CreateCertificate`, as the package documentation describes.
 * **Revocation requests** reach CAs that implement the new **`Revoker`** interface. By default only the certificate being revoked may sign the request. Implement **`RevocationAuthorizer`** to accept other signers, such as a registration authority. Revocation is synchronous. A CA without `Revoker` rejects revocation requests with `badRequest`.
 * **Requests forwarded by a registration authority** in a nested message are accepted when **`WithRAAuthorizer`** is set (RFC 9483 §5.2.2.1). The server verifies the protection of both the RA and the end entity, then answers the end entity as if it had sent the request directly. The authorizer decides which RAs may forward requests and whether a MAC-protected nested message is allowed, which RFC 4210 permits and RFC 9483 does not. **`SenderIdentity.RA`** names the approving RA. Without an authorizer nested messages are still rejected with `badRequest`. Batches of several messages are always rejected. `WithStrictProfileValidation` requires a signed nested message to carry `extraCerts`.
 * **`LightweightPolicy`** requires revocation requests to use signature protection and to carry a reason code.
@@ -34,6 +37,7 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 
 ### Requirements
 
+* **github.com/misiektoja/go-composite-mldsa v0.1.0** is a new dependency. It has no dependencies of its own.
 * **golang.org/x/crypto v0.57.0 or newer** is required. Older versions carry published advisories, none of which reach the code this library calls.
 
 ## v0.1.0 - 2026-09-27
