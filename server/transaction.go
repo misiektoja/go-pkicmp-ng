@@ -13,7 +13,7 @@ package server
 // The solution is to use a composite key: hash(credentialID + transactionID). This ensures
 // that two clients with different credentials have completely separate key spaces, even if
 // they use the same transactionID. The credentialID is derived from what the server verified:
-//   - MAC protection: hash of SenderKID (references the shared secret)
+//   - MAC protection: hash of senderKID and the sender name, which together select the shared secret
 //   - Signature protection: hash of the signer certificate
 //
 // This is secure because the credentialID is not client-controlled — it's derived from

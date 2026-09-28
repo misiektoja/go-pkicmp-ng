@@ -36,7 +36,7 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		if err != nil {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "MAC verification failed"}
 		}
-		return &SenderIdentity{Sender: senderName, SenderKID: msg.Header.SenderKID, MACVerified: true, secret: secret, protectionParams: vr.ProtectionParams}, nil
+		return &SenderIdentity{Sender: senderName, SenderKID: msg.Header.SenderKID, MACVerified: true, secret: secret, protectionParams: vr.ProtectionParams, headerSender: msg.Header.Sender}, nil
 	}
 
 	// Signature-protected message.
