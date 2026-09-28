@@ -646,9 +646,10 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 			}
 			return nil
 		}(),
-		TrustPool:  trustedCAs,
-		ExtraCerts: candidates,
-		SenderKID:  resp.Header.SenderKID,
+		TrustPool:           trustedCAs,
+		ExtraCerts:          candidates,
+		SenderKID:           resp.Header.SenderKID,
+		AllowSHA1Signatures: c.allowSHA1Signatures,
 	})
 	if err != nil {
 		// The bare reason reads as an internal detail on a shared-secret client,
