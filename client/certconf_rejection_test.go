@@ -23,10 +23,11 @@ import (
 	"github.com/tsaarni/certyaml"
 )
 
-// confirmRecorder is a mock CA that answers ir with a certificate and records the certConf it receives.
+// confirmRecorder is a mock CA that answers ir or p10cr with a certificate and records the certConf it receives.
 type confirmRecorder struct {
 	mu       sync.Mutex
 	issue    func(req *pkicmp.PKIMessage) []byte
+	adjust   func(rep *pkicmp.CertRepMessage)
 	answer   *pkicmp.PKIBody
 	statuses []pkicmp.CertStatus
 }
@@ -53,10 +54,17 @@ func (r *confirmRecorder) serve(t *testing.T) *httptest.Server {
 				respBody = r.answer
 			}
 		default:
-			respBody = pkicmp.NewIPBody(&pkicmp.CertRepMessage{Response: []pkicmp.CertResponse{{
+			rep := &pkicmp.CertRepMessage{Response: []pkicmp.CertResponse{{
 				Status:           pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted},
 				CertifiedKeyPair: &pkicmp.CertifiedKeyPair{CertOrEncCert: pkicmp.CertOrEncCert{Certificate: &pkicmp.CMPCertificate{Raw: r.issue(msg)}}},
-			}}})
+			}}}
+			if r.adjust != nil {
+				r.adjust(rep)
+			}
+			respBody = pkicmp.NewIPBody(rep)
+			if msg.Body.Type == pkicmp.BodyTypeP10CR {
+				respBody = pkicmp.NewCPBody(rep)
+			}
 		}
 		resp := &pkicmp.PKIMessage{
 			Header: pkicmp.PKIHeader{PVNO: msg.Header.PVNO, TransactionID: msg.Header.TransactionID, RecipNonce: msg.Header.SenderNonce},
