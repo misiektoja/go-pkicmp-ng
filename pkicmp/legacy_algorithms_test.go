@@ -20,7 +20,7 @@ import (
 )
 
 // WithPBMAlgorithms selects the PasswordBasedMac OWF and MAC, including the
-// RFC 4210 Appendix D.2 SHA-1 profile, and the result verifies.
+// RFC 4210 Appendix D.2 SHA-1 profile. The result verifies.
 func TestWithPBMAlgorithms(t *testing.T) {
 	secret := []byte("pbm-algorithms-secret")
 	for _, tc := range []struct {

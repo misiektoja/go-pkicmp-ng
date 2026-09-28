@@ -451,7 +451,7 @@ func TestSnapshotRestoresLegacyTransaction(t *testing.T) {
 	assert.Equal(t, pkicmp.BodyTypePKIConf, postCMP(t, ts, conf).Body.Type)
 }
 
-// A client using the RFC 4210 Appendix D.2 PasswordBasedMac profile enrolls,
+// A client using the RFC 4210 Appendix D.2 PasswordBasedMac profile enrolls
 // and the server answers with the same profile.
 func TestRFC4210PasswordBasedMacEnrollment(t *testing.T) {
 	issuer := &recordingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}
