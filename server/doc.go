@@ -124,6 +124,9 @@
 // ([ConfirmExpired]). The ref parameter echoes [Response.IssueRef] set during
 // [CA.IssueCertificate] for correlation.
 //
+// A certConf without any CertStatus rejects every certificate in the
+// transaction (RFC 9810 §5.3.18) and reaches the CA as [ConfirmRejected].
+//
 // # Revocation
 //
 // Implement [Revoker] to accept revocation requests (RFC 9483 §4.2). Without it
@@ -216,6 +219,10 @@
 //	    return store[senderKID]
 //	}
 //
+// The server keeps a MAC client's transactions apart from other clients by its
+// senderKID and sender name together, so clients that send only a name, as
+// RFC 4210 §5.1.1 allows, do not share transactions or quotas.
+//
 // For signature-protected messages (e.g., KUR), the client's identity is its
 // certificate. The sender DN is only a lookup key: the server resolves a
 // candidate certificate from its store and verifies the signature against it, so
@@ -225,6 +232,10 @@
 //	func LookupCertificate(issuer pkix.Name, subject pkix.Name, senderKID []byte) (*x509.Certificate, error) {
 //	    return certStore[issuer, subject]
 //	}
+//
+// A request protected with an algorithm the server does not implement is
+// rejected with badAlg. This includes SHA-1 signatures, which RFC 9481 §7.1
+// deprecates. [WithSHA1Signatures] accepts them from RFC 4210 era devices.
 //
 // # Middleware
 //
@@ -337,8 +348,13 @@
 //
 // The server tracks multi-message exchanges (IR→IP->CertConf->PKIConf and polling
 // flows). Transactions are keyed by a composite of the client's cryptographically
-// verified credentials and the client-supplied transactionID, preventing
-// cross-client hijacking (RFC 9810 §5.1.1).
+// verified credentials and the transactionID, preventing cross-client hijacking
+// (RFC 9810 §5.1.1).
+//
+// A client may omit the transactionID from its first request. The server then
+// assigns a random 128-bit one and returns it in the response, as RFC 4210 and
+// RFC 9810 §5.1.1 require. [WithStrictProfileValidation] rejects such requests
+// instead, following RFC 9483 §3.5.
 //
 // To prevent resource exhaustion, the server enforces transaction caps:
 //
