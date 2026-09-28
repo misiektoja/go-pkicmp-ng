@@ -105,6 +105,12 @@ type ParseError struct {
 	Err    error  // optional wrapped error
 }
 
+// ParseError details reported from more than one place.
+const (
+	detailInvalidCertReqID   = "invalid certReqId"
+	detailMissingMessageBody = "missing message body"
+)
+
 func (e *ParseError) Error() string {
 	if e.Err != nil {
 		return fmt.Sprintf("pkicmp: %s: %v", e.Detail, e.Err)

@@ -247,7 +247,7 @@ func (m *PKIMessage) UnmarshalBinary(data []byte) error {
 // MarshalBinary implements encoding.BinaryMarshaler.
 func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 	if m.Body == nil {
-		return nil, &ParseError{Detail: "missing message body"}
+		return nil, &ParseError{Detail: detailMissingMessageBody}
 	}
 
 	// 1. Marshal body first to discover required PVNO
@@ -276,7 +276,8 @@ func (m *PKIMessage) MarshalBinary() ([]byte, error) {
 	return b.Bytes()
 }
 
-// marshalForNesting encodes the message for a nested body, reusing the header and body bytes a protected message was protected over.
+// marshalForNesting encodes the message for a nested body, reusing the header
+// and body bytes a protected message was protected over.
 //
 // Re-encoding a received header from its decoded fields need not reproduce the
 // original bytes, and any difference would invalidate the protection the
@@ -365,58 +366,28 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	}
 
 	// senderKID [2] KeyIdentifier OPTIONAL (OCTET STRING)
-	if seq.PeekASN1Tag(cbasn1.Tag(2).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(2).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid senderKID tag"}
-		}
-		if !sub.ReadASN1Bytes(&h.SenderKID, cbasn1.OCTET_STRING) {
-			return &ParseError{Detail: "invalid senderKID"}
-		}
+	if err := readOptionalOctetString(&seq, 2, "senderKID", &h.SenderKID); err != nil {
+		return err
 	}
 
 	// recipKID [3] KeyIdentifier OPTIONAL
-	if seq.PeekASN1Tag(cbasn1.Tag(3).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(3).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid recipKID tag"}
-		}
-		if !sub.ReadASN1Bytes(&h.RecipKID, cbasn1.OCTET_STRING) {
-			return &ParseError{Detail: "invalid recipKID"}
-		}
+	if err := readOptionalOctetString(&seq, 3, "recipKID", &h.RecipKID); err != nil {
+		return err
 	}
 
 	// transactionID [4] OCTET STRING OPTIONAL
-	if seq.PeekASN1Tag(cbasn1.Tag(4).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(4).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid transactionID tag"}
-		}
-		if !sub.ReadASN1Bytes(&h.TransactionID, cbasn1.OCTET_STRING) {
-			return &ParseError{Detail: "invalid transactionID"}
-		}
+	if err := readOptionalOctetString(&seq, 4, "transactionID", &h.TransactionID); err != nil {
+		return err
 	}
 
 	// senderNonce [5] OCTET STRING OPTIONAL
-	if seq.PeekASN1Tag(cbasn1.Tag(5).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(5).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid senderNonce tag"}
-		}
-		if !sub.ReadASN1Bytes(&h.SenderNonce, cbasn1.OCTET_STRING) {
-			return &ParseError{Detail: "invalid senderNonce"}
-		}
+	if err := readOptionalOctetString(&seq, 5, "senderNonce", &h.SenderNonce); err != nil {
+		return err
 	}
 
 	// recipNonce [6] OCTET STRING OPTIONAL
-	if seq.PeekASN1Tag(cbasn1.Tag(6).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(6).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid recipNonce tag"}
-		}
-		if !sub.ReadASN1Bytes(&h.RecipNonce, cbasn1.OCTET_STRING) {
-			return &ParseError{Detail: "invalid recipNonce"}
-		}
+	if err := readOptionalOctetString(&seq, 6, "recipNonce", &h.RecipNonce); err != nil {
+		return err
 	}
 
 	// freeText [7] PKIFreeText OPTIONAL
@@ -431,24 +402,45 @@ func (h *PKIHeader) unmarshal(s *cryptobyte.String) error {
 	}
 
 	// generalInfo [8] SEQUENCE OF InfoTypeAndValue OPTIONAL
-	if seq.PeekASN1Tag(cbasn1.Tag(8).ContextSpecific().Constructed()) {
-		var sub cryptobyte.String
-		if !seq.ReadASN1(&sub, cbasn1.Tag(8).ContextSpecific().Constructed()) {
-			return &ParseError{Detail: "invalid generalInfo tag"}
-		}
-		var giSeq cryptobyte.String
-		if !sub.ReadASN1(&giSeq, cbasn1.SEQUENCE) {
-			return &ParseError{Detail: "invalid generalInfo sequence"}
-		}
-		for !giSeq.Empty() {
-			var itv InfoTypeAndValue
-			if err := itv.unmarshal(&giSeq); err != nil {
-				return err
-			}
-			h.GeneralInfo = append(h.GeneralInfo, itv)
-		}
-	}
+	return h.unmarshalGeneralInfo(&seq)
+}
 
+// readOptionalOctetString reads an optional [tagNum] header field that wraps an OCTET STRING into out.
+func readOptionalOctetString(seq *cryptobyte.String, tagNum uint8, name string, out *[]byte) error {
+	tag := cbasn1.Tag(tagNum).ContextSpecific().Constructed()
+	if !seq.PeekASN1Tag(tag) {
+		return nil
+	}
+	var sub cryptobyte.String
+	if !seq.ReadASN1(&sub, tag) {
+		return &ParseError{Detail: "invalid " + name + " tag"}
+	}
+	if !sub.ReadASN1Bytes(out, cbasn1.OCTET_STRING) {
+		return &ParseError{Detail: "invalid " + name}
+	}
+	return nil
+}
+
+// unmarshalGeneralInfo reads the optional generalInfo [8] header field.
+func (h *PKIHeader) unmarshalGeneralInfo(seq *cryptobyte.String) error {
+	if !seq.PeekASN1Tag(cbasn1.Tag(8).ContextSpecific().Constructed()) {
+		return nil
+	}
+	var sub cryptobyte.String
+	if !seq.ReadASN1(&sub, cbasn1.Tag(8).ContextSpecific().Constructed()) {
+		return &ParseError{Detail: "invalid generalInfo tag"}
+	}
+	var giSeq cryptobyte.String
+	if !sub.ReadASN1(&giSeq, cbasn1.SEQUENCE) {
+		return &ParseError{Detail: "invalid generalInfo sequence"}
+	}
+	for !giSeq.Empty() {
+		var itv InfoTypeAndValue
+		if err := itv.unmarshal(&giSeq); err != nil {
+			return err
+		}
+		h.GeneralInfo = append(h.GeneralInfo, itv)
+	}
 	return nil
 }
 
@@ -559,7 +551,7 @@ func (m *PKIMessage) ProtectedData() ([]byte, error) {
 // RFC 9810 §5.1.3.
 func (m *PKIMessage) protectedPart() ([]byte, error) {
 	if m.Body == nil {
-		return nil, &ParseError{Detail: "missing message body"}
+		return nil, &ParseError{Detail: detailMissingMessageBody}
 	}
 	if len(m.rawHeader) == 0 || len(m.rawBody) == 0 {
 		return nil, &ParseError{Detail: "raw header or body missing"}

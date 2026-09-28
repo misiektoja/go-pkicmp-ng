@@ -80,16 +80,25 @@ func pbmAlgorithmOIDs(owf, mac crypto.Hash) (asn1.ObjectIdentifier, asn1.ObjectI
 	}
 	owfOID, ok := owfOIDs[owf]
 	if !ok {
-		return nil, nil, &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("unsupported PasswordBasedMac OWF %v", owf)}
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("unsupported PasswordBasedMac OWF %v", owf),
+		}
 	}
 	macOID, ok := macOIDs[mac]
 	if !ok {
-		return nil, nil, &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("unsupported PasswordBasedMac HMAC hash %v", mac)}
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("unsupported PasswordBasedMac HMAC hash %v", mac),
+		}
 	}
 	// The key is the OWF output. Deriving a longer one (RFC 4210 §5.1.3.1 key
 	// expansion) is not implemented.
 	if mac.Size() > owf.Size() {
-		return nil, nil, &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("HMAC hash %v is longer than PasswordBasedMac OWF %v", mac, owf)}
+		return nil, nil, &ProtectionError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("HMAC hash %v is longer than PasswordBasedMac OWF %v", mac, owf),
+		}
 	}
 	return owfOID, macOID, nil
 }
@@ -200,7 +209,10 @@ func NewSignatureCredentials(key crypto.Signer, cert *x509.Certificate, chain ..
 	pubDER, err1 := x509.MarshalPKIXPublicKey(key.Public())
 	certPubDER, err2 := x509.MarshalPKIXPublicKey(cert.PublicKey)
 	if err1 != nil || err2 != nil || subtle.ConstantTimeCompare(pubDER, certPubDER) != 1 {
-		return nil, &ProtectionError{Reason: ReasonMissingSigner, Err: fmt.Errorf("private key does not match certificate public key")}
+		return nil, &ProtectionError{
+			Reason: ReasonMissingSigner,
+			Err:    fmt.Errorf("private key does not match certificate public key"),
+		}
 	}
 	return &SignatureCredentials{key: key, cert: cert, chain: chain}, nil
 }

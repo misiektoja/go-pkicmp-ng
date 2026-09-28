@@ -222,7 +222,7 @@ func (r *CertRequest) unmarshal(s *cryptobyte.String) error {
 		return &ParseError{Detail: "invalid CertRequest sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {
-		return &ParseError{Detail: "invalid certReqId"}
+		return &ParseError{Detail: detailInvalidCertReqID}
 	}
 	if err := r.CertTemplate.unmarshal(&seq); err != nil {
 		return err
@@ -326,7 +326,7 @@ type CertTemplate struct {
 	Extensions []byte // Raw DER Extensions
 }
 
-func (t *CertTemplate) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
+func (t *CertTemplate) marshal(_ *marshalContext, b *cryptobyte.Builder) {
 	b.AddASN1(cbasn1.SEQUENCE, func(b *cryptobyte.Builder) {
 		if t.SerialNumber != nil {
 			// serialNumber [1] INTEGER OPTIONAL (IMPLICIT)
@@ -462,21 +462,22 @@ type proofOfPossession struct {
 }
 
 func (p *proofOfPossession) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
-	if p.RAVerified {
+	switch {
+	case p.RAVerified:
 		// raVerified [0] NULL (IMPLICIT)
 		b.AddASN1(cbasn1.Tag(0).ContextSpecific(), func(b *cryptobyte.Builder) {})
-	} else if p.Signature != nil {
+	case p.Signature != nil:
 		// signature [1] popoSigningKey (IMPLICIT)
 		// popoSigningKey is a SEQUENCE.
 		b.AddASN1(cbasn1.Tag(1).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.Signature.marshalInner(mctx, b)
 		})
-	} else if p.KeyEncipherment != nil {
+	case p.KeyEncipherment != nil:
 		// keyEncipherment [2] popoPrivKey (EXPLICIT because popoPrivKey is a CHOICE)
 		b.AddASN1(cbasn1.Tag(2).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.KeyEncipherment.marshal(mctx, b)
 		})
-	} else if p.KeyAgreement != nil {
+	case p.KeyAgreement != nil:
 		// keyAgreement [3] popoPrivKey (EXPLICIT because popoPrivKey is a CHOICE)
 		b.AddASN1(cbasn1.Tag(3).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
 			p.KeyAgreement.marshal(mctx, b)
@@ -540,7 +541,7 @@ func (p *popoPrivKey) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 		// encryptedKey [4] envelopedData (IMPLICIT)
 		// envelopedData is a SEQUENCE.
 		b.AddASN1(cbasn1.Tag(4).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-			p.encryptedKey.marshalInner(mctx, b)
+			p.encryptedKey.marshalInner(b)
 		})
 	}
 }
@@ -598,7 +599,7 @@ func (c *challenge) marshal(mctx *marshalContext, b *cryptobyte.Builder) {
 			mctx.MinRequiredPVNO = PVNO3
 			// encryptedRand [0] envelopedData (IMPLICIT)
 			b.AddASN1(cbasn1.Tag(0).ContextSpecific().Constructed(), func(b *cryptobyte.Builder) {
-				c.EncryptedRand.marshalInner(mctx, b)
+				c.EncryptedRand.marshalInner(b)
 			})
 		}
 	})

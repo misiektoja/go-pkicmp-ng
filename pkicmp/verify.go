@@ -127,7 +127,7 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &ParseError{Detail: "message is not protected"}
 	}
 	if m.Body == nil {
-		return nil, &ParseError{Detail: "missing message body"}
+		return nil, &ParseError{Detail: detailMissingMessageBody}
 	}
 
 	alg := m.Header.ProtectionAlg.Algorithm
@@ -137,7 +137,10 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 	// it substitute one the caller never intended to accept.
 	if alg.Equal(oidPasswordBasedMac) || alg.Equal(oidPBMAC1) {
 		if opts.RequiredProtection == ProtectionSignature {
-			return nil, &VerificationError{Reason: ReasonUnexpectedProtection, Err: fmt.Errorf("message is MAC-protected but signature-based protection is required")}
+			return nil, &VerificationError{
+				Reason: ReasonUnexpectedProtection,
+				Err:    fmt.Errorf("message is MAC-protected but signature-based protection is required"),
+			}
 		}
 		if alg.Equal(oidPasswordBasedMac) {
 			return m.verifyPBM(opts)
@@ -147,7 +150,10 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 	_, isSHA1 := sha1SigAlgFromOID(alg)
 	if _, err := sigAlgFromOID(alg); err == nil || isSHA1 {
 		if opts.RequiredProtection == ProtectionMAC {
-			return nil, &VerificationError{Reason: ReasonUnexpectedProtection, Err: fmt.Errorf("message is signature-protected but MAC-based protection is required")}
+			return nil, &VerificationError{
+				Reason: ReasonUnexpectedProtection,
+				Err:    fmt.Errorf("message is signature-protected but MAC-based protection is required"),
+			}
 		}
 		return m.verifySignature(opts)
 	}
@@ -178,7 +184,10 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !hash.Available() {
-		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("hash %v not available", p.OWF.Algorithm)}
+		return nil, &VerificationError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("hash %v not available", p.OWF.Algorithm),
+		}
 	}
 
 	macHash, err := hmacHashFromOID(p.MAC.Algorithm)
@@ -186,7 +195,10 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !macHash.Available() {
-		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", p.MAC.Algorithm)}
+		return nil, &VerificationError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("MAC hash %v not available", p.MAC.Algorithm),
+		}
 	}
 
 	data, err := m.protectedPart()
@@ -237,7 +249,10 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 	}
 
 	if !pbmac1Params.KeyDerivationFunc.Algorithm.Equal(oidPBKDF2) {
-		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("KDF OID %v", pbmac1Params.KeyDerivationFunc.Algorithm)}
+		return nil, &VerificationError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("KDF OID %v", pbmac1Params.KeyDerivationFunc.Algorithm),
+		}
 	}
 
 	// Parse PBKDF2-params from keyDerivationFunc.Parameters.
@@ -255,14 +270,20 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !prfHash.Available() {
-		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("PRF hash %v not available", pbkdf2Params.PRF.Algorithm)}
+		return nil, &VerificationError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("PRF hash %v not available", pbkdf2Params.PRF.Algorithm),
+		}
 	}
 	macHash, err := hmacHashFromOID(pbmac1Params.MessageAuthScheme.Algorithm)
 	if err != nil {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !macHash.Available() {
-		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", pbmac1Params.MessageAuthScheme.Algorithm)}
+		return nil, &VerificationError{
+			Reason: ReasonUnsupportedAlgorithm,
+			Err:    fmt.Errorf("MAC hash %v not available", pbmac1Params.MessageAuthScheme.Algorithm),
+		}
 	}
 
 	// RFC 8018 §A.5: keyLength is OPTIONAL. When the peer omits it, §7.1 leaves the

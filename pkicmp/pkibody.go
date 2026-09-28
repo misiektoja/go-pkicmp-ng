@@ -89,7 +89,7 @@ const (
 	BodyTypeRR       = BodyType(11 | classContextSpecific | classConstructed)
 	BodyTypeRP       = BodyType(12 | classContextSpecific | classConstructed)
 	BodyTypePKIConf  = BodyType(19 | classContextSpecific | classConstructed)
-	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: nested [20] NestedMessageContent
+	BodyTypeNested   = BodyType(20 | classContextSpecific | classConstructed) // RFC 9810 §5.1.2: NestedMessageContent
 	BodyTypeError    = BodyType(23 | classContextSpecific | classConstructed)
 	BodyTypeCertConf = BodyType(24 | classContextSpecific | classConstructed)
 	BodyTypePollReq  = BodyType(25 | classContextSpecific | classConstructed)

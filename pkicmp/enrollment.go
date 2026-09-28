@@ -117,7 +117,7 @@ func (r *CertResponse) unmarshal(s *cryptobyte.String) error {
 		return &ParseError{Detail: "invalid CertResponse sequence"}
 	}
 	if !seq.ReadASN1Integer(&r.CertReqID) {
-		return &ParseError{Detail: "invalid certReqId"}
+		return &ParseError{Detail: detailInvalidCertReqID}
 	}
 	if err := r.Status.unmarshal(&seq); err != nil {
 		return err
@@ -308,7 +308,7 @@ func (s *CertStatus) unmarshal(inner *cryptobyte.String) error {
 		return &ParseError{Detail: "invalid certHash"}
 	}
 	if !seq.ReadASN1Integer(&s.CertReqID) {
-		return &ParseError{Detail: "invalid certReqId"}
+		return &ParseError{Detail: detailInvalidCertReqID}
 	}
 	if !seq.Empty() && seq.PeekASN1Tag(cbasn1.SEQUENCE) {
 		s.StatusInfo = &PKIStatusInfo{}

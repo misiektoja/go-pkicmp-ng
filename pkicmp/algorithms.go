@@ -40,8 +40,10 @@ var (
 
 	// MAC Algorithms (RFC 9481 §6.1, RFC 9810 §5.1.3.4).
 	oidPasswordBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 13}
-	oidPBMMac_HMACSHA1  = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 8, 1, 2} // Deprecated: SHOULD NOT be used (RFC 9481 §7.1)
-	// oidKemBasedMac      = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16} // Unused but reserved for KEM-based MAC (RFC 9810 §5.1.3.4)
+	// Deprecated: SHOULD NOT be used (RFC 9481 §7.1).
+	oidPBMMac_HMACSHA1 = asn1.ObjectIdentifier{1, 3, 6, 1, 5, 5, 8, 1, 2}
+	// Unused but reserved for KEM-based MAC (RFC 9810 §5.1.3.4):
+	// oidKemBasedMac = asn1.ObjectIdentifier{1, 2, 840, 113533, 7, 66, 16}
 	oidPBMAC1 = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 5, 14}
 
 	// PBKDF2 (RFC 8018 §A.2).
@@ -133,14 +135,19 @@ func sha1SigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, bool
 	return x509.UnknownSignatureAlgorithm, false
 }
 
-// signatureAlgorithm validates parameters before resolving a signature identifier, including SHA-1 ones when allowSHA1 is set.
+// signatureAlgorithm validates parameters before resolving a signature
+// identifier, including SHA-1 ones when allowSHA1 is set.
 func signatureAlgorithm(alg AlgorithmIdentifier, allowSHA1 bool) (x509.SignatureAlgorithm, error) {
-	if (alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)) && len(alg.Parameters) != 0 {
+	isMLDSA := alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)
+	if isMLDSA && len(alg.Parameters) != 0 {
 		return x509.UnknownSignatureAlgorithm, &ParseError{Detail: "ML-DSA parameters must be absent"}
 	}
 	if sigAlg, ok := sha1SigAlgFromOID(alg.Algorithm); ok {
 		if !allowSHA1 {
-			return x509.UnknownSignatureAlgorithm, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("SHA-1 signature algorithm %v is deprecated and not enabled", alg.Algorithm)}
+			return x509.UnknownSignatureAlgorithm, &VerificationError{
+				Reason: ReasonUnsupportedAlgorithm,
+				Err:    fmt.Errorf("SHA-1 signature algorithm %v is deprecated and not enabled", alg.Algorithm),
+			}
 		}
 		return sigAlg, nil
 	}
@@ -168,7 +175,9 @@ func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) 
 func CertHash(cert *x509.Certificate) ([]byte, error) {
 	hash := hashFromSigAlg(cert.SignatureAlgorithm)
 	if hash == 0 || !hash.Available() {
-		return nil, &ParseError{Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm)}
+		return nil, &ParseError{
+			Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm),
+		}
 	}
 	h := hash.New()
 	h.Write(cert.Raw)
@@ -209,8 +218,10 @@ func hashFromSigAlg(sigAlg x509.SignatureAlgorithm) crypto.Hash {
 	case x509.PureEd25519:
 		// RFC 9481 §3.3: EdDSA uses SHA-512 for certHash.
 		return crypto.SHA512
+	default:
+		// Zero tells callers that no certHash algorithm is defined for sigAlg.
+		return 0
 	}
-	return 0
 }
 
 func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto.Hash, error) {

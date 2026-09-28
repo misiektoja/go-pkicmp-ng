@@ -44,7 +44,7 @@ func (m *PKIMessage) protectWithMAC(secret []byte) error {
 // RFC 9810 §5.1.3.1.
 func (m *PKIMessage) protectWithMACOptions(opts macOptions) error {
 	if m.Body == nil {
-		return &ParseError{Detail: "missing message body"}
+		return &ParseError{Detail: detailMissingMessageBody}
 	}
 	if len(opts.Secret) == 0 {
 		return &ProtectionError{Reason: ReasonMissingSharedSecret}
@@ -183,7 +183,7 @@ type pbmac1Options struct {
 // RFC 8018 §7.1, RFC 9481 §6.1.2.
 func (m *PKIMessage) protectWithPBMAC1Options(opts pbmac1Options) error {
 	if m.Body == nil {
-		return &ParseError{Detail: "missing message body"}
+		return &ParseError{Detail: detailMissingMessageBody}
 	}
 	if len(opts.Secret) == 0 {
 		return &ProtectionError{Reason: ReasonMissingSharedSecret}
@@ -326,7 +326,7 @@ func parsePBKDF2Params(der []byte) (*pbkdf2ParamsASN1, error) {
 // RFC 9810 §5.1.3.3.
 func (m *PKIMessage) protectWithSignature(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) error {
 	if m.Body == nil {
-		return &ParseError{Detail: "missing message body"}
+		return &ParseError{Detail: detailMissingMessageBody}
 	}
 
 	sigAlgOID, hash, err := signatureAlgorithmFromKey(key)
@@ -518,13 +518,17 @@ func validatePBKDF2KeyLength(keyLength int, macHash crypto.Hash) error {
 	// practice, including for HMAC-SHA-384 and HMAC-SHA-512, and rejecting it
 	// would break interoperability without buying any security.
 	if keyLength < defaultPBKDF2MinKeyLength {
-		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d (minimum %d)", keyLength, defaultPBKDF2MinKeyLength)}
+		return &ParseError{
+			Detail: fmt.Sprintf("PBKDF2 keyLength too small: %d (minimum %d)", keyLength, defaultPBKDF2MinKeyLength),
+		}
 	}
 	// An HMAC key longer than the hash block size is hashed down to the digest size,
 	// so a longer derived key adds no strength while multiplying PBKDF2 work.
 	maxKeyLength := macHash.New().BlockSize()
 	if keyLength > maxKeyLength {
-		return &ParseError{Detail: fmt.Sprintf("PBKDF2 keyLength too large: %d (maximum %d for this MAC)", keyLength, maxKeyLength)}
+		return &ParseError{
+			Detail: fmt.Sprintf("PBKDF2 keyLength too large: %d (maximum %d for this MAC)", keyLength, maxKeyLength),
+		}
 	}
 	return nil
 }
@@ -538,7 +542,10 @@ func validatePBKDF2KeyLength(keyLength int, macHash crypto.Hash) error {
 // K > H case per RFC 9810 §5.1.3.1 is not implemented).
 func derivePBMKey(secret, salt []byte, iterationCount int, hash, macHash crypto.Hash) ([]byte, error) {
 	if macHash.Size() > hash.Size() {
-		return nil, fmt.Errorf("MAC key size (%d) exceeds OWF output size (%d): key expansion not supported", macHash.Size(), hash.Size())
+		return nil, fmt.Errorf(
+			"MAC key size (%d) exceeds OWF output size (%d): key expansion not supported",
+			macHash.Size(), hash.Size(),
+		)
 	}
 
 	h := hash.New()

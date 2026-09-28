@@ -107,7 +107,8 @@ type RevDetails struct {
 	CRLEntryDetails []byte // Raw DER Extensions requested for the CRL entry
 }
 
-// NewRevDetails identifies a certificate by issuer and serial number and requests the given reason code, as RFC 9483 §4.2 requires.
+// NewRevDetails identifies a certificate by issuer and serial number and
+// requests the given reason code, as RFC 9483 §4.2 requires.
 func NewRevDetails(cert *x509.Certificate, reason CRLReason) (RevDetails, error) {
 	if cert == nil {
 		return RevDetails{}, fmt.Errorf("pkicmp: revocation certificate is nil")
@@ -269,7 +270,8 @@ func (c *RevRepContent) unmarshal(s *cryptobyte.String) error {
 
 	if seq.PeekASN1Tag(cbasn1.Tag(0).ContextSpecific().Constructed()) {
 		var tagged, certIDs cryptobyte.String
-		if !seq.ReadASN1(&tagged, cbasn1.Tag(0).ContextSpecific().Constructed()) || !tagged.ReadASN1(&certIDs, cbasn1.SEQUENCE) || !tagged.Empty() {
+		if !seq.ReadASN1(&tagged, cbasn1.Tag(0).ContextSpecific().Constructed()) ||
+			!tagged.ReadASN1(&certIDs, cbasn1.SEQUENCE) || !tagged.Empty() {
 			return &ParseError{Detail: "invalid revCerts"}
 		}
 		for !certIDs.Empty() {
@@ -283,7 +285,8 @@ func (c *RevRepContent) unmarshal(s *cryptobyte.String) error {
 
 	if seq.PeekASN1Tag(cbasn1.Tag(1).ContextSpecific().Constructed()) {
 		var tagged, crls cryptobyte.String
-		if !seq.ReadASN1(&tagged, cbasn1.Tag(1).ContextSpecific().Constructed()) || !tagged.ReadASN1(&crls, cbasn1.SEQUENCE) || !tagged.Empty() {
+		if !seq.ReadASN1(&tagged, cbasn1.Tag(1).ContextSpecific().Constructed()) ||
+			!tagged.ReadASN1(&crls, cbasn1.SEQUENCE) || !tagged.Empty() {
 			return &ParseError{Detail: "invalid crls"}
 		}
 		for !crls.Empty() {
