@@ -207,6 +207,12 @@ func (h *caHandler) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage) 
 
 	issueRef := IssueRefFromContext(ctx)
 
+	// RFC 4210 and RFC 9810 §5.3.18: a certConf without a CertStatus for an
+	// issued certificate rejects it, and an empty one rejects them all.
+	if len(*conf) == 0 {
+		return nil, confirmer.ConfirmCertificate(ctx, cert, ConfirmRejected, issueRef)
+	}
+
 	for _, cs := range *conf {
 		status := ConfirmAccepted
 		if cs.StatusInfo != nil && cs.StatusInfo.Status == pkicmp.StatusRejection {
