@@ -1,6 +1,12 @@
 # go-pkicmp-ng
 
+[![GitHub Release](https://img.shields.io/github/v/release/misiektoja/go-pkicmp-ng?style=flat-square&color=blue)](https://github.com/misiektoja/go-pkicmp-ng/releases)
 [![Go Reference](https://pkg.go.dev/badge/github.com/misiektoja/go-pkicmp-ng.svg)](https://pkg.go.dev/github.com/misiektoja/go-pkicmp-ng)
+[![License](https://img.shields.io/badge/license-Apache--2.0-blue?style=flat-square)](LICENSE)
+[![Tests](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/test.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/test.yml)
+[![Integration](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/integration.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/integration.yml)
+[![Supply chain](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/supply-chain.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/supply-chain.yml)
+[![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgo-pkicmp-ng&query=%24.score&label=openssf%20scorecard&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/misiektoja/go-pkicmp-ng)
 
 Go library for the Certificate Management Protocol (CMP).
 The library partially implements:
@@ -161,10 +167,10 @@ go run ./examples/mockserver/cmd
 go run ./examples/mockclient/cmd
 ```
 
-## Contributing
+## Contributing and support
 
-Please refer to the [Contributing Guide](CONTRIBUTING.md).
+The [Contributing Guide](CONTRIBUTING.md) describes the development checks, the integration tests and the release process. [SUPPORT.md](SUPPORT.md) says where to ask a question or report a bug. Report vulnerabilities privately as [SECURITY.md](SECURITY.md) describes.
 
 ## License
 
-Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+Apache License 2.0. See [LICENSE](LICENSE) and [NOTICE](NOTICE). [DEPENDENCIES.md](DEPENDENCIES.md) lists third-party dependencies and their licenses.
