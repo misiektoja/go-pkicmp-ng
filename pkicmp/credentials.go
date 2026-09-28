@@ -45,7 +45,7 @@ func WithPBM() MACCredentialOption {
 // with HMAC-SHA1 the mandatory combination, so WithPBMAlgorithms(crypto.SHA1,
 // crypto.SHA1) suits a peer that implements only RFC 4210. RFC 9481 §7.1
 // deprecates SHA-1. The supported hashes are SHA-1, SHA-224, SHA-256, SHA-384
-// and SHA-512, and the MAC digest must not be longer than the OWF output.
+// and SHA-512. The MAC digest must not be longer than the OWF output.
 // [NewMACCredentials] reports any other choice.
 func WithPBMAlgorithms(owf, mac crypto.Hash) MACCredentialOption {
 	return func(c *macCredentialConfig) {
@@ -86,8 +86,8 @@ func pbmAlgorithmOIDs(owf, mac crypto.Hash) (asn1.ObjectIdentifier, asn1.ObjectI
 	if !ok {
 		return nil, nil, &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("unsupported PasswordBasedMac HMAC hash %v", mac)}
 	}
-	// The key is the OWF output, and deriving a longer one (RFC 4210 §5.1.3.1
-	// key expansion) is not implemented.
+	// The key is the OWF output. Deriving a longer one (RFC 4210 §5.1.3.1 key
+	// expansion) is not implemented.
 	if mac.Size() > owf.Size() {
 		return nil, nil, &ProtectionError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("HMAC hash %v is longer than PasswordBasedMac OWF %v", mac, owf)}
 	}

@@ -86,7 +86,7 @@ type VerifyOptions struct {
 	// sha1WithRSAEncryption or ecdsa-with-SHA1, which RFC 4210 era peers may
 	// still use. RFC 9481 §7.1 deprecates both, so enable this only for such
 	// peers. crypto/x509 still rejects SHA-1 signatures on certificates during
-	// chain building, and DSA is not supported.
+	// chain building. DSA is not supported.
 	AllowSHA1Signatures bool
 }
 
