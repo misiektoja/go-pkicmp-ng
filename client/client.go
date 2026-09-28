@@ -105,6 +105,10 @@ func WithExtraCerts(certs []*x509.Certificate) Option {
 // (RFC 9810 §5.3.21), so without a pool a rejection such as transactionIdInUse
 // arrives unverifiable, as an [UnverifiedStatusError]. Some CAs sign every
 // response, which a client with no anchor cannot complete at all.
+//
+// A CA with a composite ML-DSA key is trusted as an issuer only when the
+// response also carries its certificate in extraCerts or caPubs. The pool
+// entry still decides whether that certificate is trusted.
 func WithTrustedCAs(trustedCAs *x509.CertPool) Option {
 	return func(c *Client) { c.trustedCAs = trustedCAs }
 }
