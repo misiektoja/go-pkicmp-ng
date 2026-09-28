@@ -133,7 +133,8 @@ func main() {
 	}
 
 	log.Info("sending RR with signature protection")
-	if err := c.SendRR(context.Background(), renewal.Certificate, pkicmp.CRLReasonCessationOfOperation, revCreds); err != nil {
+	err = c.SendRR(context.Background(), renewal.Certificate, pkicmp.CRLReasonCessationOfOperation, revCreds)
+	if err != nil {
 		log.Error("RR failed", "error", err)
 		return
 	}
