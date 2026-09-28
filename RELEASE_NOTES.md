@@ -32,6 +32,10 @@ Revoke certificates over CMP from the client and accept revocation requests in t
 * **Every `CertStatus` in a `certConf` is checked.** Each must carry the certHash and certReqId of the issued certificate and all of them must agree. The CA is then notified once. A p10cr confirmation may use certReqId `-1` or `0`. The server previously checked only the first entry and notified the CA once per entry, so an unchecked extra entry could reject a certificate the first one accepted. An **empty `certConf`** rejects the certificate, as RFC 9810 §5.3.18 defines, where the CA previously received nothing. `WithStrictProfileValidation` also rejects a `certConf` with more than one `CertStatus`.
 * **Unsupported protection algorithms are reported as `badAlg`** instead of `badMessageCheck`. This includes SHA-1 signatures, which **`WithSHA1Signatures`** accepts in message protection and in CRMF proof of possession.
 
+### Requirements
+
+* **golang.org/x/crypto v0.57.0 or newer** is required. Older versions carry published advisories, none of which reach the code this library calls.
+
 ## v0.1.0 - 2026-09-27
 
 Enroll and confirm certificates with **post-quantum ML-DSA keys and signatures**.
