@@ -152,9 +152,17 @@ func (s *Server) process(ctx context.Context, msg *pkicmp.PKIMessage, fwd *forwa
 	// Verify message protection.
 	sender, err := s.verifyProtection(msg)
 	if err != nil {
+		// RFC 9810 §5.2.3 defines badAlg for an unsupported algorithm, which
+		// tells a legacy peer why it failed. Every other failure stays
+		// badMessageCheck.
+		failInfo := pkicmp.FailBadMessageCheck
+		var srvErr *Error
+		if errors.As(err, &srvErr) && srvErr.FailureInfo == pkicmp.FailBadAlg {
+			failInfo = pkicmp.FailBadAlg
+		}
 		resp := s.buildErrorResponse(msg, nil, pkicmp.PKIStatusInfo{
 			Status:       pkicmp.StatusRejection,
-			FailInfo:     pkicmp.FailBadMessageCheck,
+			FailInfo:     failInfo,
 			StatusString: pkicmp.PKIFreeText{err.Error()},
 		})
 		return resp
@@ -204,6 +212,10 @@ func (s *Server) process(ctx context.Context, msg *pkicmp.PKIMessage, fwd *forwa
 			Status:   pkicmp.StatusRejection,
 			FailInfo: pkicmp.FailBadDataFormat,
 		})
+	}
+
+	if s.cfg.allowSHA1Signatures {
+		ctx = contextWithSHA1Signatures(ctx)
 	}
 
 	// Dispatch by body type.

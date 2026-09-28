@@ -34,6 +34,9 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 		}
 		vr, err := msg.Verify(pkicmp.VerifyOptions{SharedSecret: secret})
 		if err != nil {
+			if isUnsupportedAlgorithm(err) {
+				return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "unsupported protection algorithm"}
+			}
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "MAC verification failed"}
 		}
 		return &SenderIdentity{Sender: senderName, SenderKID: msg.Header.SenderKID, MACVerified: true, secret: secret, protectionParams: vr.ProtectionParams, headerSender: msg.Header.Sender}, nil
@@ -69,16 +72,25 @@ func (s *Server) verifyProtection(msg *pkicmp.PKIMessage) (*SenderIdentity, erro
 	// its sender. SenderIdentity carries both to the CA, and a CA that
 	// authorizes on the name would otherwise be handed a name the peer chose
 	// alongside a certificate the server itself vouched for.
-	_, err = msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert})
+	_, err = msg.Verify(pkicmp.VerifyOptions{TrustedCert: signerCert, AllowSHA1Signatures: s.cfg.allowSHA1Signatures})
 	if err != nil {
 		var verr *pkicmp.VerificationError
 		if errors.As(err, &verr) && verr.Reason == pkicmp.ReasonSenderMismatch {
 			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadMessageCheck, StatusText: "sender does not match the certificate that signed the message"}
 		}
+		if isUnsupportedAlgorithm(err) {
+			return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadAlg, StatusText: "unsupported protection algorithm"}
+		}
 		return nil, &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailSignerNotTrusted, StatusText: "signature verification failed"}
 	}
 
 	return &SenderIdentity{Certificate: signerCert, Sender: senderName}, nil
+}
+
+// isUnsupportedAlgorithm reports whether verification failed because the protection algorithm or one of its parameters is not supported.
+func isUnsupportedAlgorithm(err error) bool {
+	var verr *pkicmp.VerificationError
+	return errors.As(err, &verr) && verr.Reason == pkicmp.ReasonUnsupportedAlgorithm
 }
 
 // isMACAlgorithm returns true if the OID is a supported MAC protection algorithm.

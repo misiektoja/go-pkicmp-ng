@@ -71,6 +71,7 @@ type serverConfig struct {
 	maxTransactions              int
 	maxTransactionsPerCredential int
 	strictProfile                bool
+	allowSHA1Signatures          bool
 	messageTimeTolerance         time.Duration
 	raAuthorizer                 RAAuthorizer
 	confirmer                    CertificateConfirmer // set automatically by NewCAServer
@@ -162,6 +163,20 @@ func WithImplicitConfirm() Option {
 func WithStrictProfileValidation() Option {
 	return func(c *serverConfig) {
 		c.strictProfile = true
+	}
+}
+
+// WithSHA1Signatures accepts requests signed with sha1WithRSAEncryption or
+// ecdsa-with-SHA1, in the message protection and in the CRMF proof of
+// possession.
+//
+// RFC 4210 era devices may still sign this way, but RFC 9481 §7.1 deprecates
+// SHA-1, so the server refuses such requests with badAlg by default. The option
+// does not cover DSA. A p10cr whose CSR is signed with SHA-1 is accepted either
+// way, because crypto/x509 allows SHA-1 on certificate requests.
+func WithSHA1Signatures() Option {
+	return func(c *serverConfig) {
+		c.allowSHA1Signatures = true
 	}
 }
 

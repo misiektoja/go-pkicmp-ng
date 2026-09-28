@@ -59,11 +59,11 @@ func LightweightPolicy() func(Handler) Handler {
 			// Validate based on request type.
 			switch msg.Body.Type {
 			case pkicmp.BodyTypeP10CR:
-				if err := validateP10CR(msg); err != nil {
+				if err := validateP10CR(ctx, msg); err != nil {
 					return nil, err
 				}
 			case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR:
-				if err := validateCRMF(msg); err != nil {
+				if err := validateCRMF(ctx, msg); err != nil {
 					return nil, err
 				}
 			}
@@ -81,13 +81,13 @@ func isCertRequest(t pkicmp.BodyType) bool {
 	return false
 }
 
-func validateP10CR(msg *pkicmp.PKIMessage) error {
+func validateP10CR(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	csr, err := msg.Body.P10CR()
 	if err != nil {
 		return &Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadDataFormat}
 	}
 	// RFC 4211 §4: the CSR self-signature proves possession of the key.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return err
 	}
 	// RFC 9483 §4.1.1: Subject required.
@@ -117,7 +117,7 @@ func validateRR(msg *pkicmp.PKIMessage, sender *SenderIdentity) error {
 	return nil
 }
 
-func validateCRMF(msg *pkicmp.PKIMessage) error {
+func validateCRMF(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	crmf, err := parseCRMFMsg(msg)
 	if err != nil {
 		return err
@@ -130,7 +130,7 @@ func validateCRMF(msg *pkicmp.PKIMessage) error {
 
 	// RFC 4211 §4 and RFC 9483 §5.1.1: the request must prove possession of the
 	// requested key.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return err
 	}
 

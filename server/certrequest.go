@@ -1,6 +1,7 @@
 package server
 
 import (
+	"context"
 	"crypto"
 	"crypto/x509"
 	"crypto/x509/pkix"
@@ -86,7 +87,7 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 // applies the same rule, so a request usually passes it once in the policy and
 // once here, which costs one extra public key operation and keeps either layer
 // correct on its own.
-func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
+func enforceProofOfPossession(ctx context.Context, msg *pkicmp.PKIMessage) error {
 	switch msg.Body.Type {
 	case pkicmp.BodyTypeP10CR:
 		csr, err := msg.Body.P10CR()
@@ -107,8 +108,12 @@ func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
 		if err != nil {
 			return err
 		}
-		if err := verifyPOPMsg(msg); err != nil {
+		if err := verifyPOPMsg(msg, pkicmp.POPOptions{AllowSHA1Signatures: sha1SignaturesAllowed(ctx)}); err != nil {
 			failInfo := pkicmp.FailBadPOP
+			var verr *pkicmp.VerificationError
+			if errors.As(err, &verr) && verr.Reason == pkicmp.ReasonUnsupportedAlgorithm {
+				failInfo = pkicmp.FailBadAlg
+			}
 			// RFC 9810 §5.2.8.1: An end entity MUST NOT use raVerified.
 			var parseErr *pkicmp.ParseError
 			if errors.As(err, &parseErr) && parseErr.Detail == "raVerified POP not supported" {
@@ -133,7 +138,7 @@ func enforceProofOfPossession(msg *pkicmp.PKIMessage) error {
 
 // verifyPOPMsg verifies the Proof of Possession for CRMF requests.
 // RFC 4211 §4: Delegates to pkicmp.VerifyPOP.
-func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
+func verifyPOPMsg(msg *pkicmp.PKIMessage, opts pkicmp.POPOptions) error {
 	var msgs *pkicmp.CertReqMessages
 	var err error
 	switch msg.Body.Type {
@@ -150,7 +155,7 @@ func verifyPOPMsg(msg *pkicmp.PKIMessage) error {
 		return err
 	}
 
-	return pkicmp.VerifyPOP(&(*msgs)[0])
+	return pkicmp.VerifyPOPWithOptions(&(*msgs)[0], opts)
 }
 
 // oidBasicConstraints identifies the RFC 5280 §4.2.1.9 BasicConstraints extension.

@@ -90,6 +90,22 @@ func contextWithPollRef(ctx context.Context, pollRef string) context.Context {
 	return context.WithValue(ctx, pollRefKey{}, pollRef)
 }
 
+// sha1SignaturesKey is the context key that carries the WithSHA1Signatures
+// setting to proof of possession checks, which run inside handlers that do not
+// see the server configuration.
+type sha1SignaturesKey struct{}
+
+// contextWithSHA1Signatures marks ctx so proof of possession checks accept SHA-1 signatures.
+func contextWithSHA1Signatures(ctx context.Context) context.Context {
+	return context.WithValue(ctx, sha1SignaturesKey{}, true)
+}
+
+// sha1SignaturesAllowed reports whether ctx permits SHA-1 signatures in proof of possession.
+func sha1SignaturesAllowed(ctx context.Context) bool {
+	v, _ := ctx.Value(sha1SignaturesKey{}).(bool)
+	return v
+}
+
 // caHandler implements Handler by delegating to a CA.
 type caHandler struct {
 	ca CA
@@ -135,7 +151,7 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	// server may be built without a policy wrapper and a certificate issued for
 	// a key the requester does not hold is an authorization failure rather than
 	// a matter of site policy.
-	if err := enforceProofOfPossession(msg); err != nil {
+	if err := enforceProofOfPossession(ctx, msg); err != nil {
 		return nil, err
 	}
 
