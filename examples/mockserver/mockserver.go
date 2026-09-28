@@ -37,7 +37,7 @@ type MockCA struct {
 	key  *ecdsa.PrivateKey // CA private key used to sign issued certificates
 	cert *x509.Certificate // CA certificate returned in caPubs on IR responses
 
-	mu          sync.Mutex                  // guards issuedCerts and revoked; the HTTP server handles requests concurrently
+	mu          sync.Mutex                  // guards issuedCerts and revoked against concurrent HTTP requests
 	issuedCerts []*x509.Certificate         // certificates issued so far; used by LookupCertificate
 	revoked     map[string]pkicmp.CRLReason // serial number -> reason for revoked certificates
 	secrets     map[string][]byte           // senderKID -> IAK, used by LookupSecret for MAC-protected requests
@@ -233,11 +233,19 @@ func (c *MockCA) RevokeCertificate(_ context.Context, req *server.RevocationRequ
 	// Holding a certificate and releasing it with removeFromCRL would need
 	// suspended state, which this example does not model.
 	if req.Reason == pkicmp.CRLReasonCertificateHold || req.Reason == pkicmp.CRLReasonRemoveFromCRL {
-		return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailBadRequest, StatusText: "certificate hold not supported"}
+		return &server.Error{
+			Status:      pkicmp.StatusRejection,
+			FailureInfo: pkicmp.FailBadRequest,
+			StatusText:  "certificate hold not supported",
+		}
 	}
 	serial := cert.SerialNumber.String()
 	if _, revoked := c.revoked[serial]; revoked {
-		return &server.Error{Status: pkicmp.StatusRejection, FailureInfo: pkicmp.FailCertRevoked, StatusText: "certificate already revoked"}
+		return &server.Error{
+			Status:      pkicmp.StatusRejection,
+			FailureInfo: pkicmp.FailCertRevoked,
+			StatusText:  "certificate already revoked",
+		}
 	}
 	c.revoked[serial] = req.Reason
 
