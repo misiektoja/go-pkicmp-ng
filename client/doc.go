@@ -133,12 +133,16 @@
 // its first response, the certificate authenticated earlier in the operation is
 // retained and retried for later messages, under the same checks.
 //
+// A certificate response must hold exactly one CertResponse with the certReqId
+// of the request. A p10cr has no certReqId, so both -1 (RFC 9810 §5.3.4) and 0
+// are accepted. A rejection is reported whatever certReqId it carries.
+//
 // The issued certificate must certify the requested public key and must validate
 // against the configured anchors, using response extraCerts to complete the path.
 // Its subject is not checked, because a CA may return grantedWithMods having
-// changed it. A certificate that fails these checks is rejected in certConf
-// before the error is returned, so the CA learns of it at once (RFC 9483
-// §3.6.1).
+// changed it. A certificate that fails these checks or arrives under another
+// certReqId is rejected in certConf before the error is returned, so the CA
+// learns of it at once (RFC 9483 §3.6.1).
 //
 // # Limits
 //
