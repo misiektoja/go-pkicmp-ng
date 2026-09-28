@@ -8,34 +8,40 @@
 [![Supply chain](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/supply-chain.yml/badge.svg?branch=main)](https://github.com/misiektoja/go-pkicmp-ng/actions/workflows/supply-chain.yml)
 [![OpenSSF Scorecard](https://img.shields.io/badge/dynamic/json?url=https%3A%2F%2Fapi.scorecard.dev%2Fprojects%2Fgithub.com%2Fmisiektoja%2Fgo-pkicmp-ng&query=%24.score&label=openssf%20scorecard&style=flat-square)](https://scorecard.dev/viewer/?uri=github.com/misiektoja/go-pkicmp-ng)
 
-Go library for the Certificate Management Protocol (CMP).
-The library partially implements:
-- **RFC 9810** (obsoletes RFC 4210 and RFC 9480): Certificate Management Protocol (CMP)
+Go library for the Certificate Management Protocol (CMP). The client enrolls, confirms, updates and
+revokes certificates against a CMP CA. The server exposes the same operations to CMP clients as an
+`http.Handler` in front of your CA. The library implements:
+
+- **RFC 9810** (obsoletes RFC 4210 and RFC 9480): Certificate Management Protocol (CMP), CMPv2 and CMPv3
 - **RFC 9483**: Lightweight CMP Profile
 - **RFC 4211**: Certificate Request Message Format (CRMF)
 - **RFC 9811** (obsoletes RFC 6712): HTTP Transfer for the Certificate Management Protocol (CMP)
 
-Compliance is verified via integration tests: client against [EJBCA](https://docs.keyfactor.com/ejbca/latest/cmp) and [OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html); server against [Siemens CMP Test Suite](https://github.com/siemens/cmp-test-suite).
+Supported messages are `ir`, `cr`, `kur`, `p10cr`, `rr`, `certConf`, `pollReq` and `nested` with
+their responses. Key recovery, cross-certification, proof-of-possession challenges, announcements and
+general messages (`genm`) are not implemented.
 
-## Credits and relationship to go-pkicmp
+## Interoperability and testing
 
-This project began as a fork of [tsaarni/go-pkicmp](https://github.com/tsaarni/go-pkicmp) by
-[@tsaarni](https://github.com/tsaarni). That original work contributed the package layout, the ASN.1
-types and the client and server designs this library still follows and it is what made everything
-here possible. It is Apache-2.0 licensed and the credit for the foundation belongs to its author.
+CI runs the library against independent CMP implementations for every pull request and every push to
+`dev` and `main`. The client enrolls and updates certificates against
+[EJBCA](https://docs.keyfactor.com/ejbca/latest/cmp) and enrolls, updates and revokes them against the
+[OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html) mock server. The server is checked
+by the [Siemens CMP test suite](https://github.com/siemens/cmp-test-suite) and by OpenSSL as a
+revoking client.
 
-Development continued here because the changes are security relevant and were needed on a faster
-cycle than waiting for review allowed. They are offered upstream in
-[tsaarni/go-pkicmp#3](https://github.com/tsaarni/go-pkicmp/pull/3), which is still open.
+CI also runs the unit tests under the race detector and fuzzes message parsing, MAC protection
+parameters and signature verification. golangci-lint, govulncheck and a gitleaks scan of the full
+history run next to them. CodeQL and
+[OpenSSF Scorecard](https://scorecard.dev/viewer/?uri=github.com/misiektoja/go-pkicmp-ng) analyze the
+code and the repository setup.
 
-What this fork adds, in short: response verification that binds a signature to the sender it claims,
-a check that an issued certificate really certifies the key that was requested, bounded PBKDF2
-parameters and poll intervals taken from untrusted messages, correct CMP media type and
-CMP-over-HTTP error handling, distinguished names that survive a round trip through a real CA, and
-interoperability fixes against EJBCA, OpenSSL and vendor CMP clients. The
-[release notes](RELEASE_NOTES.md) list the changes in full.
+Starting with v0.2.0, releases carry complete source archives, a CycloneDX SBOM, SHA-256 checksums
+and a signed build provenance attestation. Check an artifact with
+`gh attestation verify <file> --repo misiektoja/go-pkicmp-ng`.
 
-The API is pre-v1 and may change.
+[cmp-issuer](https://github.com/misiektoja/cmp-issuer), a cert-manager external issuer for CMP
+servers, is built on this library.
 
 ## Install
 
@@ -166,6 +172,41 @@ go run ./examples/mockserver/cmd
 # In terminal 2: Run the enrollment client
 go run ./examples/mockclient/cmd
 ```
+
+## Credits and relationship to go-pkicmp
+
+This project began as a fork of [tsaarni/go-pkicmp](https://github.com/tsaarni/go-pkicmp) by
+[@tsaarni](https://github.com/tsaarni). That original work contributed the package layout, the ASN.1
+types and the client and server designs this library still follows. It is what made everything here
+possible. It is Apache-2.0 licensed and the credit for the foundation belongs to its author.
+
+Development continued here because the changes are security relevant and were needed on a faster
+cycle than waiting for review allowed. The early hardening work is offered upstream in
+[tsaarni/go-pkicmp#3](https://github.com/tsaarni/go-pkicmp/pull/3), which is still open. Later
+changes build on it here.
+
+What this fork adds:
+
+* **Stricter verification.** A signature is bound to the sender it claims. An issued certificate must
+  certify the requested key and carry the certReqId of the request. PBKDF2 parameters and poll
+  intervals taken from untrusted messages are bounded.
+* **Post-quantum ML-DSA** for certificate keys, proof of possession and message signatures, with
+  SHA-512 certificate confirmation.
+* **Revocation** in the client and the server. The server also accepts requests that a registration
+  authority forwards in nested messages.
+* **Certificate confirmation checks.** The client reports a refused certificate to the CA. The server
+  checks every `CertStatus` and can carry transactions across a restart with `SnapshotTransactions`
+  and `RestoreTransactions`.
+* **Support for RFC 4210 peers** that send no transactionID or a short senderNonce, use the SHA-1
+  PasswordBasedMac profile or sign with SHA-1. The SHA-1 options are off by default.
+* **Server hardening.** Proof of possession is required for every request. A `messageTime` tolerance
+  can be enforced. Handler error text stays off the wire and `Server.Err` reports a signer
+  misconfiguration.
+* **Interoperability fixes** for EJBCA, OpenSSL and vendor CMP clients: the CMP media type,
+  CMP-over-HTTP errors, distinguished names that survive a round trip through a real CA, Ed25519
+  signing CAs and key updates that name the certificate they replace.
+
+The [release notes](RELEASE_NOTES.md) list every change.
 
 ## Contributing and support
 
