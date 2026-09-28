@@ -31,7 +31,8 @@
 //
 //   - [MACCredentials]: password-based MAC, created with [NewMACCredentials].
 //     Defaults to PBMAC1 (RFC 8018), the recommended algorithm per RFC 9481 §7.
-//     Use [WithPBM] for PasswordBasedMac.
+//     Use [WithPBM] for PasswordBasedMac and [WithPBMAlgorithms] to choose its
+//     hash functions, such as the SHA-1 profile RFC 4210 requires.
 //   - [SignatureCredentials]: X.509 signature, created with [NewSignatureCredentials].
 //
 // Apply protection by calling [Credentials.Protect]:
@@ -60,6 +61,10 @@
 // equal the subject of the certificate that produced the signature (RFC 9483 §3.5).
 // A NULL DN sender, which RFC 4210 §5.1.1 requires when the sender does not know
 // its own name, carries no name to bind and is accepted on the trust chain alone.
+//
+// SHA-1 signatures, which RFC 9481 §7.1 deprecates, fail with
+// [ReasonUnsupportedAlgorithm] unless [VerifyOptions.AllowSHA1Signatures] is
+// set. [VerifyPOPWithOptions] offers the same choice for proof of possession.
 //
 // [VerifyResult.ProtectionParams] captures the algorithm parameters from a verified
 // MAC-protected message. Pass it to [NewMACCredentials] with [WithProtectionAlgorithm]
