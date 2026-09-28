@@ -81,6 +81,13 @@ type VerifyOptions struct {
 	// keyUsage is keyCertSign and cRLSign only, so enabling this rejects every
 	// response from that server. Turn it on when every peer is known to conform.
 	RequireDigitalSignatureKeyUsage bool
+
+	// AllowSHA1Signatures accepts message protection signed with
+	// sha1WithRSAEncryption or ecdsa-with-SHA1, which RFC 4210 era peers may
+	// still use. RFC 9481 §7.1 deprecates both, so enable this only for such
+	// peers. crypto/x509 still rejects SHA-1 signatures on certificates during
+	// chain building, and DSA is not supported.
+	AllowSHA1Signatures bool
 }
 
 // VerifyResult is returned on successful verification.
@@ -137,7 +144,8 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 		}
 		return m.verifyPBMAC1(opts)
 	}
-	if _, err := sigAlgFromOID(alg); err == nil {
+	_, isSHA1 := sha1SigAlgFromOID(alg)
+	if _, err := sigAlgFromOID(alg); err == nil || isSHA1 {
 		if opts.RequiredProtection == ProtectionMAC {
 			return nil, &VerificationError{Reason: ReasonUnexpectedProtection, Err: fmt.Errorf("message is signature-protected but MAC-based protection is required")}
 		}
@@ -167,7 +175,7 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 
 	hash, err := hashFromOID(p.OWF.Algorithm)
 	if err != nil {
-		return nil, err
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !hash.Available() {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("hash %v not available", p.OWF.Algorithm)}
@@ -175,7 +183,7 @@ func (m *PKIMessage) verifyPBM(opts VerifyOptions) (*VerifyResult, error) {
 
 	macHash, err := hmacHashFromOID(p.MAC.Algorithm)
 	if err != nil {
-		return nil, err
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !macHash.Available() {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", p.MAC.Algorithm)}
@@ -244,14 +252,14 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 
 	prfHash, err := hmacHashFromOID(pbkdf2Params.PRF.Algorithm)
 	if err != nil {
-		return nil, err
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !prfHash.Available() {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("PRF hash %v not available", pbkdf2Params.PRF.Algorithm)}
 	}
 	macHash, err := hmacHashFromOID(pbmac1Params.MessageAuthScheme.Algorithm)
 	if err != nil {
-		return nil, err
+		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: err}
 	}
 	if !macHash.Available() {
 		return nil, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("MAC hash %v not available", pbmac1Params.MessageAuthScheme.Algorithm)}
@@ -299,7 +307,7 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 // RFC 9810 §8.9: The message sender MUST be authenticated with existing
 // trust anchors.
 func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
-	sigAlg, err := signatureAlgorithm(*m.Header.ProtectionAlg)
+	sigAlg, err := signatureAlgorithm(*m.Header.ProtectionAlg, opts.AllowSHA1Signatures)
 	if err != nil {
 		return nil, err
 	}

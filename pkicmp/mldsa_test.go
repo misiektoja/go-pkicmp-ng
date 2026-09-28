@@ -79,7 +79,7 @@ func TestMLDSAProofAndConfirmation(t *testing.T) {
 			require.NoError(t, err)
 			algorithm, err := sigAlgFromOID(oid)
 			require.NoError(t, err)
-			_, err = signatureAlgorithm(AlgorithmIdentifier{Algorithm: oid, Parameters: asn1.NullBytes})
+			_, err = signatureAlgorithm(AlgorithmIdentifier{Algorithm: oid, Parameters: asn1.NullBytes}, false)
 			require.Error(t, err)
 			cert := &x509.Certificate{Raw: []byte("certificate bytes"), SignatureAlgorithm: algorithm}
 			status, err := NewCertStatus(cert, 7)

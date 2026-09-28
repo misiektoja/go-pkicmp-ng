@@ -22,6 +22,10 @@ var (
 	oidSHA384 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 2}
 	oidSHA512 = asn1.ObjectIdentifier{2, 16, 840, 1, 101, 3, 4, 2, 3}
 
+	// Deprecated SHA-1 signature algorithms, accepted only on request (RFC 9481 §7.1).
+	oidSHA1WithRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 5}
+	oidECDSAWithSHA1         = asn1.ObjectIdentifier{1, 2, 840, 10045, 4, 1}
+
 	// Signature Algorithms (RFC 9481 §3).
 	oidSHA256WithRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 11}
 	oidSHA384WithRSAEncryption = asn1.ObjectIdentifier{1, 2, 840, 113549, 1, 1, 12}
@@ -118,10 +122,27 @@ func sigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, error) {
 	return x509.UnknownSignatureAlgorithm, &ParseError{Detail: fmt.Sprintf("unsupported signature algorithm: %v", oid)}
 }
 
-// signatureAlgorithm validates parameters before resolving a signature identifier.
-func signatureAlgorithm(alg AlgorithmIdentifier) (x509.SignatureAlgorithm, error) {
+// sha1SigAlgFromOID maps a deprecated SHA-1 signature OID to x509.SignatureAlgorithm.
+func sha1SigAlgFromOID(oid asn1.ObjectIdentifier) (x509.SignatureAlgorithm, bool) {
+	switch {
+	case oid.Equal(oidSHA1WithRSAEncryption):
+		return x509.SHA1WithRSA, true
+	case oid.Equal(oidECDSAWithSHA1):
+		return x509.ECDSAWithSHA1, true
+	}
+	return x509.UnknownSignatureAlgorithm, false
+}
+
+// signatureAlgorithm validates parameters before resolving a signature identifier, including SHA-1 ones when allowSHA1 is set.
+func signatureAlgorithm(alg AlgorithmIdentifier, allowSHA1 bool) (x509.SignatureAlgorithm, error) {
 	if (alg.Algorithm.Equal(oidMLDSA44) || alg.Algorithm.Equal(oidMLDSA65) || alg.Algorithm.Equal(oidMLDSA87)) && len(alg.Parameters) != 0 {
 		return x509.UnknownSignatureAlgorithm, &ParseError{Detail: "ML-DSA parameters must be absent"}
+	}
+	if sigAlg, ok := sha1SigAlgFromOID(alg.Algorithm); ok {
+		if !allowSHA1 {
+			return x509.UnknownSignatureAlgorithm, &VerificationError{Reason: ReasonUnsupportedAlgorithm, Err: fmt.Errorf("SHA-1 signature algorithm %v is deprecated and not enabled", alg.Algorithm)}
+		}
+		return sigAlg, nil
 	}
 	return sigAlgFromOID(alg.Algorithm)
 }
