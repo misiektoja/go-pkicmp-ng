@@ -43,7 +43,7 @@ ML-DSA-44, ML-DSA-65 and ML-DSA-87 support covers certificate keys, CRMF proof o
 
 Use `pkicmp.NewCertStatus` when constructing confirmation manually. It includes the required hash identifier for ML-DSA. `pkicmp.CertHash` alone cannot represent that identifier. Pure ML-DSA uses an empty context and absent algorithm parameters. Composite signatures and older Dilithium encodings are not supported.
 
-Peers that implement only RFC 4210 are supported. The server accepts their requests without a transactionID or with a short senderNonce, and `server.WithStrictProfileValidation` restores the RFC 9483 rejections. SHA-1 is off by default because RFC 9481 deprecates it. `pkicmp.WithPBMAlgorithms(crypto.SHA1, crypto.SHA1)` selects the RFC 4210 PasswordBasedMac profile, and `WithSHA1Signatures` in the `client` and `server` packages accepts SHA-1 signatures.
+Peers that implement only RFC 4210 are supported. The server accepts their requests without a transactionID or with a short senderNonce. `server.WithStrictProfileValidation` restores the RFC 9483 rejections. SHA-1 is off by default because RFC 9481 deprecates it. `pkicmp.WithPBMAlgorithms(crypto.SHA1, crypto.SHA1)` selects the RFC 4210 PasswordBasedMac profile. `WithSHA1Signatures` in the `client` and `server` packages accepts SHA-1 signatures.
 
 ## Package structure
 
