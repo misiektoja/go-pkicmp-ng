@@ -12,6 +12,9 @@ import (
 	"encoding/asn1"
 	"fmt"
 	"time"
+
+	compositemldsa "github.com/misiektoja/go-composite-mldsa"
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 )
 
 var (
@@ -154,7 +157,21 @@ func signatureAlgorithm(alg AlgorithmIdentifier, allowSHA1 bool) (x509.Signature
 	return sigAlgFromOID(alg.Algorithm)
 }
 
-// NewCertStatus computes confirmation with an explicit SHA-512 identifier for ML-DSA certificates.
+// compositeSignatureAlgorithm resolves a composite ML-DSA signature identifier,
+// whose parameters must be absent (draft-ietf-lamps-pq-composite-sigs-19 §7).
+func compositeSignatureAlgorithm(alg AlgorithmIdentifier) (compositemldsa.Algorithm, bool, error) {
+	composite, ok := compositemldsa.AlgorithmFromOID(alg.Algorithm)
+	if !ok {
+		return 0, false, nil
+	}
+	if len(alg.Parameters) != 0 {
+		return 0, false, &ParseError{Detail: "composite ML-DSA parameters must be absent"}
+	}
+	return composite, true, nil
+}
+
+// NewCertStatus computes confirmation with an explicit hash identifier for
+// ML-DSA and composite ML-DSA certificates.
 func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) {
 	status := CertStatus{CertReqID: certReqID}
 	switch cert.SignatureAlgorithm {
@@ -165,15 +182,23 @@ func NewCertStatus(cert *x509.Certificate, certReqID int64) (CertStatus, error) 
 		return status, nil
 	default:
 		hash, err := CertHash(cert)
+		if err != nil {
+			return status, err
+		}
 		status.CertHash = hash
-		return status, err
+		// The pre-hash is named in the composite algorithm, but receivers
+		// without composite support can only learn it from an explicit hashAlg.
+		if composite, ok, err := compositex509.SignatureAlgorithm(cert.Raw); err == nil && ok {
+			status.HashAlg = &AlgorithmIdentifier{Algorithm: hashOID(composite.PreHash())}
+		}
+		return status, nil
 	}
 }
 
 // CertHash computes the certHash of a certificate with the hash matching its
 // signature algorithm, as RFC 9810 §5.3.18 and RFC 9481 §3 require.
 func CertHash(cert *x509.Certificate) ([]byte, error) {
-	hash := hashFromSigAlg(cert.SignatureAlgorithm)
+	hash := certHashFunc(cert)
 	if hash == 0 || !hash.Available() {
 		return nil, &ParseError{
 			Detail: fmt.Sprintf("no certHash algorithm for signature algorithm %v", cert.SignatureAlgorithm),
@@ -202,6 +227,31 @@ func (s *CertStatus) CertificateHash(cert *x509.Certificate) ([]byte, error) {
 	h := hash.New()
 	h.Write(cert.Raw)
 	return h.Sum(nil), nil
+}
+
+// certHashFunc returns the hash that created and verifies the certificate
+// signature. A composite ML-DSA signature is computed over its pre-hash, so
+// the pre-hash is that hash (RFC 9810 §5.3.18).
+func certHashFunc(cert *x509.Certificate) crypto.Hash {
+	if hash := hashFromSigAlg(cert.SignatureAlgorithm); hash != 0 {
+		return hash
+	}
+	if composite, ok, err := compositex509.SignatureAlgorithm(cert.Raw); err == nil && ok {
+		return composite.PreHash()
+	}
+	return 0
+}
+
+// hashOID maps the SHA-2 hashes used by composite pre-hashing to their OIDs.
+func hashOID(hash crypto.Hash) asn1.ObjectIdentifier {
+	switch hash {
+	case crypto.SHA256:
+		return oidSHA256
+	case crypto.SHA384:
+		return oidSHA384
+	default:
+		return oidSHA512
+	}
 }
 
 // hashFromSigAlg maps x509.SignatureAlgorithm to crypto.Hash.
@@ -259,6 +309,9 @@ func signatureAlgorithmFromKey(key crypto.Signer) (asn1.ObjectIdentifier, crypto
 			return oidMLDSA87, crypto.Hash(0), nil
 		}
 		return nil, 0, &ParseError{Detail: "unsupported ML-DSA parameters"}
+	case *compositemldsa.PublicKey:
+		// Composite signing covers the whole message with an empty context.
+		return pub.Algorithm().OID(), crypto.Hash(0), nil
 	default:
 		return nil, 0, &ParseError{Detail: fmt.Sprintf("unsupported public key type: %T", pub)}
 	}
