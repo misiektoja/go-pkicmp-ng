@@ -13,9 +13,10 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 func mustProtectMAC(t *testing.T, msg *pkicmp.PKIMessage, secret []byte) {
@@ -165,8 +166,7 @@ func TestPBMAC1WrongSecret(t *testing.T) {
 }
 
 func TestSignatureRoundTrip(t *testing.T) {
-	caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
-	_ = caKey
+	caCert, signerKey, signerCert := generateCAAndSigner(t)
 
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -195,8 +195,7 @@ func TestSignatureRoundTrip(t *testing.T) {
 }
 
 func TestSignatureAutoPopulatesExtraCerts(t *testing.T) {
-	caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
-	_ = caKey
+	caCert, signerKey, signerCert := generateCAAndSigner(t)
 
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -214,7 +213,7 @@ func TestSignatureAutoPopulatesExtraCerts(t *testing.T) {
 }
 
 func TestSignatureSetsHeaderSenderKID(t *testing.T) {
-	_, _, signerKey, signerCert := generateCAAndSigner(t)
+	_, signerKey, signerCert := generateCAAndSigner(t)
 
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -244,7 +243,7 @@ func TestVerifyRejectsWrongSecret(t *testing.T) {
 }
 
 func TestVerifyRejectsUntrustedCA(t *testing.T) {
-	_, _, signerKey, signerCert := generateCAAndSigner(t)
+	_, signerKey, signerCert := generateCAAndSigner(t)
 
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -298,7 +297,7 @@ func TestVerifyRejectsMissingSharedSecret(t *testing.T) {
 }
 
 func TestVerifyRejectsMissingTrustPool(t *testing.T) {
-	_, _, signerKey, signerCert := generateCAAndSigner(t)
+	_, signerKey, signerCert := generateCAAndSigner(t)
 
 	body := pkicmp.NewPKIConfBody()
 	msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -332,8 +331,7 @@ func TestVerifyResultMACVerified(t *testing.T) {
 	})
 
 	t.Run("FalseForSignature", func(t *testing.T) {
-		caKey, caCert, signerKey, signerCert := generateCAAndSigner(t)
-		_ = caKey
+		caCert, signerKey, signerCert := generateCAAndSigner(t)
 
 		body := pkicmp.NewPKIConfBody()
 		msg := pkicmp.NewPKIMessage(body, pkicmp.MessageOptions{})
@@ -380,7 +378,7 @@ func TestTrustedCAPubs(t *testing.T) {
 
 // --- helpers ---
 
-func generateCAAndSigner(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, *ecdsa.PrivateKey, *x509.Certificate) {
+func generateCAAndSigner(t *testing.T) (*x509.Certificate, *ecdsa.PrivateKey, *x509.Certificate) {
 	t.Helper()
 	caKey, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
@@ -402,7 +400,7 @@ func generateCAAndSigner(t *testing.T) (*ecdsa.PrivateKey, *x509.Certificate, *e
 	signerCert, err := x509.ParseCertificate(signerDER)
 	require.NoError(t, err)
 
-	return caKey, caCert, signerKey, signerCert
+	return caCert, signerKey, signerCert
 }
 
 func selfSignedCA(t *testing.T, key *ecdsa.PrivateKey, cn string) *x509.Certificate {

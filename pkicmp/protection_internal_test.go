@@ -126,14 +126,17 @@ func TestValidatePBKDF2KeyLength(t *testing.T) {
 	})
 }
 
+// testPBMAC1IterationCount is the PBKDF2 iteration count that buildPBMAC1Params encodes.
+const testPBMAC1IterationCount = 1000
+
 // buildPBMAC1Params encodes PBMAC1-params, omitting keyLength when keyLen is 0 and prf when prf is nil.
-func buildPBMAC1Params(t *testing.T, salt []byte, iterCount, keyLen int, prf, mac asn1.ObjectIdentifier) []byte {
+func buildPBMAC1Params(t *testing.T, salt []byte, keyLen int, prf, mac asn1.ObjectIdentifier) []byte {
 	t.Helper()
 
 	var kdf cryptobyte.Builder
 	kdf.AddASN1(cbasn1.SEQUENCE, func(seq *cryptobyte.Builder) {
 		seq.AddASN1OctetString(salt)
-		seq.AddASN1Int64(int64(iterCount))
+		seq.AddASN1Int64(testPBMAC1IterationCount)
 		// RFC 8018 §A.5 marks keyLength OPTIONAL and gives prf a DEFAULT, so a
 		// conforming DER encoder leaves them out when they are not needed.
 		if keyLen != 0 {
@@ -184,7 +187,7 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 		{"Huge", 1 << 40, "keyLength too large"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
+			params := buildPBMAC1Params(t, []byte("saltsalt"), tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
 
 			_, err := pbmac1Message(params).Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
 			var pe *ParseError
@@ -194,7 +197,7 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 	}
 
 	t.Run("ValidKeyLengthNotRejected", func(t *testing.T) {
-		params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256)
+		params := buildPBMAC1Params(t, []byte("saltsalt"), crypto.SHA256.Size(), oidHMACWithSHA256, oidHMACWithSHA256)
 
 		_, err := pbmac1Message(params).Verify(VerifyOptions{SharedSecret: []byte("shared-secret")})
 		require.Error(t, err)
@@ -208,7 +211,6 @@ func TestVerifyPBMAC1RejectsHostileKeyLength(t *testing.T) {
 func TestVerifyPBMAC1OptionalKeyLengthAndPRF(t *testing.T) {
 	secret := []byte("shared-secret")
 	salt := []byte("saltsalt")
-	const iterCount = 1000
 
 	for _, tc := range []struct {
 		name    string
@@ -225,7 +227,7 @@ func TestVerifyPBMAC1OptionalKeyLengthAndPRF(t *testing.T) {
 		{"BothOmittedSHA512MAC", 0, nil, oidHMACWithSHA512, crypto.SHA1, crypto.SHA512},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			params := buildPBMAC1Params(t, salt, iterCount, tc.keyLen, tc.prf, tc.mac)
+			params := buildPBMAC1Params(t, salt, tc.keyLen, tc.prf, tc.mac)
 			msg := &PKIMessage{
 				Header: PKIHeader{ProtectionAlg: &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}},
 				Body:   NewPKIConfBody(),
@@ -237,7 +239,7 @@ func TestVerifyPBMAC1OptionalKeyLengthAndPRF(t *testing.T) {
 			// Independently derive the MAC the way RFC 8018 says the omitted
 			// fields must be interpreted: HMAC-SHA-1 PRF and a key as long as
 			// the MAC digest.
-			k := pbkdf2.Key(secret, salt, iterCount, tc.wantMAC.Size(), tc.wantPRF.New)
+			k := pbkdf2.Key(secret, salt, testPBMAC1IterationCount, tc.wantMAC.Size(), tc.wantPRF.New)
 			h := hmac.New(tc.wantMAC.New, k)
 			h.Write(data)
 			msg.Protection = h.Sum(nil)
@@ -262,7 +264,7 @@ func TestProtectWithMACAlgorithmRejectsHostileKeyLength(t *testing.T) {
 		{"Huge", 1 << 40, "keyLength too large"},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
-			params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
+			params := buildPBMAC1Params(t, []byte("saltsalt"), tc.keyLength, oidHMACWithSHA256, oidHMACWithSHA256)
 			alg := &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}
 
 			msg := &PKIMessage{Body: NewPKIConfBody()}
@@ -276,7 +278,7 @@ func TestProtectWithMACAlgorithmRejectsHostileKeyLength(t *testing.T) {
 	// An echoed request that omitted the optional fields must still produce a
 	// protected response rather than failing as malformed.
 	t.Run("OptionalFieldsOmitted", func(t *testing.T) {
-		params := buildPBMAC1Params(t, []byte("saltsalt"), 1000, 0, nil, oidHMACWithSHA256)
+		params := buildPBMAC1Params(t, []byte("saltsalt"), 0, nil, oidHMACWithSHA256)
 		alg := &AlgorithmIdentifier{Algorithm: oidPBMAC1, Parameters: params}
 
 		msg := &PKIMessage{Body: NewPKIConfBody()}
