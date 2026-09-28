@@ -1,28 +1,74 @@
 version: "2"
-
+run:
+  allow-parallel-runners: true
+  # The integration tests are built only with this tag, so without it they are never linted.
+  build-tags:
+    - integration
 linters:
   default: none
   enable:
+    - bodyclose
+    - copyloopvar
+    - dupl
     - errcheck
-    - govet
+    - errorlint
+    - exhaustive
+    - gocritic
+    - goconst
+    - gocyclo
     - gosec
+    - govet
     - ineffassign
+    - lll
+    - misspell
+    - modernize
+    - nakedret
+    - noctx
+    - prealloc
+    - revive
     - staticcheck
+    - unconvert
+    - unparam
     - unused
-
   settings:
+    # Switches over wire enums such as BodyType handle the values they do not name in a default branch.
+    exhaustive:
+      default-signifies-exhaustive: true
+    revive:
+      rules:
+        - name: comment-spacings
+        - name: import-shadowing
     staticcheck:
       checks:
         - "all"
         - "-QF*"
-
   exclusions:
+    generated: lax
     rules:
-      # Exported names match ASN.1 protocol spec terminology (e.g., CertId, TransactionId).
-      - linters: [staticcheck]
+      # Function declarations stay on one physical line.
+      - linters:
+          - lll
+        source: '^func '
+      # Exported names follow the ASN.1 terminology of the RFCs, such as CertId and TransactionId.
+      - linters:
+          - staticcheck
         text: "ST1003"
-        path: "pkicmp/"
-      # Unhandled errors in test code (e.g., resp.Body.Close()).
-      - linters: [errcheck, gosec]
-        text: "G104|Error return value"
-        path: "_test\\.go"
+        path: ^pkicmp/
+      # Test code closes bodies, ignores errors, repeats setup and repeats literals on purpose.
+      - linters:
+          - bodyclose
+          - dupl
+          - errcheck
+          - goconst
+          - gosec
+          - lll
+          - noctx
+        path: _test\.go$
+formatters:
+  enable:
+    - gofmt
+    - goimports
+  settings:
+    goimports:
+      local-prefixes:
+        - github.com/misiektoja/go-pkicmp-ng
