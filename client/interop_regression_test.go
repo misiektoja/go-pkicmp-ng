@@ -17,11 +17,12 @@ import (
 	"testing"
 	"time"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // enrollmentExchange serves one enrollment: an ip for the first request and a pkiConf for the certConf.
@@ -107,9 +108,13 @@ func isEmptyTestName(name pkix.Name) bool {
 	return name.CommonName == "" && len(name.Organization) == 0 && len(name.Country) == 0
 }
 
-func macProtector(secret string) func(*pkicmp.PKIMessage) {
+// interopSecret is the shared secret of both the client and the mock CAs in these tests.
+const interopSecret = "secret"
+
+// macProtector returns a function that MAC-protects a message with interopSecret.
+func macProtector() func(*pkicmp.PKIMessage) {
 	return func(msg *pkicmp.PKIMessage) {
-		creds, _ := pkicmp.NewMACCredentials([]byte(secret))
+		creds, _ := pkicmp.NewMACCredentials([]byte(interopSecret))
 		_ = creds.Protect(msg)
 	}
 }
@@ -130,7 +135,7 @@ func signatureProtector(key crypto.Signer, cert *x509.Certificate) func(*pkicmp.
 // decide whether a recipient was configured silently drops it.
 func TestRequestCarriesProgrammaticallyBuiltRecipient(t *testing.T) {
 	ca := &certyaml.Certificate{Subject: "cn=recipient-test-ca"}
-	exchange := &enrollmentExchange{issuer: ca, protect: macProtector("secret")}
+	exchange := &enrollmentExchange{issuer: ca, protect: macProtector()}
 	server := exchange.start(t)
 
 	recipient := pkix.Name{
@@ -141,7 +146,7 @@ func TestRequestCarriesProgrammaticallyBuiltRecipient(t *testing.T) {
 	require.Empty(t, recipient.Names, "a programmatically built name has no parsed attributes")
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithRecipient(recipient))
@@ -162,14 +167,14 @@ func TestClientAcceptsCMPMediaTypeVariants(t *testing.T) {
 			ca := &certyaml.Certificate{Subject: "cn=media-type-ca"}
 			exchange := &enrollmentExchange{
 				issuer:              ca,
-				protect:             macProtector("secret"),
+				protect:             macProtector(),
 				responseContentType: contentType,
 			}
 			server := exchange.start(t)
 
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			require.NoError(t, err)
-			creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+			creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 			require.NoError(t, err)
 
 			c := client.NewClient(server.URL)
@@ -185,14 +190,14 @@ func TestClientRejectsMalformedCMPMediaType(t *testing.T) {
 	ca := &certyaml.Certificate{Subject: "cn=media-type-ca"}
 	exchange := &enrollmentExchange{
 		issuer:              ca,
-		protect:             macProtector("secret"),
+		protect:             macProtector(),
 		responseContentType: "application/pkixcmp; charset",
 	}
 	server := exchange.start(t)
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL)
@@ -216,7 +221,7 @@ func TestIssuedCertificateChainsThroughExtraCertsIntermediate(t *testing.T) {
 	exchange := &enrollmentExchange{
 		issuer:         intermediate,
 		extraCertsOnIP: []*x509.Certificate{&intermediateCert},
-		protect:        macProtector("secret"),
+		protect:        macProtector(),
 	}
 	server := exchange.start(t)
 
@@ -224,7 +229,7 @@ func TestIssuedCertificateChainsThroughExtraCertsIntermediate(t *testing.T) {
 	trustPool.AddCert(&rootCert)
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustPool))
@@ -259,7 +264,7 @@ func TestPKIConfVerifiesAgainstSignerFromEarlierMessage(t *testing.T) {
 	trustPool.AddCert(&caCert)
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustPool))
@@ -305,7 +310,7 @@ func TestPKIConfRejectsSignerThatDidNotProtectEarlierMessage(t *testing.T) {
 	trustPool.AddCert(&caCert)
 
 	key, _ := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustPool))
@@ -338,7 +343,7 @@ func TestAuthenticatedCMPErrorOnHTTPErrorStatus(t *testing.T) {
 				},
 			}),
 		}
-		macProtector("secret")(resp)
+		macProtector()(resp)
 		der, err := resp.MarshalBinary()
 		require.NoError(t, err)
 
@@ -350,7 +355,7 @@ func TestAuthenticatedCMPErrorOnHTTPErrorStatus(t *testing.T) {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL)
@@ -410,7 +415,7 @@ func TestPollingAcceptsDelayedResponseNonce(t *testing.T) {
 			resp.Body = pkicmp.NewPKIConfBody()
 		}
 
-		macProtector("secret")(resp)
+		macProtector()(resp)
 		der, err := resp.MarshalBinary()
 		require.NoError(t, err)
 		w.Header().Set("Content-Type", "application/pkixcmp")
@@ -420,7 +425,7 @@ func TestPollingAcceptsDelayedResponseNonce(t *testing.T) {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL)
@@ -463,7 +468,7 @@ func TestPollingRejectsDelayedNonceOnPollRep(t *testing.T) {
 			resp.Body = pkicmp.NewPollRepBody(&pkicmp.PollRepContent{{CertReqID: 0, CheckAfter: 0}})
 		}
 
-		macProtector("secret")(resp)
+		macProtector()(resp)
 		der, err := resp.MarshalBinary()
 		require.NoError(t, err)
 		w.Header().Set("Content-Type", "application/pkixcmp")
@@ -473,7 +478,7 @@ func TestPollingRejectsDelayedNonceOnPollRep(t *testing.T) {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL)
@@ -563,7 +568,7 @@ func TestSignedErrorStatusReportedWithoutTrustAnchors(t *testing.T) {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL)
@@ -594,7 +599,7 @@ func TestSignedErrorAuthenticatedWithTrustAnchors(t *testing.T) {
 
 	key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 	require.NoError(t, err)
-	creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+	creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 	require.NoError(t, err)
 
 	c := client.NewClient(server.URL, client.WithTrustedCAs(trustPool))
@@ -667,7 +672,7 @@ func TestPollingClampsCheckAfter(t *testing.T) {
 						},
 					})
 				}
-				macProtector("secret")(resp)
+				macProtector()(resp)
 				der, err := resp.MarshalBinary()
 				require.NoError(t, err)
 
@@ -678,7 +683,7 @@ func TestPollingClampsCheckAfter(t *testing.T) {
 
 			key, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
 			require.NoError(t, err)
-			creds, err := pkicmp.NewMACCredentials([]byte("secret"))
+			creds, err := pkicmp.NewMACCredentials([]byte(interopSecret))
 			require.NoError(t, err)
 
 			ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)

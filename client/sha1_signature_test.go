@@ -11,11 +11,12 @@ import (
 	"encoding/asn1"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
 // sha1SignatureProtector signs each response with ecdsa-with-SHA1, as an RFC 4210 era CA may.
