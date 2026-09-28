@@ -45,7 +45,7 @@ Every change must comply with the Developer Certificate of Origin 1.1. Use `git 
 
 ## Compatibility
 
-The module uses semantic versioning. The API is pre-v1 and may change in minor releases before v1.0.0. [RELEASE_NOTES.md](RELEASE_NOTES.md) describes every change that affects callers.
+The module uses semantic versioning. [RELEASE_NOTES.md](RELEASE_NOTES.md) describes every change that affects callers, including any that needs a code change.
 
 ## Releasing
 
