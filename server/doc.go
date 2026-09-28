@@ -124,8 +124,12 @@
 // ([ConfirmExpired]). The ref parameter echoes [Response.IssueRef] set during
 // [CA.IssueCertificate] for correlation.
 //
-// A certConf without any CertStatus rejects every certificate in the
-// transaction (RFC 9810 §5.3.18) and reaches the CA as [ConfirmRejected].
+// Every CertStatus in a certConf must carry the certHash and certReqId of the
+// issued certificate. All of them must accept it or all must reject it. The
+// CA is then notified once. For a p10cr the certReqId may be -1 or 0, because
+// RFC 9810 and RFC 9483 disagree on it and deployed peers use both. A certConf
+// without any CertStatus rejects the certificate (RFC 9810 §5.3.18) and reaches
+// the CA as [ConfirmRejected].
 //
 // # Revocation
 //
