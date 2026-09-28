@@ -83,7 +83,8 @@ type serverConfig struct {
 }
 
 // WithSigner configures signature-based response protection. The key must match
-// the certificate; [New] reports a mismatch through [Server.Err].
+// the certificate; [New] reports a mismatch through [Server.Err]. The key may be
+// a composite ML-DSA key from github.com/misiektoja/go-composite-mldsa.
 func WithSigner(key crypto.Signer, cert *x509.Certificate, chain ...*x509.Certificate) Option {
 	return func(c *serverConfig) {
 		c.signerKey = key
