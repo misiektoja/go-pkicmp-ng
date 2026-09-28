@@ -7,11 +7,16 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"encoding/asn1"
+	"errors"
 	"fmt"
 	"time"
 
+	compositemldsa "github.com/misiektoja/go-composite-mldsa"
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 	"golang.org/x/crypto/cryptobyte"
 	"golang.org/x/crypto/pbkdf2"
+
+	"github.com/misiektoja/go-pkicmp-ng/internal/certpath"
 )
 
 // ProtectionMechanism identifies a class of message protection.
@@ -56,6 +61,10 @@ type VerifyOptions struct {
 	// TrustPool holds root CA certificates for verifying signature-protected
 	// messages. For MAC-protected messages this field is ignored. May be nil
 	// if only MAC verification is needed.
+	//
+	// A certificate signed with a composite ML-DSA key is accepted only when
+	// its issuer is also in ExtraCerts, even if that issuer is a root in this
+	// pool. No certificate in such a path may have name constraints.
 	TrustPool *x509.CertPool
 
 	// TrustedCert verifies the signature directly, without chain building, for a
@@ -148,7 +157,8 @@ func (m *PKIMessage) Verify(opts VerifyOptions) (*VerifyResult, error) {
 		return m.verifyPBMAC1(opts)
 	}
 	_, isSHA1 := sha1SigAlgFromOID(alg)
-	if _, err := sigAlgFromOID(alg); err == nil || isSHA1 {
+	_, isComposite := compositemldsa.AlgorithmFromOID(alg)
+	if _, err := sigAlgFromOID(alg); err == nil || isSHA1 || isComposite {
 		if opts.RequiredProtection == ProtectionMAC {
 			return nil, &VerificationError{
 				Reason: ReasonUnexpectedProtection,
@@ -328,7 +338,7 @@ func (m *PKIMessage) verifyPBMAC1(opts VerifyOptions) (*VerifyResult, error) {
 // RFC 9810 §8.9: The message sender MUST be authenticated with existing
 // trust anchors.
 func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) {
-	sigAlg, err := signatureAlgorithm(*m.Header.ProtectionAlg, opts.AllowSHA1Signatures)
+	checkSignature, err := signatureChecker(*m.Header.ProtectionAlg, opts.AllowSHA1Signatures)
 	if err != nil {
 		return nil, err
 	}
@@ -358,7 +368,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		if opts.RequireDigitalSignatureKeyUsage && !permittedToSign(opts.TrustedCert) {
 			return nil, &VerificationError{Reason: ReasonKeyUsageNotPermitted}
 		}
-		if err := opts.TrustedCert.CheckSignature(sigAlg, data, m.Protection); err != nil {
+		if err := checkSignature(opts.TrustedCert, data, m.Protection); err != nil {
 			return nil, &VerificationError{Reason: ReasonSignatureFailed}
 		}
 		return &VerifyResult{MACVerified: false, ProtectionCertificate: opts.TrustedCert}, nil
@@ -369,14 +379,14 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		return nil, &VerificationError{Reason: ReasonMissingTrustAnchors}
 	}
 
-	// Build intermediates pool from ExtraCerts for chain verification.
-	intermediates := x509.NewCertPool()
+	// Candidate issuers from ExtraCerts for chain verification.
+	var intermediates []*x509.Certificate
 	for _, cert := range opts.ExtraCerts {
 		x509Cert, err := cert.Parse()
 		if err != nil {
 			continue
 		}
-		intermediates.AddCert(x509Cert)
+		intermediates = append(intermediates, x509Cert)
 	}
 
 	// senderMismatch records that a candidate was rejected only because it did
@@ -398,16 +408,11 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 				continue
 			}
 		}
-		// Verify trust chain. ExtKeyUsageAny is required because an empty
-		// KeyUsages makes crypto/x509 demand serverAuth, which no CMP
-		// specification asks for and which rejects the RFC 9810 §4.5
-		// certificates id-kp-cmcCA, id-kp-cmcRA and id-kp-cmKGA.
-		verifyOpts := x509.VerifyOptions{
-			Roots:         opts.TrustPool,
-			Intermediates: intermediates,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		}
-		if _, err := x509Cert.Verify(verifyOpts); err != nil {
+		// Verify trust chain. Any extended key usage is accepted because
+		// crypto/x509 otherwise demands serverAuth, which no CMP specification
+		// asks for and which rejects the RFC 9810 §4.5 certificates
+		// id-kp-cmcCA, id-kp-cmcRA and id-kp-cmKGA.
+		if err := certpath.Verify(x509Cert, opts.TrustPool, intermediates, time.Now()); err != nil {
 			continue
 		}
 		// RFC 9483 §3.5: the sender field must match the subject of the CMP
@@ -423,7 +428,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 			continue
 		}
 		// Check signature over protected part.
-		if err := x509Cert.CheckSignature(sigAlg, data, m.Protection); err == nil {
+		if err := checkSignature(x509Cert, data, m.Protection); err == nil {
 			return &VerifyResult{MACVerified: false, ProtectionCertificate: x509Cert}, nil
 		}
 	}
@@ -435,6 +440,35 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		return nil, &VerificationError{Reason: ReasonKeyUsageNotPermitted}
 	}
 	return nil, &VerificationError{Reason: ReasonSignatureFailed}
+}
+
+// signatureChecker returns the check of a protection signature made with the
+// key of a certificate, for classical, ML-DSA and composite ML-DSA algorithms.
+func signatureChecker(alg AlgorithmIdentifier, allowSHA1 bool) (func(cert *x509.Certificate, data, signature []byte) error, error) {
+	composite, ok, err := compositeSignatureAlgorithm(alg)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
+		return func(cert *x509.Certificate, data, signature []byte) error {
+			pub, err := compositex509.ParsePKIXPublicKey(cert.RawSubjectPublicKeyInfo)
+			if err != nil {
+				return err
+			}
+			key, isComposite := pub.(*compositemldsa.PublicKey)
+			if !isComposite || key.Algorithm() != composite {
+				return errors.New("certificate key does not match the protection algorithm")
+			}
+			return compositemldsa.Verify(key, data, signature, nil)
+		}, nil
+	}
+	sigAlg, err := signatureAlgorithm(alg, allowSHA1)
+	if err != nil {
+		return nil, err
+	}
+	return func(cert *x509.Certificate, data, signature []byte) error {
+		return cert.CheckSignature(sigAlg, data, signature)
+	}, nil
 }
 
 // permittedToSign reports whether a CMP protection certificate may sign, per the RFC 9483 §3.5 digitalSignature rule.
