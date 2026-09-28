@@ -83,78 +83,30 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 		return nil, cmpResp.wrapError(err)
 	}
 
-	// Build effective trust pool: start with pre-configured trusted CAs, add any
-	// caPubs bootstrapped via PBM (RFC 9810 §5.3.2).
-	effectiveTrustPool := c.trustedCAs
-	// D20: TrustedCAPubs removed; manually check MACVerified and iterate CAPubs.
-	if vr != nil && vr.MACVerified && len(rep.CAPubs) > 0 {
-		var caPubs []*x509.Certificate
-		for _, c := range rep.CAPubs {
-			parsed, err := c.Parse()
-			if err != nil {
-				continue
-			}
-			caPubs = append(caPubs, parsed)
-		}
-		if len(caPubs) > 0 {
-			if effectiveTrustPool != nil {
-				effectiveTrustPool = effectiveTrustPool.Clone()
-			} else {
-				effectiveTrustPool = x509.NewCertPool()
-			}
-			for _, ca := range caPubs {
-				effectiveTrustPool.AddCert(ca)
-			}
-		}
-	}
+	caPubs := parseCMPCertificates(rep.CAPubs)
+	extraCerts := parseCMPCertificates(resp.ExtraCerts)
+	trustPool := c.enrollmentTrustPool(vr, caPubs)
 
-	conf := &certConfirmation{req: msg, resp: resp, creds: creds, trustPool: effectiveTrustPool, knownSigner: knownSigner}
+	conf := &certConfirmation{req: msg, resp: resp, creds: creds, trustPool: trustPool, knownSigner: knownSigner}
 
 	// The rejection repeats the CA's certReqId, since that is the value the CA
 	// uses to find the certificate.
 	if err := checkCertReqID(certResp, certReqIDs); err != nil {
-		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certReqId does not match the request", cmpResp.wrapError(err))
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+			"certReqId does not match the request", cmpResp.wrapError(err))
 	}
 
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
-	if effectiveTrustPool != nil {
-		// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
-		// path. A CA that issues from an intermediate returns that intermediate
-		// here, so without this pool the chain cannot be completed against a
-		// trust anchor that is the root.
-		intermediates := x509.NewCertPool()
-		for _, extraCert := range resp.ExtraCerts {
-			if parsed, err := extraCert.Parse(); err == nil {
-				intermediates.AddCert(parsed)
-			}
-		}
-		verifyOpts := x509.VerifyOptions{
-			Roots:         effectiveTrustPool,
-			Intermediates: intermediates,
-			KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-		}
-		if _, err := cert.Verify(verifyOpts); err != nil {
-			return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certificate validation failed",
-				cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err}))
+	if trustPool != nil {
+		if err := verifyIssuedCertificate(cert, trustPool, extraCerts); err != nil {
+			return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+				"certificate validation failed", cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err}))
 		}
 	}
 
 	if err := checkIssuedKey(cert, requestedKey); err != nil {
-		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certificate does not certify the requested public key", cmpResp.wrapError(err))
-	}
-
-	var parsedCACerts []*x509.Certificate
-	for _, certPub := range rep.CAPubs {
-		if pc, err := certPub.Parse(); err == nil {
-			parsedCACerts = append(parsedCACerts, pc)
-		}
-	}
-
-	var parsedExtraCerts []*x509.Certificate
-	for _, extraCert := range resp.ExtraCerts {
-		if pc, err := extraCert.Parse(); err == nil {
-			parsedExtraCerts = append(parsedExtraCerts, pc)
-		}
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
+			"certificate does not certify the requested public key", cmpResp.wrapError(err))
 	}
 
 	// RFC 9810 requires an explicit hash when the signature does not identify one.
@@ -168,9 +120,57 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	return &EnrollResult{
 		Certificate:       cert,
-		CAPubs:            parsedCACerts,
-		ExtraCertificates: parsedExtraCerts,
+		CAPubs:            caPubs,
+		ExtraCertificates: extraCerts,
 	}, nil
+}
+
+// parseCMPCertificates parses certs and skips the entries that do not parse.
+func parseCMPCertificates(certs []pkicmp.CMPCertificate) []*x509.Certificate {
+	var parsed []*x509.Certificate
+	for _, cert := range certs {
+		if pc, err := cert.Parse(); err == nil {
+			parsed = append(parsed, pc)
+		}
+	}
+	return parsed
+}
+
+// enrollmentTrustPool returns the configured trusted CAs extended with caPubs when the response was MAC-verified.
+func (c *Client) enrollmentTrustPool(vr *pkicmp.VerifyResult, caPubs []*x509.Certificate) *x509.CertPool {
+	// caPubs extend the configured trusted CAs only when the response was
+	// protected with the shared secret (RFC 9810 §5.3.2).
+	if vr == nil || !vr.MACVerified || len(caPubs) == 0 {
+		return c.trustedCAs
+	}
+	var pool *x509.CertPool
+	if c.trustedCAs != nil {
+		pool = c.trustedCAs.Clone()
+	} else {
+		pool = x509.NewCertPool()
+	}
+	for _, ca := range caPubs {
+		pool.AddCert(ca)
+	}
+	return pool
+}
+
+// verifyIssuedCertificate verifies that cert chains to roots, using extraCerts as intermediates.
+func verifyIssuedCertificate(cert *x509.Certificate, roots *x509.CertPool, extraCerts []*x509.Certificate) error {
+	// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
+	// path. A CA that issues from an intermediate returns that intermediate
+	// here, so without this pool the chain cannot be completed against a
+	// trust anchor that is the root.
+	intermediates := x509.NewCertPool()
+	for _, extraCert := range extraCerts {
+		intermediates.AddCert(extraCert)
+	}
+	_, err := cert.Verify(x509.VerifyOptions{
+		Roots:         roots,
+		Intermediates: intermediates,
+		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
+	})
+	return err
 }
 
 // certConfirmation holds what a certConf needs from the enrollment exchange it confirms.
@@ -247,6 +247,7 @@ func (c *Client) rejectCertificate(ctx context.Context, conf *certConfirmation, 
 		// A CA treats a missing certConf as a rejection as well (RFC 9483
 		// §4.1.1), so the outcome stands. The failure is kept as text only, so
 		// that pkicmp.HasFailure reports the reason and not the CA's answer.
+		//nolint:errorlint // err must stay out of the chain so errors.As cannot find the CA's PKIStatusError.
 		return fmt.Errorf("%w (rejection not confirmed by the CA: %v)", reason, err)
 	}
 	return reason
@@ -369,7 +370,9 @@ func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyT
 	// The client requests one certificate, so further entries cannot be matched
 	// to anything and are refused rather than silently dropped.
 	if len(rep.Response) > 1 {
-		return nil, nil, &Error{Op: fmt.Sprintf("response carries %d CertResponse entries for one request", len(rep.Response))}
+		return nil, nil, &Error{
+			Op: fmt.Sprintf("response carries %d CertResponse entries for one request", len(rep.Response)),
+		}
 	}
 	return &rep.Response[0], rep, nil
 }
@@ -513,7 +516,9 @@ func checkIssuedKey(cert *x509.Certificate, requested crypto.PublicKey) error {
 	type publicKeyComparer interface{ Equal(crypto.PublicKey) bool }
 	issued, ok := cert.PublicKey.(publicKeyComparer)
 	if !ok {
-		return &Error{Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey)}
+		return &Error{
+			Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey),
+		}
 	}
 	if !issued.Equal(requested) {
 		return &Error{Op: "issued certificate does not certify the requested public key"}
@@ -705,7 +710,9 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		// pool to check it against, so name the configuration that is missing.
 		var verifyErr *pkicmp.VerificationError
 		if trustedCAs == nil && errors.As(err, &verifyErr) && verifyErr.Reason == pkicmp.ReasonMissingTrustAnchors {
-			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: the response is signature-protected and no trusted CAs are configured, which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)", err)}
+			const hint = "the response is signature-protected and no trusted CAs are configured, " +
+				"which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)"
+			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: %s", err, hint)}
 		}
 		return nil, &Error{Op: "verify protection", Err: err}
 	}

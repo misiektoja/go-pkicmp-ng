@@ -69,7 +69,9 @@ func (c *Client) SendRR(ctx context.Context, cert *x509.Certificate, reason pkic
 	}
 	// RFC 9810 §5.3.10: one status per requested revocation, in request order.
 	if len(rep.Status) != 1 {
-		return cmpResp.wrapError(&Error{Op: fmt.Sprintf("revocation response carries %d statuses for one request", len(rep.Status))})
+		return cmpResp.wrapError(&Error{
+			Op: fmt.Sprintf("revocation response carries %d statuses for one request", len(rep.Status)),
+		})
 	}
 	if err := rep.Status[0].AsError(); err != nil {
 		return cmpResp.wrapError(err)
