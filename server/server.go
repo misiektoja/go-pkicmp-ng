@@ -10,6 +10,8 @@ import (
 	"net/http"
 	"time"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -410,13 +412,13 @@ func validateProfileExtraCerts(msg *pkicmp.PKIMessage, sender *SenderIdentity) e
 		return errors.New("first certificate in extraCerts is not the CMP protection certificate")
 	}
 	for i := 0; i < len(certs)-1; i++ {
-		if err := certs[i].CheckSignatureFrom(certs[i+1]); err != nil {
+		if err := compositex509.CheckSignatureFrom(certs[i], certs[i+1]); err != nil {
 			return errors.New("extraCerts is not an ordered certificate chain")
 		}
 	}
 	// The chain is only complete once it reaches a self-issued certificate.
 	last := certs[len(certs)-1]
-	if err := last.CheckSignatureFrom(last); err != nil {
+	if err := compositex509.CheckSignatureFrom(last, last); err != nil {
 		return errors.New("incomplete certificate chain in extraCerts")
 	}
 	return nil
