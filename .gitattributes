@@ -1,0 +1,33 @@
+# Git stores and checks out LF everywhere, which is the line ending .editorconfig declares.
+# This keeps Windows contributors from committing CRLF into a repository that is LF only.
+* text=auto eol=lf
+
+# Types Git cannot always infer, so diffs and merges stay textual
+*.go text diff=golang
+*.md text diff=markdown
+*.sh text diff=bash
+*.py text diff=python
+*.yml text
+*.yaml text
+*.toml text
+*.mod text
+*.sum text
+*.txt text
+*.tmpl text
+*.robot text
+*.xml text
+*.conf text
+Makefile text
+LICENSE text
+NOTICE text
+
+# DER test vectors and images must never be normalized or diffed as text
+*.der binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.svg binary
+
+# Nothing is marked export-ignore on purpose: release source archives carry the complete repository,
+# including tests, documentation and CI configuration.
