@@ -1,6 +1,6 @@
 services:
   ejbca:
-    image: keyfactor/ejbca-ce:9.3.7
+    image: keyfactor/ejbca-ce:9.6.3
     ports:
       - "8080:8080"
       - "8443:8443"
@@ -20,7 +20,7 @@ services:
   nginx:
     profiles:
       - nginx
-    image: nginx:1.30.0-alpine3.23
+    image: nginx:1.31.0-alpine3.23
     ports:
       - "8081:8080"
     volumes:
