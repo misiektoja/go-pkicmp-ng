@@ -11,6 +11,7 @@ import (
 	"io"
 	"mime"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
@@ -20,6 +21,11 @@ import (
 // request → response → [poll] → certConf → pkiConf
 // (RFC 9810 §5.3.1–§5.3.4, Appendix C.4).
 func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRepType pkicmp.BodyType, creds pkicmp.Credentials, opts *requestOptions, requestedKey crypto.PublicKey) (*EnrollResult, error) {
+	certReqIDs, err := answeringCertReqIDs(reqBody)
+	if err != nil {
+		return nil, err
+	}
+
 	msg, err := c.newRequest(reqBody, creds, opts)
 	if err != nil {
 		return nil, err
@@ -51,6 +57,9 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	if certResp.Status.Status == pkicmp.StatusWaiting {
+		if err := checkCertReqID(certResp, certReqIDs); err != nil {
+			return nil, cmpResp.wrapError(err)
+		}
 		cmpResp, vr, err = c.poll(ctx, msg.Header, resp, creds, certResp.CertReqID, knownSigner)
 		if err != nil {
 			return nil, err
@@ -100,6 +109,12 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 	}
 
 	conf := &certConfirmation{req: msg, resp: resp, creds: creds, trustPool: effectiveTrustPool, knownSigner: knownSigner}
+
+	// The rejection repeats the CA's certReqId, since that is the value the CA
+	// uses to find the certificate.
+	if err := checkCertReqID(certResp, certReqIDs); err != nil {
+		return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID, "certReqId does not match the request", cmpResp.wrapError(err))
+	}
 
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
 	if effectiveTrustPool != nil {
@@ -303,6 +318,34 @@ func (c *Client) exchangeFirst(ctx context.Context, msg *pkicmp.PKIMessage, cred
 	return cmpResp, vr, nil
 }
 
+// answeringCertReqIDs returns the certReqId values a CertResponse may carry to answer the request in body.
+func answeringCertReqIDs(body *pkicmp.PKIBody) ([]int64, error) {
+	if body.Type == pkicmp.BodyTypeP10CR {
+		// A p10cr carries no certReqId. RFC 9810 §5.3.4 answers it with -1 and
+		// EJBCA answers it with 0. Either can only name the one certificate
+		// requested.
+		return []int64{-1, 0}, nil
+	}
+	msgs, err := body.CertReqMessages()
+	if err != nil {
+		return nil, &Error{Op: "read certReqId from request", Err: err}
+	}
+	ids := make([]int64, 0, len(*msgs))
+	for _, m := range *msgs {
+		ids = append(ids, m.CertReq.CertReqID)
+	}
+	return ids, nil
+}
+
+// checkCertReqID verifies that resp carries one of the certReqId values in ids.
+func checkCertReqID(resp *pkicmp.CertResponse, ids []int64) error {
+	if slices.Contains(ids, resp.CertReqID) {
+		return nil
+	}
+	return &Error{Op: fmt.Sprintf("response certReqId %d does not match the request", resp.CertReqID)}
+}
+
+// extractCertRespAndRep returns the single CertResponse of a certificate response together with its message.
 func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyType) (*pkicmp.CertResponse, *pkicmp.CertRepMessage, error) {
 	var rep *pkicmp.CertRepMessage
 	var err error
@@ -322,6 +365,11 @@ func extractCertRespAndRep(resp *pkicmp.PKIMessage, expectedRepType pkicmp.BodyT
 	}
 	if len(rep.Response) == 0 {
 		return nil, nil, &Error{Op: "empty response"}
+	}
+	// The client requests one certificate, so further entries cannot be matched
+	// to anything and are refused rather than silently dropped.
+	if len(rep.Response) > 1 {
+		return nil, nil, &Error{Op: fmt.Sprintf("response carries %d CertResponse entries for one request", len(rep.Response))}
 	}
 	return &rep.Response[0], rep, nil
 }
