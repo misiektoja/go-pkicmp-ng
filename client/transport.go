@@ -14,6 +14,7 @@ import (
 	"slices"
 	"time"
 
+	"github.com/misiektoja/go-pkicmp-ng/internal/certpath"
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -98,7 +99,7 @@ func (c *Client) enroll(ctx context.Context, reqBody *pkicmp.PKIBody, expectedRe
 
 	// RFC 9810 §8.9: Verify the issued certificate against trusted CAs.
 	if trustPool != nil {
-		if err := verifyIssuedCertificate(cert, trustPool, extraCerts); err != nil {
+		if err := verifyIssuedCertificate(cert, trustPool, slices.Concat(extraCerts, caPubs)); err != nil {
 			return nil, c.rejectCertificate(ctx, conf, cert, certResp.CertReqID,
 				"certificate validation failed", cmpResp.wrapError(&Error{Op: "verify certificate trust", Err: err}))
 		}
@@ -155,22 +156,15 @@ func (c *Client) enrollmentTrustPool(vr *pkicmp.VerifyResult, caPubs []*x509.Cer
 	return pool
 }
 
-// verifyIssuedCertificate verifies that cert chains to roots, using extraCerts as intermediates.
-func verifyIssuedCertificate(cert *x509.Certificate, roots *x509.CertPool, extraCerts []*x509.Certificate) error {
+// verifyIssuedCertificate verifies that cert chains to roots, taking issuers from candidates.
+func verifyIssuedCertificate(cert *x509.Certificate, roots *x509.CertPool, candidates []*x509.Certificate) error {
 	// RFC 9810 §5.1: extraCerts carries the certificates needed to build the
 	// path. A CA that issues from an intermediate returns that intermediate
-	// here, so without this pool the chain cannot be completed against a
-	// trust anchor that is the root.
-	intermediates := x509.NewCertPool()
-	for _, extraCert := range extraCerts {
-		intermediates.AddCert(extraCert)
-	}
-	_, err := cert.Verify(x509.VerifyOptions{
-		Roots:         roots,
-		Intermediates: intermediates,
-		KeyUsages:     []x509.ExtKeyUsage{x509.ExtKeyUsageAny},
-	})
-	return err
+	// there, so without it the chain cannot be completed against a trust
+	// anchor that is the root. caPubs are candidates too, because a composite
+	// ML-DSA issuer is only found among the candidates, even when it is also
+	// a trust anchor.
+	return certpath.Verify(cert, roots, candidates, time.Now())
 }
 
 // certConfirmation holds what a certConf needs from the enrollment exchange it confirms.
