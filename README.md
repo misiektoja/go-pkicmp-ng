@@ -47,7 +47,12 @@ Requires Go 1.27.1 or newer.
 * **ML-DSA-44, ML-DSA-65 and ML-DSA-87** cover certificate keys, CRMF proof of possession and message
   signatures. Under CMPv3 the client confirms an ML-DSA-signed certificate with an explicit SHA-512
   hash. Build a manual confirmation with `pkicmp.NewCertStatus`, because `pkicmp.CertHash` cannot carry
-  that hash identifier. Composite signatures and older Dilithium encodings are not supported.
+  that hash identifier. Older Dilithium encodings are not supported.
+* **Composite ML-DSA CA keys** from [go-composite-mldsa](https://github.com/misiektoja/go-composite-mldsa)
+  sign CMP messages and issued certificates. The client confirms a certificate signed this way with
+  the hash the composite algorithm uses and an explicit hash identifier. A composite issuer is trusted
+  only when its certificate arrives in extraCerts or caPubs and no certificate in the path has name
+  constraints. Composite keys in certificate requests are not supported yet.
 * **RFC 4210 peers** are supported. The server accepts their requests without a transactionID or with
   a short senderNonce. `server.WithStrictProfileValidation` rejects them as RFC 9483 requires. SHA-1 is
   off by default. `pkicmp.WithPBMAlgorithms(crypto.SHA1, crypto.SHA1)` selects the RFC 4210
