@@ -15,12 +15,13 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/client"
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
-	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/client"
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // oidECDSAWithSHA1 is ecdsa-with-SHA1, which RFC 4210 era devices may still sign with.
@@ -268,14 +269,14 @@ func TestShortOrMissingSenderNonceIsAccepted(t *testing.T) {
 			resp := postCMP(t, ts, ir)
 			require.Equal(t, pkicmp.BodyTypeIP, resp.Body.Type)
 			assert.Equal(t, len(tc.nonce), len(resp.Header.RecipNonce))
-			assert.Equal(t, []byte(tc.nonce), []byte(resp.Header.RecipNonce))
+			assert.Equal(t, tc.nonce, resp.Header.RecipNonce)
 		})
 	}
 }
 
 // RFC 4210 and RFC 9810 §5.3.18: an empty certConf rejects every certificate.
 func TestEmptyCertConfRejectsCertificate(t *testing.T) {
-	ca := &confirmingCA{recordingCA: recordingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}}
+	ca := &confirmingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}
 	secret := []byte("empty-certconf-secret")
 	srv := server.NewCAServer(ca, server.LightweightPolicy(), server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(srv)

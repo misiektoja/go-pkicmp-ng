@@ -11,11 +11,12 @@ import (
 	"net/http/httptest"
 	"testing"
 
-	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
-	"github.com/misiektoja/go-pkicmp-ng/server"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	"github.com/tsaarni/certyaml"
+
+	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
+	"github.com/misiektoja/go-pkicmp-ng/server"
 )
 
 // certStatus returns a CertStatus for cert with certReqID, rejecting the certificate when reject is set.
@@ -64,7 +65,7 @@ func enrollForCertConf(t *testing.T, ts *httptest.Server, secret []byte, p10cr b
 // newConfirmingServer serves a CA that records every confirmation it receives.
 func newConfirmingServer(t *testing.T, secret []byte, opts ...server.Option) (*httptest.Server, *confirmingCA) {
 	t.Helper()
-	ca := &confirmingCA{recordingCA: recordingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}}
+	ca := &confirmingCA{ca: &certyaml.Certificate{Subject: "CN=Test CA"}}
 	opts = append(opts, server.WithSecretLookup(&staticMACLookup{secret: secret}))
 	ts := httptest.NewServer(server.NewCAServer(ca, server.LightweightPolicy(), opts...))
 	t.Cleanup(ts.Close)
@@ -161,7 +162,7 @@ func TestP10CRCertConfAcceptsZeroAndMinusOne(t *testing.T) {
 // A restored transaction keeps its certReqId. One restored from a snapshot
 // that predates the field confirms on certHash alone.
 func TestSnapshotRestoresCertReqID(t *testing.T) {
-	issuer := &confirmingCA{recordingCA: recordingCA{ca: &certyaml.Certificate{Subject: "CN=Recovery CA"}}}
+	issuer := &confirmingCA{ca: &certyaml.Certificate{Subject: "CN=Recovery CA"}}
 	secret := []byte("certreqid-snapshot-secret")
 	fresh := func() *server.Server {
 		return server.NewCAServer(issuer, server.LightweightPolicy(), server.WithSecretLookup(&staticMACLookup{secret: secret}))
