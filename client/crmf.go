@@ -7,6 +7,8 @@ import (
 	"encoding/asn1"
 	"fmt"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -34,7 +36,7 @@ func (c *Client) sendCRMF(ctx context.Context, key crypto.Signer, creds pkicmp.C
 		opt(ropts)
 	}
 
-	pubDER, err := x509.MarshalPKIXPublicKey(key.Public())
+	pubDER, err := compositex509.MarshalPKIXPublicKey(key.Public())
 	if err != nil {
 		return nil, &Error{Op: "marshal public key", Err: err}
 	}
