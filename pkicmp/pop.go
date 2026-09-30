@@ -2,7 +2,11 @@ package pkicmp
 
 import (
 	"crypto/x509"
+	"errors"
 	"fmt"
+
+	compositemldsa "github.com/misiektoja/go-composite-mldsa"
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
 )
 
 // POPOptions configures [VerifyPOPWithOptions].
@@ -35,7 +39,7 @@ func VerifyPOPWithOptions(reqMsg *CertReqMsg, opts POPOptions) error {
 	if len(reqMsg.CertReq.CertTemplate.PublicKey) == 0 {
 		return &ParseError{Detail: "no public key in template for POP verification"}
 	}
-	pub, err := x509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
+	pub, err := compositex509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
 	if err != nil {
 		return fmt.Errorf("pkicmp: parse public key for POP: %w", err)
 	}
@@ -44,6 +48,19 @@ func VerifyPOPWithOptions(reqMsg *CertReqMsg, opts POPOptions) error {
 	certReqDER := reqMsg.CertReq.Raw
 	if len(certReqDER) == 0 {
 		return &ParseError{Detail: "no raw CertRequest DER available for POP verification"}
+	}
+
+	composite, ok, err := compositeSignatureAlgorithm(reqMsg.Popo.Signature.Algorithm)
+	if err != nil {
+		return err
+	}
+	key, isComposite := pub.(*compositemldsa.PublicKey)
+	if ok || isComposite {
+		// A composite algorithm fixes both component keys, so it must match the requested key exactly.
+		if !ok || !isComposite || key.Algorithm() != composite {
+			return errors.New("pkicmp: POP algorithm does not match the requested public key")
+		}
+		return compositemldsa.Verify(key, certReqDER, reqMsg.Popo.Signature.Signature, nil)
 	}
 
 	// Verify signature using the algorithm from popoSigningKey.
