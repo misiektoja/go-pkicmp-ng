@@ -10,6 +10,8 @@ import (
 	"math/big"
 	"reflect"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -80,7 +82,7 @@ func (r *RevocationRequest) Match(cert *x509.Certificate) error {
 		}
 	}
 	if len(r.publicKey) > 0 && !bytes.Equal(r.publicKey, cert.RawSubjectPublicKeyInfo) &&
-		!samePublicKey(r.publicKey, cert.PublicKey) {
+		!samePublicKey(r.publicKey, certificatePublicKey(cert)) {
 		return rejection(pkicmp.FailBadCertId, "public key does not match the certificate")
 	}
 	return nil
@@ -251,7 +253,7 @@ func equalRDNSequences(a, b pkix.RDNSequence) bool {
 
 // samePublicKey reports whether a DER SubjectPublicKeyInfo holds the same key as pub.
 func samePublicKey(spki []byte, pub crypto.PublicKey) bool {
-	parsed, err := x509.ParsePKIXPublicKey(spki)
+	parsed, err := compositex509.ParsePKIXPublicKey(spki)
 	if err != nil {
 		return false
 	}
