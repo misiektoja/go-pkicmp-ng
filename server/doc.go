@@ -65,6 +65,8 @@
 // crypto/x509 cannot create composite ML-DSA signatures. A CA with a composite
 // key calls compositex509.CreateCertificate from
 // github.com/misiektoja/go-composite-mldsa instead, with the same arguments.
+// The same applies to a composite subject key, which the template carries as
+// *compositemldsa.PublicKey.
 // Clients can check such a signature only when the CA certificate travels in
 // the response, so pass it to [WithExtraCerts] or return it in
 // [Response].CACerts.

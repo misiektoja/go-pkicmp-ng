@@ -223,3 +223,87 @@ func x509pool(certs ...*x509.Certificate) *x509.CertPool {
 	}
 	return pool
 }
+
+// compositeCertReqMsg builds a CertReqMsg requesting a certificate for pub.
+func compositeCertReqMsg(t *testing.T, pub crypto.PublicKey) *CertReqMsg {
+	t.Helper()
+	pubDER, err := compositex509.MarshalPKIXPublicKey(pub)
+	require.NoError(t, err)
+	return &CertReqMsg{CertReq: CertRequest{CertTemplate: CertTemplate{
+		Subject:   NewDirectoryName(pkix.Name{CommonName: "composite-device"}),
+		PublicKey: pubDER,
+	}}}
+}
+
+// signedCompositePOP returns a parsed CertReqMsg for pub whose POP signer made.
+func signedCompositePOP(t *testing.T, pub crypto.PublicKey, signer crypto.Signer) *CertReqMsg {
+	t.Helper()
+	reqMsg := compositeCertReqMsg(t, pub)
+	require.NoError(t, reqMsg.GeneratePOP(signer))
+	return roundTripCertReqMsg(t, reqMsg)
+}
+
+// TestCompositePOP verifies signature proof of possession for composite
+// ML-DSA request keys, which sign the DER CertRequest with an empty context.
+func TestCompositePOP(t *testing.T) {
+	for _, alg := range compositeTestAlgorithms {
+		t.Run(alg.String(), func(t *testing.T) {
+			key, err := compositemldsa.GenerateKey(alg)
+			require.NoError(t, err)
+			reqMsg := signedCompositePOP(t, key.Public(), key)
+			require.True(t, reqMsg.Popo.Signature.Algorithm.Algorithm.Equal(alg.OID()))
+			require.Empty(t, reqMsg.Popo.Signature.Algorithm.Parameters)
+			require.NoError(t, VerifyPOP(reqMsg))
+			require.NoError(t, compositemldsa.Verify(key.PublicKey(), reqMsg.CertReq.Raw, reqMsg.Popo.Signature.Signature, nil))
+
+			pub, err := reqMsg.PublicKey()
+			require.NoError(t, err)
+			require.True(t, key.PublicKey().Equal(pub))
+		})
+	}
+}
+
+// TestCompositePOPRejections refuses composite POPs that do not prove the requested key.
+func TestCompositePOPRejections(t *testing.T) {
+	key, err := compositemldsa.GenerateKey(compositemldsa.MLDSA44ECDSAP256SHA256)
+	require.NoError(t, err)
+	sameAlgorithm, err := compositemldsa.GenerateKey(compositemldsa.MLDSA44ECDSAP256SHA256)
+	require.NoError(t, err)
+	otherAlgorithm, err := compositemldsa.GenerateKey(compositemldsa.MLDSA65ECDSAP256SHA512)
+	require.NoError(t, err)
+	classical, err := ecdsa.GenerateKey(elliptic.P256(), rand.Reader)
+	require.NoError(t, err)
+
+	t.Run("tampered signature", func(t *testing.T) {
+		reqMsg := signedCompositePOP(t, key.Public(), key)
+		reqMsg.Popo.Signature.Signature[len(reqMsg.Popo.Signature.Signature)-1] ^= 1
+		require.Error(t, VerifyPOP(reqMsg))
+	})
+	t.Run("ML-DSA component alone", func(t *testing.T) {
+		reqMsg := signedCompositePOP(t, key.Public(), key)
+		n := key.Algorithm().MLDSAParameters().SignatureSize()
+		reqMsg.Popo.Signature.Signature = reqMsg.Popo.Signature.Signature[:n]
+		require.Error(t, VerifyPOP(reqMsg))
+	})
+	t.Run("signed by another key of the same algorithm", func(t *testing.T) {
+		require.Error(t, VerifyPOP(signedCompositePOP(t, key.Public(), sameAlgorithm)))
+	})
+	t.Run("signed with another composite algorithm", func(t *testing.T) {
+		err := VerifyPOP(signedCompositePOP(t, key.Public(), otherAlgorithm))
+		require.ErrorContains(t, err, "does not match the requested public key")
+	})
+	t.Run("classical signature for a composite key", func(t *testing.T) {
+		err := VerifyPOP(signedCompositePOP(t, key.Public(), classical))
+		require.ErrorContains(t, err, "does not match the requested public key")
+	})
+	t.Run("composite signature for a classical key", func(t *testing.T) {
+		err := VerifyPOP(signedCompositePOP(t, classical.Public(), key))
+		require.ErrorContains(t, err, "does not match the requested public key")
+	})
+	t.Run("parameters present", func(t *testing.T) {
+		reqMsg := signedCompositePOP(t, key.Public(), key)
+		reqMsg.Popo.Signature.Algorithm.Parameters = []byte{5, 0}
+		var perr *ParseError
+		require.ErrorAs(t, VerifyPOP(reqMsg), &perr)
+	})
+}

@@ -6,6 +6,8 @@ import (
 	"crypto"
 	"crypto/x509"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -119,7 +121,7 @@ func (s *Server) handleCertConf(ctx context.Context, msg *pkicmp.PKIMessage, sen
 
 	// certConf MUST NOT be signed with the newly issued certificate (security best practice).
 	if sender != nil && sender.Certificate != nil && entry.cert != nil {
-		if publicKeysEqual(sender.Certificate.PublicKey, entry.cert.PublicKey) {
+		if publicKeysEqual(certificatePublicKey(sender.Certificate), certificatePublicKey(entry.cert)) {
 			return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 				Status:       pkicmp.StatusRejection,
 				FailInfo:     pkicmp.FailBadMessageCheck,
@@ -192,13 +194,26 @@ func certStatusRejects(cs *pkicmp.CertStatus) bool {
 
 // publicKeysEqual compares two public keys by their PKIX-encoded form.
 func publicKeysEqual(a, b crypto.PublicKey) bool {
-	aDER, err := x509.MarshalPKIXPublicKey(a)
+	aDER, err := compositex509.MarshalPKIXPublicKey(a)
 	if err != nil {
 		return false
 	}
-	bDER, err := x509.MarshalPKIXPublicKey(b)
+	bDER, err := compositex509.MarshalPKIXPublicKey(b)
 	if err != nil {
 		return false
 	}
 	return bytes.Equal(aDER, bDER)
+}
+
+// certificatePublicKey returns the key a certificate certifies. crypto/x509
+// leaves PublicKey nil for a composite ML-DSA key, so that key is parsed here.
+func certificatePublicKey(cert *x509.Certificate) crypto.PublicKey {
+	if cert.PublicKey != nil {
+		return cert.PublicKey
+	}
+	pub, err := compositex509.ParsePKIXPublicKey(cert.RawSubjectPublicKeyInfo)
+	if err != nil {
+		return nil
+	}
+	return pub
 }

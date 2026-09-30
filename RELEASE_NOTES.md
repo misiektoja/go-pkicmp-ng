@@ -2,6 +2,22 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.3.0 - 2026-09-30
+
+Devices can enroll **composite ML-DSA keys**, which pair an ML-DSA key with a classical key in one certificate, through `ir`, `cr`, `kur` and `p10cr`, and revoke those certificates with `rr`.
+
+### `pkicmp`
+
+* **Composite ML-DSA proof of possession.** `VerifyPOP` and `VerifyPOPWithOptions` check a composite signature over the certificate request. The algorithm must match the requested key exactly and its parameters must be absent. **`CertReqMsg.PublicKey`** returns a composite key as `*compositemldsa.PublicKey`.
+
+### `client`
+
+* **`SendIR`, `SendCR` and `SendKUR` accept a composite ML-DSA key** and sign the proof of possession with it. **`SendP10CR`** accepts a PKCS#10 request for a composite key made with `compositex509.CreateCertificateRequest`. The client checks that the issued certificate carries that key.
+
+### `server`
+
+* **Composite ML-DSA certificate requests** reach the CA after the server verifies their proof of possession. The template carries the key as `*compositemldsa.PublicKey`, which the CA certifies with `compositex509.CreateCertificate`. Confirmation, key update and revocation work for these certificates as for classical ones.
+
 ## v0.2.0 - 2026-09-29
 
 A CA with a post-quantum composite ML-DSA key can sign CMP messages and the certificates it issues. Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA. Devices that implement only RFC 4210 can enroll with the default settings. SHA-1 can be enabled for the ones that need it.
