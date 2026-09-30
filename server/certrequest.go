@@ -8,6 +8,8 @@ import (
 	"encoding/asn1"
 	"errors"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -55,7 +57,7 @@ func parseCRMFMsg(msg *pkicmp.PKIMessage) (*parsedCRMF, error) {
 
 	// Extract public key.
 	if len(reqMsg.CertReq.CertTemplate.PublicKey) > 0 {
-		pub, err := x509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
+		pub, err := compositex509.ParsePKIXPublicKey(reqMsg.CertReq.CertTemplate.PublicKey)
 		if err != nil {
 			return nil, rejection(pkicmp.FailBadAlg, err.Error())
 		}
@@ -95,7 +97,7 @@ func enforceProofOfPossession(ctx context.Context, msg *pkicmp.PKIMessage) error
 			return rejection(pkicmp.FailBadDataFormat, "")
 		}
 		// For PKCS#10 the self-signature over the request is the proof.
-		if err := csr.CheckSignature(); err != nil {
+		if err := compositex509.CheckCertificateRequestSignature(csr); err != nil {
 			if errors.Is(err, x509.ErrUnsupportedAlgorithm) {
 				return rejection(pkicmp.FailBadAlg, "unsupported signature algorithm")
 			}
