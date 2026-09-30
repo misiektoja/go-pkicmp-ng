@@ -14,6 +14,8 @@ import (
 	"slices"
 	"time"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/internal/certpath"
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
@@ -507,11 +509,16 @@ func checkIssuedKey(cert *x509.Certificate, requested crypto.PublicKey) error {
 	// public key is different, because a certificate for a key the client does
 	// not hold is unusable and the mismatch would only surface later, far from
 	// this exchange.
+	issuedKey := cert.PublicKey
+	if issuedKey == nil {
+		// crypto/x509 leaves PublicKey nil for a composite ML-DSA key.
+		issuedKey, _ = compositex509.ParsePKIXPublicKey(cert.RawSubjectPublicKeyInfo)
+	}
 	type publicKeyComparer interface{ Equal(crypto.PublicKey) bool }
-	issued, ok := cert.PublicKey.(publicKeyComparer)
+	issued, ok := issuedKey.(publicKeyComparer)
 	if !ok {
 		return &Error{
-			Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", cert.PublicKey),
+			Op: fmt.Sprintf("cannot compare issued certificate public key of type %T with the requested key", issuedKey),
 		}
 	}
 	if !issued.Equal(requested) {
