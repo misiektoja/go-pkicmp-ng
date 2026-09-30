@@ -8,6 +8,8 @@ import (
 	"crypto/x509/pkix"
 	"math/big"
 
+	"github.com/misiektoja/go-composite-mldsa/compositex509"
+
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
@@ -20,6 +22,9 @@ type CA interface {
 	// The CA may modify the template before signing (e.g., enforce policy on
 	// validity period, add extensions). Return Response.Waiting to trigger
 	// the polling flow for async issuance.
+	//
+	// A composite ML-DSA subject key arrives as *compositemldsa.PublicKey,
+	// which only compositex509.CreateCertificate can certify.
 	IssueCertificate(
 		ctx context.Context, reqType RequestType, template *x509.Certificate, sender *SenderIdentity,
 	) (*Response, error)
@@ -163,7 +168,12 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 		if err != nil {
 			return nil, rejection(pkicmp.FailBadDataFormat, "")
 		}
-		subject, pubKey, extensions = csr.Subject, csr.PublicKey, csr.Extensions
+		// crypto/x509 leaves PublicKey nil for a composite ML-DSA key.
+		pubKey, err = compositex509.ParsePKIXPublicKey(csr.RawSubjectPublicKeyInfo)
+		if err != nil {
+			return nil, rejection(pkicmp.FailBadAlg, err.Error())
+		}
+		subject, extensions = csr.Subject, csr.Extensions
 	default:
 		crmf, err := parseCRMFMsg(msg)
 		if err != nil {
@@ -180,7 +190,7 @@ func (h *caHandler) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessag
 	}
 
 	// Compute SubjectKeyIdentifier from public key per RFC 5280 §4.2.1.2.
-	pubDER, err := x509.MarshalPKIXPublicKey(pubKey)
+	pubDER, err := compositex509.MarshalPKIXPublicKey(pubKey)
 	if err != nil {
 		return nil, rejection(pkicmp.FailBadAlg, err.Error())
 	}
