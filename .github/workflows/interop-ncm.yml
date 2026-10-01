@@ -1,5 +1,5 @@
 # Runs the client against a hosted Nokia NCM instance: P10CR enrollment with PasswordBasedMac and with a
-# signature, P10CR re-enrollment and key update with a new and with the existing key.
+# signature, P10CR re-enrollment, key update with a new and with the existing key and revocation.
 #
 # This is the only workflow that talks to a CMP server outside the repository. It needs the repository
 # secrets that test/integration/ncm/README.md lists. It runs for pushes to dev and main, once a week and on
@@ -126,4 +126,5 @@ jobs:
           NCM_CMP_KUR: ${{ vars.NCM_CMP_KUR }}
           NCM_CMP_KUR_SAME_KEY: ${{ vars.NCM_CMP_KUR_SAME_KEY }}
           NCM_CMP_REENROLL: ${{ vars.NCM_CMP_REENROLL }}
+          NCM_CMP_RR: ${{ vars.NCM_CMP_RR }}
         run: make test-integration-ncm
