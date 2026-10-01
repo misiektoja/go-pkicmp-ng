@@ -74,7 +74,10 @@ type VerifyOptions struct {
 	TrustedCert *x509.Certificate
 
 	// ExtraCerts provides candidate signer certificates (typically from
-	// msg.ExtraCerts) for signature chain building.
+	// msg.ExtraCerts) for signature chain building. Certificates the caller
+	// knows out of band may be appended, and each must pass the same chain,
+	// sender and signature checks. Without any candidate, verification fails
+	// with [ReasonNoCandidateSigner].
 	ExtraCerts []CMPCertificate
 
 	// SenderKID filters candidate signer certificates by SubjectKeyId
@@ -395,6 +398,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 	// certificate that is trusted and correctly named but not allowed to sign.
 	senderMismatch := false
 	keyUsageRejected := false
+	candidates := 0
 
 	// RFC 9810 §5.1.3.3: Verify the signature using certificates from extraCerts.
 	for _, cert := range opts.ExtraCerts {
@@ -408,6 +412,7 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 				continue
 			}
 		}
+		candidates++
 		// Verify trust chain. Any extended key usage is accepted because
 		// crypto/x509 otherwise demands serverAuth, which no CMP specification
 		// asks for and which rejects the RFC 9810 §4.5 certificates
@@ -433,6 +438,13 @@ func (m *PKIMessage) verifySignature(opts VerifyOptions) (*VerifyResult, error) 
 		}
 	}
 
+	// A message without a certificate to try says nothing about its signature,
+	// so it is reported apart from one whose signature did not verify. RFC 9483
+	// §3.3 requires extraCerts on the first response of an operation, but
+	// RFC 9810 §5.1 leaves them optional and some CAs omit them.
+	if candidates == 0 {
+		return nil, &VerificationError{Reason: ReasonNoCandidateSigner}
+	}
 	if senderMismatch {
 		return nil, &VerificationError{Reason: ReasonSenderMismatch}
 	}
