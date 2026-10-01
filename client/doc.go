@@ -133,6 +133,11 @@
 // its first response, the certificate authenticated earlier in the operation is
 // retained and retried for later messages, under the same checks.
 //
+// Some CAs sign a response, such as the answer to a revocation request, without
+// attaching their certificate. Such a response fails with
+// [pkicmp.ReasonNoCandidateSigner] unless the certificate is configured with
+// [WithServerCerts]. It is tried last and must pass the same checks.
+//
 // A certificate response must hold exactly one CertResponse with the certReqId
 // of the request. A p10cr has no certReqId, so both -1 (RFC 9810 §5.3.4) and 0
 // are accepted. A rejection is reported whatever certReqId it carries.
