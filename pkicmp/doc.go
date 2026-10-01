@@ -85,8 +85,10 @@
 //
 // Retain the protection certificate across a transaction. extraCerts may appear
 // only on the first response (RFC 9810 §5.1), so a later pkiConf can arrive with
-// no candidate signer. Offer [VerifyResult.ProtectionCertificate] back through
-// [VerifyOptions.ExtraCerts] or [VerifyOptions.TrustedCert].
+// no candidate signer and fail with [ReasonNoCandidateSigner]. Offer
+// [VerifyResult.ProtectionCertificate] back through [VerifyOptions.ExtraCerts]
+// or [VerifyOptions.TrustedCert]. A peer certificate known out of band can be
+// appended to ExtraCerts the same way.
 //
 // Bind the issued certificate to the request by comparing its public key to the
 // key you asked for. This package does not check that. Subjects may differ
@@ -114,7 +116,8 @@
 //     parameter outside the range this package accepts from an untrusted peer.
 //   - [ProtectionError]: failure applying protection.
 //   - [VerificationError]: bad MAC or signature, a protection mechanism the caller
-//     did not require, or a sender that does not match the protection certificate.
+//     did not require, a sender that does not match the protection certificate
+//     or no certificate to verify a signature with.
 //
 // Each carries an [InvalidReason] for programmatic inspection.
 package pkicmp
