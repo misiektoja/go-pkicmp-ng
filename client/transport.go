@@ -686,9 +686,17 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		return nil, &Error{Op: "missing protection algorithm in response"}
 	}
 
+	// The response's own certificates come first, so a configured server
+	// certificate is reached only when the response supplies no usable signer.
 	candidates := resp.ExtraCerts
-	if knownSigner != nil {
-		candidates = append(append([]pkicmp.CMPCertificate(nil), candidates...), pkicmp.CMPCertificate{Raw: knownSigner.Raw})
+	if knownSigner != nil || len(c.serverCerts) > 0 {
+		candidates = append([]pkicmp.CMPCertificate(nil), candidates...)
+		if knownSigner != nil {
+			candidates = append(candidates, pkicmp.CMPCertificate{Raw: knownSigner.Raw})
+		}
+		for _, cert := range c.serverCerts {
+			candidates = append(candidates, pkicmp.CMPCertificate{Raw: cert.Raw})
+		}
 	}
 
 	vr, err := resp.Verify(pkicmp.VerifyOptions{
@@ -706,17 +714,32 @@ func (c *Client) verifyResponse(req *pkicmp.PKIMessage, resp *pkicmp.PKIMessage,
 		AllowSHA1Signatures: c.allowSHA1Signatures,
 	})
 	if err != nil {
-		// The bare reason reads as an internal detail on a shared-secret client,
-		// which is exactly the client that meets a signed error message without a
-		// pool to check it against, so name the configuration that is missing.
-		var verifyErr *pkicmp.VerificationError
-		if trustedCAs == nil && errors.As(err, &verifyErr) && verifyErr.Reason == pkicmp.ReasonMissingTrustAnchors {
-			const hint = "the response is signature-protected and no trusted CAs are configured, " +
-				"which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)"
-			return nil, &Error{Op: "verify protection", Err: fmt.Errorf("%w: %s", err, hint)}
+		if hint := c.verificationHint(err, trustedCAs); hint != "" {
+			err = fmt.Errorf("%w: %s", err, hint)
 		}
 		return nil, &Error{Op: "verify protection", Err: err}
 	}
 
 	return vr, nil
+}
+
+// verificationHint names the client configuration that would let a failed response verify, or returns "".
+func (c *Client) verificationHint(err error, trustedCAs *x509.CertPool) string {
+	var verifyErr *pkicmp.VerificationError
+	if !errors.As(err, &verifyErr) {
+		return ""
+	}
+	switch {
+	case verifyErr.Reason == pkicmp.ReasonMissingTrustAnchors && trustedCAs == nil:
+		// The bare reason reads as an internal detail on a shared-secret client,
+		// which is exactly the client that meets a signed error message without a
+		// pool to check it against.
+		return "the response is signature-protected and no trusted CAs are configured, " +
+			"which a shared-secret client also needs because error messages are signed (RFC 9810 §5.3.21)"
+	case verifyErr.Reason == pkicmp.ReasonNoCandidateSigner && len(c.serverCerts) == 0:
+		return "the response does not carry its protection certificate in extraCerts, " +
+			"so configure the certificate the server signs with through WithServerCerts"
+	default:
+		return ""
+	}
 }
