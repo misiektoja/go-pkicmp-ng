@@ -2,7 +2,7 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
-## v0.3.1 - TBD
+## v0.3.1 - 2026-10-02
 
 The client can revoke certificates at CAs that sign the revocation response without attaching their certificate.
 
