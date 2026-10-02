@@ -7,6 +7,7 @@ Integration tests for the CMP client against a [Nokia NCM](https://www.nokia.com
 * P10CR re-enrollment of an identity NCM has already certified
 * KUR with a new key
 * KUR with the existing key
+* RR of a newly enrolled certificate, then a second RR that must draw a verified rejection
 
 Every certificate must certify the requested key and chain to the configured trust anchor. The client confirms each one with `certConf` and verifies the `pkiConf`.
 
@@ -49,10 +50,13 @@ These are repository variables:
 | `NCM_CMP_KUR` | `false` skips both key update tests |
 | `NCM_CMP_KUR_SAME_KEY` | `false` skips the key update that keeps the existing key |
 | `NCM_CMP_REENROLL` | `false` skips the re-enrollment test |
+| `NCM_CMP_RR` | `false` skips the revocation test |
 
 PasswordBasedMac uses SHA-256, HMAC-SHA256 and 1024 iterations. The re-enrollment and key update tests enroll with PasswordBasedMac when it is configured and with the bootstrap signature otherwise. A key update is signed by the certificate it replaces and is sent to the enrollment endpoint.
 
-The key update tests always enroll under a generated name, because a profile that authorizes only `NCM_CMP_COMMON_NAME` could not certify a second identity.
+The key update and revocation tests always enroll under a generated name, because a profile that authorizes only `NCM_CMP_COMMON_NAME` could not certify a second identity.
+
+A revocation request is signed by the certificate it revokes. Some NCM releases sign the revocation response with the issuing CA key without attaching that certificate, so the test passes the issuer of the revoked certificate to `client.WithServerCerts`.
 
 ## Server profile
 
@@ -61,6 +65,7 @@ The tests expect a profile that:
 * accepts P10CR with the configured protection
 * certifies an identity again when it is re-enrolled
 * accepts KUR signed by a certificate it issued and certifies the same key twice for the same-key update
+* accepts RR signed by the certificate being revoked
 
 Turn off the tests a profile does not allow with the variables above.
 

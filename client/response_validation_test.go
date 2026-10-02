@@ -551,7 +551,8 @@ func TestResponseValidationRejectsMismatchedSenderKID(t *testing.T) {
 	_, err = c.SendIR(context.Background(), key, creds, client.WithTemplateSubject(pkix.Name{CommonName: "test"}))
 	var ve *pkicmp.VerificationError
 	require.ErrorAs(t, err, &ve)
-	assert.Equal(t, pkicmp.ReasonSignatureFailed, ve.Reason)
+	// No certificate carries the key the senderKID names, so none is tried.
+	assert.Equal(t, pkicmp.ReasonNoCandidateSigner, ve.Reason)
 }
 
 func TestResponseValidationRejectsOversizedHTTPResponse(t *testing.T) {

@@ -2,6 +2,18 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
+## v0.3.1 - 2026-10-02
+
+The client can revoke certificates at CAs that sign the revocation response without attaching their certificate.
+
+### `pkicmp`
+
+* **`ReasonNoCandidateSigner`** reports a signature-protected message that carries no certificate to verify it, either none at all or none matching its senderKID. Such a message previously failed with `ReasonSignatureFailed`, so code that checks for that reason no longer sees it in this case.
+
+### `client`
+
+* **`WithServerCerts`** supplies the CMP server certificates the client knows out of band, like the `-srvcert` option of `openssl cmp`. The client tries them after the certificates in the response, so a response without extraCerts verifies. Unlike `-srvcert`, each must still chain to `WithTrustedCAs`, match the sender in the response and verify the signature. A CA certificate without the digitalSignature key usage is accepted, as it already is from extraCerts. Without the option such a response fails with `ReasonNoCandidateSigner` and the error names `WithServerCerts`.
+
 ## v0.3.0 - 2026-09-30
 
 Devices can enroll **composite ML-DSA keys**, which pair an ML-DSA key with a classical key in one certificate, through `ir`, `cr`, `kur` and `p10cr`, and revoke those certificates with `rr`.

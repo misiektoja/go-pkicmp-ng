@@ -140,6 +140,7 @@ type ncmConfig struct {
 	kur            bool
 	kurSameKey     bool
 	reenroll       bool
+	revoke         bool
 }
 
 // loadConfig reads the NCM configuration from the environment and skips the test when no endpoint is set.
@@ -152,6 +153,7 @@ func loadConfig(t *testing.T) *ncmConfig {
 		organization: os.Getenv("NCM_CMP_ORGANIZATION"),
 		kur:          os.Getenv("NCM_CMP_KUR") != "false",
 		reenroll:     os.Getenv("NCM_CMP_REENROLL") != "false",
+		revoke:       os.Getenv("NCM_CMP_RR") != "false",
 	}
 	cfg.kurSameKey = cfg.kur && os.Getenv("NCM_CMP_KUR_SAME_KEY") != "false"
 
@@ -205,6 +207,15 @@ func loadConfig(t *testing.T) *ncmConfig {
 func (c *ncmConfig) forEachTransport(t *testing.T, fn func(t *testing.T, cl *client.Client)) {
 	t.Helper()
 
+	c.forEachEndpoint(t, func(t *testing.T, connect func(opts ...client.Option) *client.Client) {
+		fn(t, connect())
+	})
+}
+
+// forEachEndpoint runs fn as a subtest for every configured endpoint and lets it create clients with further options.
+func (c *ncmConfig) forEachEndpoint(t *testing.T, fn func(t *testing.T, connect func(opts ...client.Option) *client.Client)) {
+	t.Helper()
+
 	for _, tr := range c.transports {
 		t.Run(tr.name, func(t *testing.T) {
 			// A misplaced secret would otherwise let the HTTPS run repeat the HTTP one.
@@ -214,11 +225,13 @@ func (c *ncmConfig) forEachTransport(t *testing.T, fn func(t *testing.T, cl *cli
 
 			tlsConfig := &tls.Config{MinVersion: tls.VersionTLS12, RootCAs: c.httpsTrust}
 			hc := &http.Client{Transport: pacedTransport{base: &http.Transport{TLSClientConfig: tlsConfig}}}
-			fn(t, client.NewClient(tr.endpoint,
-				client.WithHTTPClient(hc),
-				client.WithRecipient(c.recipient),
-				client.WithTrustedCAs(c.trust),
-			))
+			fn(t, func(opts ...client.Option) *client.Client {
+				return client.NewClient(tr.endpoint, append([]client.Option{
+					client.WithHTTPClient(hc),
+					client.WithRecipient(c.recipient),
+					client.WithTrustedCAs(c.trust),
+				}, opts...)...)
+			})
 		})
 	}
 }
@@ -286,8 +299,8 @@ func generatedName(purpose string) string {
 	return fmt.Sprintf("go-pkicmp-ng-test-%s-%s", time.Now().UTC().Format("060102-150405"), purpose)
 }
 
-// enrollP10CR generates an RSA key and enrolls it for subject through P10CR.
-func enrollP10CR(t *testing.T, cfg *ncmConfig, cl *client.Client, subject pkix.Name, creds pkicmp.Credentials, opts ...client.RequestOption) (*rsa.PrivateKey, *x509.Certificate, []*x509.Certificate) {
+// enrollP10CR generates an RSA key, enrolls it for subject through P10CR and returns the key and the issued certificate's chain.
+func enrollP10CR(t *testing.T, cfg *ncmConfig, cl *client.Client, subject pkix.Name, creds pkicmp.Credentials, opts ...client.RequestOption) (*rsa.PrivateKey, []*x509.Certificate) {
 	t.Helper()
 
 	key, err := rsa.GenerateKey(rand.Reader, 2048)
@@ -300,11 +313,10 @@ func enrollP10CR(t *testing.T, cfg *ncmConfig, cl *client.Client, subject pkix.N
 	result, err := cl.SendP10CR(ctx, csr, creds, opts...)
 	require.NoError(t, err, "SendP10CR")
 
-	intermediates := verifyIssued(t, cfg, result, key.Public())
-	return key, result.Certificate, intermediates
+	return key, verifyIssued(t, cfg, result, key.Public())
 }
 
-// verifyIssued checks that the issued certificate certifies key and chains to the response trust and returns its intermediates.
+// verifyIssued checks that the issued certificate certifies key and chains to the response trust and returns that chain.
 func verifyIssued(t *testing.T, cfg *ncmConfig, result *client.EnrollResult, key crypto.PublicKey) []*x509.Certificate {
 	t.Helper()
 
@@ -319,9 +331,14 @@ func verifyIssued(t *testing.T, cfg *ncmConfig, result *client.EnrollResult, key
 	require.NoError(t, err, "certificate verification against NCM_CMP_RESPONSE_TRUST")
 
 	t.Logf("Issued certificate: %s (serial: %s, issuer: %s)", cert.Subject, cert.SerialNumber, cert.Issuer)
-	// The first chain runs from the certificate to an anchor. Everything between them is sent along with
-	// the certificate when it later protects a key update.
-	return chains[0][1 : len(chains[0])-1]
+	// The first chain runs from the certificate to an anchor.
+	return chains[0]
+}
+
+// intermediates returns the certificates between the certificate and the anchor of chain, which are
+// sent along with the certificate when it protects a request.
+func intermediates(chain []*x509.Certificate) []*x509.Certificate {
+	return chain[1 : len(chain)-1]
 }
 
 // certPool returns a pool holding certs.

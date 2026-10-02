@@ -4,6 +4,7 @@ import (
 	"crypto/x509"
 	"crypto/x509/pkix"
 	"net/http"
+	"slices"
 	"time"
 
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
@@ -16,6 +17,7 @@ type Client struct {
 	recipient           pkix.Name
 	extraCerts          []*x509.Certificate
 	trustedCAs          *x509.CertPool
+	serverCerts         []*x509.Certificate
 	responseProtection  pkicmp.ProtectionMechanism
 	maxResponseBytes    int64
 	maxPolls            int
@@ -111,6 +113,27 @@ func WithExtraCerts(certs []*x509.Certificate) Option {
 // entry still decides whether that certificate is trusted.
 func WithTrustedCAs(trustedCAs *x509.CertPool) Option {
 	return func(c *Client) { c.trustedCAs = trustedCAs }
+}
+
+// WithServerCerts sets CMP protection certificates of the server that the
+// caller knows out of band, like the -srvcert option of openssl cmp.
+//
+// Use it for a CA that signs a response without attaching its protection
+// certificate in extraCerts. RFC 9483 §3.3 requires the certificate on the
+// first response of an operation, but RFC 9810 §5.1 makes extraCerts optional
+// and some CAs leave it out of revocation responses. Pass the certificate the
+// CA signs its responses with, often the issuing CA certificate. Without it
+// such a response fails with [pkicmp.ReasonNoCandidateSigner].
+//
+// The certificates are tried only after those the response carries and the
+// one authenticated earlier in the operation. Unlike -srvcert they are not
+// trusted directly: each must still chain to [WithTrustedCAs], match the
+// sender in the response header and verify the signature. As with extraCerts,
+// a keyUsage extension without digitalSignature is accepted. Nil entries are
+// ignored.
+func WithServerCerts(certs []*x509.Certificate) Option {
+	certs = slices.DeleteFunc(slices.Clone(certs), func(cert *x509.Certificate) bool { return cert == nil })
+	return func(c *Client) { c.serverCerts = certs }
 }
 
 // WithSHA1Signatures accepts responses signed with sha1WithRSAEncryption or

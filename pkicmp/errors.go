@@ -36,6 +36,10 @@ const (
 	// ReasonCertificateExpired indicates the CMP protection certificate is outside
 	// its validity period.
 	ReasonCertificateExpired
+	// ReasonNoCandidateSigner indicates that no certificate was available to
+	// verify a signature: [VerifyOptions.ExtraCerts] was empty or held no
+	// certificate matching the senderKID.
+	ReasonNoCandidateSigner
 )
 
 func (r InvalidReason) String() string {
@@ -60,6 +64,8 @@ func (r InvalidReason) String() string {
 		return "protection certificate is not permitted to sign"
 	case ReasonCertificateExpired:
 		return "protection certificate is outside its validity period"
+	case ReasonNoCandidateSigner:
+		return "no candidate signer certificate"
 	default:
 		return "unknown"
 	}

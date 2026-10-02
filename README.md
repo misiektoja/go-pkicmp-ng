@@ -31,7 +31,7 @@ CI runs the library against independent CMP implementations:
 * **[OpenSSL](https://www.openssl.org/docs/manmaster/man1/openssl-cmp.html)**: the client enrolls,
   updates and revokes against the mock server. OpenSSL as a client revokes at the server.
 * **[Nokia NCM](https://www.nokia.com/networks/products/pki-authority-with-netguard-certificate-manager/)**:
-  the client enrolls, re-enrolls and updates certificates against a hosted instance on every push to
+  the client enrolls, re-enrolls, updates and revokes certificates against a hosted instance on every push to
   `dev` and `main` and once a week.
 * **[Siemens CMP test suite](https://github.com/siemens/cmp-test-suite)**: runs its conformance tests
   against the server.
@@ -106,7 +106,13 @@ Revocation Request (RR):
 ```go
 // RFC 9483 expects the request to be signed with the certificate being revoked.
 creds, _ := pkicmp.NewSignatureCredentials(certKey, cert)
-c := client.NewClient("http://localhost:8080/cmp", client.WithTrustedCAs(trustedCAs))
+
+// Some CAs sign the response without attaching their certificate. WithServerCerts
+// supplies it, and it must still chain to trustedCAs and match the response sender.
+c := client.NewClient("http://localhost:8080/cmp",
+	client.WithTrustedCAs(trustedCAs),
+	client.WithServerCerts([]*x509.Certificate{issuingCA}),
+)
 
 // A nil error means the CA revoked the certificate. A rejection such as
 // certRevoked is returned as *pkicmp.PKIStatusError.

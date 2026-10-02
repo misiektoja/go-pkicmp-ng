@@ -6,6 +6,7 @@ import (
 	"context"
 	"crypto/rand"
 	"crypto/rsa"
+	"crypto/x509"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -44,10 +45,10 @@ func TestNCMReenrollP10CR(t *testing.T) {
 
 	cfg.forEachTransport(t, func(t *testing.T, cl *client.Client) {
 		subject := cfg.subject(cfg.enrollmentName("reenroll"))
-		firstKey, first, _ := enrollP10CR(t, cfg, cl, subject, creds, opts...)
-		secondKey, second, _ := enrollP10CR(t, cfg, cl, subject, creds, opts...)
+		firstKey, first := enrollP10CR(t, cfg, cl, subject, creds, opts...)
+		secondKey, second := enrollP10CR(t, cfg, cl, subject, creds, opts...)
 
-		assert.NotEqual(t, first.SerialNumber, second.SerialNumber, "re-enrollment returned the serial number of the first certificate")
+		assert.NotEqual(t, first[0].SerialNumber, second[0].SerialNumber, "re-enrollment returned the serial number of the first certificate")
 		assert.False(t, firstKey.PublicKey.Equal(&secondKey.PublicKey), "re-enrollment reused the first key")
 	})
 }
@@ -81,20 +82,52 @@ func TestNCMKeyUpdateSameKey(t *testing.T) {
 	})
 }
 
+// The certificate being revoked signs the request (RFC 9483 §4.2). Some NCM releases sign the response
+// with the issuing CA key without attaching that certificate, so the client is given it out of band.
+func TestNCMRevoke(t *testing.T) {
+	cfg := loadConfig(t)
+	if !cfg.revoke {
+		t.Skip("NCM_CMP_RR is false")
+	}
+	creds, opts := cfg.enrollmentCredentials(t)
+
+	cfg.forEachEndpoint(t, func(t *testing.T, connect func(opts ...client.Option) *client.Client) {
+		key, chain := enrollP10CR(t, cfg, connect(), cfg.subject(generatedName("rr")), creds, opts...)
+		cert, issuer := chain[0], chain[1]
+		cl := connect(client.WithServerCerts([]*x509.Certificate{issuer}))
+		rrCreds, err := pkicmp.NewSignatureCredentials(key, cert, intermediates(chain)...)
+		require.NoError(t, err)
+
+		ctx, cancel := context.WithTimeout(t.Context(), operationTimeout)
+		defer cancel()
+		require.NoError(t, cl.SendRR(ctx, cert, pkicmp.CRLReasonCessationOfOperation, rrCreds), "SendRR")
+
+		// Revoking again draws a signed rejection, which has to verify like the acceptance did. The
+		// request is now signed by a revoked certificate, so a CA may refuse it as certRevoked or
+		// as badMessageCheck. HasFailure reports bits only from a verified message.
+		err = cl.SendRR(ctx, cert, pkicmp.CRLReasonCessationOfOperation, rrCreds)
+		var statusErr *pkicmp.PKIStatusError
+		require.ErrorAs(t, err, &statusErr, "second SendRR")
+		assert.Equal(t, pkicmp.StatusRejection, statusErr.Status)
+		assert.True(t, pkicmp.HasFailure(err, pkicmp.FailCertRevoked) || pkicmp.HasFailure(err, pkicmp.FailBadMessageCheck), "second SendRR: %v", err)
+	})
+}
+
 // keyUpdate enrolls a certificate through P10CR and updates it through KUR, reusing its key when newKey is nil.
 func keyUpdate(t *testing.T, cfg *ncmConfig, cl *client.Client, creds pkicmp.Credentials, opts []client.RequestOption, purpose string, newKey *rsa.PrivateKey) {
 	t.Helper()
 
 	// The updated certificate is always a generated identity, because a profile that authorizes only
 	// NCM_CMP_COMMON_NAME could not certify it next to the enrollment tests.
-	oldKey, oldCert, intermediates := enrollP10CR(t, cfg, cl, cfg.subject(generatedName(purpose)), creds, opts...)
+	oldKey, chain := enrollP10CR(t, cfg, cl, cfg.subject(generatedName(purpose)), creds, opts...)
+	oldCert := chain[0]
 	if newKey == nil {
 		newKey = oldKey
 	}
 
 	// The certificate being replaced protects the request, so NCM authenticates the update by it
 	// rather than by the enrollment credentials.
-	oldCreds, err := pkicmp.NewSignatureCredentials(oldKey, oldCert, intermediates...)
+	oldCreds, err := pkicmp.NewSignatureCredentials(oldKey, oldCert, intermediates(chain)...)
 	require.NoError(t, err)
 
 	ctx, cancel := context.WithTimeout(t.Context(), operationTimeout)
