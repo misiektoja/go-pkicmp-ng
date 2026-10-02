@@ -188,14 +188,18 @@ adds:
 * **Stricter verification.** Signatures are bound to the sender they claim. Issued certificates must
   certify the requested key and carry the request's certReqId. PBKDF2 parameters and poll intervals
   from peers are bounded.
-* **Post-quantum ML-DSA** with SHA-512 certificate confirmation.
+* **Post-quantum signatures**: ML-DSA with SHA-512 certificate confirmation plus composite ML-DSA
+  keys for both CAs and enrolling devices.
 * **Revocation** in the client and the server, plus nested requests from a registration authority.
 * **Certificate confirmation checks** on both sides, with `SnapshotTransactions` and
   `RestoreTransactions` to keep server transactions across a restart.
 * **Support for RFC 4210 peers**, with the SHA-1 options off by default.
 * **Server hardening**: required proof of possession, an optional `messageTime` tolerance, no handler
-  error text on the wire and `Server.Err` for a misconfigured signer.
-* **Interoperability fixes** for EJBCA, OpenSSL and vendor CMP clients.
+  error text on the wire, MAC-protected errors for shared-secret clients and `Server.Err` for a
+  misconfigured signer.
+* **Interoperability fixes** for EJBCA, OpenSSL, Nokia NCM and vendor CMP clients. Key update names
+  the replaced certificate in `oldCertID`, enrollment works with Ed25519-signing CAs and
+  `client.WithServerCerts` verifies responses from CAs that do not attach their certificate.
 
 The [release notes](RELEASE_NOTES.md) list every change.
 
