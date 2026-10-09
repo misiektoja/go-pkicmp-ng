@@ -10,8 +10,7 @@ import (
 	"github.com/misiektoja/go-pkicmp-ng/pkicmp"
 )
 
-// buildResponse creates a protected response message with proper header management.
-// RFC 9810 §5.1.1: echo transactionID, senderNonce→recipNonce, fresh senderNonce.
+// buildResponse creates a protected response with the request's transaction and nonce context.
 func (s *Server) buildResponse(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity) *pkicmp.PKIMessage {
 	return s.buildResponseInternal(req, body, sender, nil, nil)
 }
@@ -21,7 +20,8 @@ func (s *Server) buildResponseWithEchoProtection(req *pkicmp.PKIMessage, body *p
 	return s.buildResponseInternal(req, body, sender, nil, protectionParams)
 }
 
-// buildResponseInternal is the shared implementation for building protected responses.
+// Echo transactionID and senderNonce as recipNonce and generate a fresh senderNonce
+// per RFC 9810 section 5.1.1.
 func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIBody, sender *SenderIdentity, generalInfo []pkicmp.InfoTypeAndValue, protectionParams pkicmp.MACCredentialOption) *pkicmp.PKIMessage {
 	senderNonce := make([]byte, 16)
 	_, _ = rand.Read(senderNonce)
@@ -56,7 +56,6 @@ func (s *Server) buildResponseInternal(req *pkicmp.PKIMessage, body *pkicmp.PKIB
 		resp.Header.SenderKID = sender.SenderKID
 	}
 
-	// Add configured extra certs.
 	for _, c := range s.cfg.extraCerts {
 		resp.ExtraCerts = append(resp.ExtraCerts, pkicmp.CMPCertificate{Raw: c.Raw})
 	}
@@ -110,7 +109,6 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 
 	rep := &pkicmp.CertRepMessage{Response: []pkicmp.CertResponse{certResp}}
 
-	// Add caPubs.
 	for _, ca := range caCerts {
 		rep.CAPubs = append(rep.CAPubs, pkicmp.CMPCertificate{Raw: ca.Raw})
 	}
@@ -144,8 +142,8 @@ func (s *Server) buildCertRepResponseForType(req *pkicmp.PKIMessage, certReqID i
 	}())
 }
 
-// handleCertRequestNew processes cert requests via the new Handler interface.
-func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
+// handleCertRequest processes certificate requests through the configured handler.
+func (s *Server) handleCertRequest(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
 	credID, err := sender.credentialID()
 	if err != nil {
 		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
@@ -162,11 +160,9 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 		})
 	}
 
-	// Determine certReqID for response building.
 	certReqID := certReqIDFromRequest(msg)
 	reqType := requestTypeFromBody(msg.Body.Type)
 
-	// Call handler.
 	resp, err := s.handler.HandleCMP(ctx, msg, sender)
 	if err != nil {
 		si := errorToStatusInfo(err)
@@ -198,7 +194,6 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 		return respMsg
 	}
 
-	// Certificate issued.
 	si := pkicmp.PKIStatusInfo{Status: pkicmp.StatusAccepted}
 	protectionParams := sender.protectionParams
 	respMsg := s.buildCertRepResponseForType(
@@ -211,7 +206,6 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 			// cleanupExpired runs, so the transactionID cannot be reused within
 			// the same confirmWaitTime window (RFC 9483 §3.5).
 			s.setCompleted(credID, txnID)
-			// Notify the CA that the certificate was implicitly confirmed.
 			if s.cfg.confirmer != nil {
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
@@ -228,8 +222,8 @@ func (s *Server) handleCertRequestNew(ctx context.Context, msg *pkicmp.PKIMessag
 	return respMsg
 }
 
-// handlePollReqNew processes poll requests via the new Handler interface.
-func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
+// handlePollReq resumes pending certificate requests through the configured handler.
+func (s *Server) handlePollReq(ctx context.Context, msg *pkicmp.PKIMessage, sender *SenderIdentity) *pkicmp.PKIMessage {
 	pollReq, err := msg.Body.PollReq()
 	if err != nil {
 		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
@@ -274,7 +268,6 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 		})
 	}
 
-	// Reject polling too frequently.
 	if !pending.lastPollTime.IsZero() && time.Since(pending.lastPollTime) < pending.checkAfter {
 		return s.buildErrorResponse(msg, sender, pkicmp.PKIStatusInfo{
 			Status: pkicmp.StatusRejection, FailInfo: pkicmp.FailBadRequest,
@@ -282,10 +275,8 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 		})
 	}
 
-	// Pass pollRef to handler via context.
 	ctx = contextWithPollRef(ctx, pending.pollRef)
 
-	// Call handler.
 	resp, err := s.handler.HandleCMP(ctx, msg, sender)
 	if err != nil {
 		si := errorToStatusInfo(err)
@@ -322,7 +313,6 @@ func (s *Server) handlePollReqNew(ctx context.Context, msg *pkicmp.PKIMessage, s
 			// cleanupExpired runs, so the transactionID cannot be reused within
 			// the same confirmWaitTime window (RFC 9483 §3.5).
 			s.setCompleted(credID, txnID)
-			// Notify the CA that the certificate was implicitly confirmed.
 			if s.cfg.confirmer != nil {
 				_ = s.cfg.confirmer.ConfirmCertificate(ctx, resp.Certificate, ConfirmImplicit, resp.IssueRef)
 			}
@@ -350,8 +340,7 @@ func certReqIDFromRequest(msg *pkicmp.PKIMessage) int64 {
 	return crmf.certReqID
 }
 
-// requestTypeFromBody maps a body type to a RequestType.
-// requestHasImplicitConfirm checks if the request includes id-it-implicitConfirm in generalInfo.
+// requestHasImplicitConfirm checks for id-it-implicitConfirm in generalInfo.
 func requestHasImplicitConfirm(msg *pkicmp.PKIMessage) bool {
 	oidImplicitConfirm := pkicmp.ImplicitConfirmInfoValue().InfoType
 	for _, info := range msg.Header.GeneralInfo {
@@ -362,6 +351,7 @@ func requestHasImplicitConfirm(msg *pkicmp.PKIMessage) bool {
 	return false
 }
 
+// requestTypeFromBody maps a CMP body type to the handler's request type.
 func requestTypeFromBody(bodyType pkicmp.BodyType) RequestType {
 	switch bodyType {
 	case pkicmp.BodyTypeIR:

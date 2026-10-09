@@ -42,7 +42,7 @@ CI runs the library against independent CMP implementations:
 go get github.com/misiektoja/go-pkicmp-ng
 ```
 
-Requires Go 1.27.1 or newer.
+Requires Go 1.27.2 or newer.
 
 * **ML-DSA-44, ML-DSA-65 and ML-DSA-87** cover certificate keys, CRMF proof of possession and message
   signatures. Under CMPv3 the client confirms an ML-DSA-signed certificate with an explicit SHA-512
