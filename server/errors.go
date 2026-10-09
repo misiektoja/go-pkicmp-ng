@@ -54,8 +54,7 @@ func errorToStatusInfo(err error) pkicmp.PKIStatusInfo {
 		}
 		return si
 	}
-	// Unknown error → systemFailure. The error stays server-side; the peer is
-	// told only that the request failed.
+	// Internal error details stay server-side.
 	return pkicmp.PKIStatusInfo{
 		Status:   pkicmp.StatusRejection,
 		FailInfo: pkicmp.FailSystemFailure,

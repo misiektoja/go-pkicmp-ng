@@ -225,11 +225,11 @@ func (s *Server) process(ctx context.Context, msg *pkicmp.PKIMessage, fwd *forwa
 	var resp *pkicmp.PKIMessage
 	switch msg.Body.Type {
 	case pkicmp.BodyTypeIR, pkicmp.BodyTypeCR, pkicmp.BodyTypeKUR, pkicmp.BodyTypeP10CR:
-		resp = s.handleCertRequestNew(ctx, msg, sender)
+		resp = s.handleCertRequest(ctx, msg, sender)
 	case pkicmp.BodyTypeCertConf:
 		resp = s.handleCertConf(ctx, msg, sender)
 	case pkicmp.BodyTypePollReq:
-		resp = s.handlePollReqNew(ctx, msg, sender)
+		resp = s.handlePollReq(ctx, msg, sender)
 	case pkicmp.BodyTypeRR:
 		resp = s.handleRevocation(ctx, msg, sender)
 	case pkicmp.BodyTypeError:
