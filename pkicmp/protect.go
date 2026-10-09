@@ -396,8 +396,8 @@ func dedupeCertificates(certs []CMPCertificate) []CMPCertificate {
 	return out
 }
 
-// marshalForProtection marshals header and body into rawHeader/rawBody for
-// protection computation. This mirrors the logic from the old Protect method.
+// marshalForProtection encodes the body before the header so the body can
+// raise the protocol version required by the header.
 func (m *PKIMessage) marshalForProtection() error {
 	mctx := &marshalContext{MinRequiredPVNO: PVNO2}
 	if m.Header.PVNO > PVNO2 {
