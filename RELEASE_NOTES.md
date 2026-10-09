@@ -2,7 +2,15 @@
 
 Notable changes to go-pkicmp-ng. Versions follow the `vMAJOR.MINOR.PATCH` tags published in this repository.
 
-## v0.3.1 - 2026-10-02
+## v0.3.2 - 9 Oct 2026
+
+This version requires Go 1.27.2 and updates composite ML-DSA support to the published v0.2.0 library.
+
+### Requirements
+
+* **Go 1.27.2 or newer** is required. **go-composite-mldsa v0.2.0** validates composite key encodings more strictly. Valid keys retain the same encoding and algorithm support.
+
+## v0.3.1 - 2 Oct 2026
 
 The client can revoke certificates at CAs that sign the revocation response without attaching their certificate.
 
@@ -14,7 +22,7 @@ The client can revoke certificates at CAs that sign the revocation response with
 
 * **`WithServerCerts`** supplies the CMP server certificates the client knows out of band, like the `-srvcert` option of `openssl cmp`. The client tries them after the certificates in the response, so a response without extraCerts verifies. Unlike `-srvcert`, each must still chain to `WithTrustedCAs`, match the sender in the response and verify the signature. A CA certificate without the digitalSignature key usage is accepted, as it already is from extraCerts. Without the option such a response fails with `ReasonNoCandidateSigner` and the error names `WithServerCerts`.
 
-## v0.3.0 - 2026-09-30
+## v0.3.0 - 30 Sep 2026
 
 Devices can enroll **composite ML-DSA keys**, which pair an ML-DSA key with a classical key in one certificate, through `ir`, `cr`, `kur` and `p10cr`, and revoke those certificates with `rr`.
 
@@ -30,7 +38,7 @@ Devices can enroll **composite ML-DSA keys**, which pair an ML-DSA key with a cl
 
 * **Composite ML-DSA certificate requests** reach the CA after the server verifies their proof of possession. The template carries the key as `*compositemldsa.PublicKey`, which the CA certifies with `compositex509.CreateCertificate`. Confirmation, key update and revocation work for these certificates as for classical ones.
 
-## v0.2.0 - 2026-09-29
+## v0.2.0 - 29 Sep 2026
 
 A CA with a post-quantum composite ML-DSA key can sign CMP messages and the certificates it issues. Revoke certificates over CMP from the client and accept revocation requests in the server. Servers can also accept requests that a registration authority forwards in nested messages. The client tells the CA when it refuses an issued certificate. The server no longer passes requests without a verified proof of possession to the CA. Devices that implement only RFC 4210 can enroll with the default settings. SHA-1 can be enabled for the ones that need it.
 
@@ -68,7 +76,7 @@ A CA with a post-quantum composite ML-DSA key can sign CMP messages and the cert
 * **github.com/misiektoja/go-composite-mldsa v0.1.0** is a new dependency. It has no dependencies of its own.
 * **golang.org/x/crypto v0.57.0 or newer** is required. Older versions carry published advisories, none of which reach the code this library calls.
 
-## v0.1.0 - 2026-09-27
+## v0.1.0 - 27 Sep 2026
 
 Enroll and confirm certificates with **post-quantum ML-DSA keys and signatures**.
 
@@ -90,7 +98,7 @@ Enroll and confirm certificates with **post-quantum ML-DSA keys and signatures**
 
 * **Go 1.27.1 or newer** is required. Classical algorithms remain supported.
 
-## v0.0.6 - 2026-09-26
+## v0.0.6 - 26 Sep 2026
 
 OpenSSL clients can complete certificate confirmation after enrollment from an Ed25519-signing CA.
 
@@ -102,7 +110,7 @@ OpenSSL clients can complete certificate confirmation after enrollment from an E
 
 * **Certificate confirmation** verifies the declared hash algorithm when supplied. Unsupported algorithms and invalid digests are rejected without accepting the certificate.
 
-## v0.0.5 - 2026-09-23
+## v0.0.5 - 23 Sep 2026
 
 Servers can save CMP transaction state and resume certificate confirmation or polling after a restart.
 
@@ -110,7 +118,7 @@ Servers can save CMP transaction state and resume certificate confirmation or po
 
 * **`SnapshotTransactions` and `RestoreTransactions`** preserve credential binding, nonces, certificates and MAC protection parameters. The host supplies durable storage, serializes access and saves responses before delivery. Snapshots must come from trusted storage and use the same response-signing certificate. JSON-serializable issuance references support an optional restore decoder. Recovery does not provide an automatic response cache or database integration.
 
-## v0.0.4 - 2026-09-04
+## v0.0.4 - 4 Sep 2026
 
 Correctness release. Several ways a server could fail quietly are now reported, including a freshness check a client could opt out of, a signer misconfiguration that dropped response protection, and a certificate confirmation the CA refused to record. Handler error text no longer reaches the peer, and enrollment works against an Ed25519-signing CA.
 
@@ -140,7 +148,7 @@ Correctness release. Several ways a server could fail quietly are now reported, 
 
 * **Package and option documentation is shorter.** The reference content, RFC citations and interoperability notes are unchanged, with the surrounding justification prose removed.
 
-## v0.0.3 - 2026-08-25
+## v0.0.3 - 25 Aug 2026
 
 Interoperability and server-validation release. Repeated key updates can identify the exact certificate being replaced, while CMP servers can enforce a deployment-specific freshness window for protected requests.
 
@@ -156,7 +164,7 @@ Interoperability and server-validation release. Repeated key updates can identif
 
 * **`WithMessageTimeTolerance` optionally rejects stale or excessively future-dated protected messages with `badTime`**. Validation is disabled by default because RFC 9483 leaves the allowed difference to local policy. A missing `messageTime` remains accepted.
 
-## v0.0.2 - 2026-08-21
+## v0.0.2 - 21 Aug 2026
 
 Security and interoperability release. Response verification is stricter, shared-secret protection is safer against hostile input, and enrollment works reliably against common CAs and vendor CMP clients.
 
@@ -189,7 +197,7 @@ Security and interoperability release. Response verification is stricter, shared
 * **Issuance is hardened**: proof of possession is enforced without a policy wrapper, malformed `BasicConstraints` are rejected, and looked-up protection certificates must match the header sender.
 * **Other fixes**: `confirmWaitTime` is sent as a `GeneralizedTime`, response `extraCerts` lead with the protection certificate and no longer repeat one, and a transaction cleanup race under concurrent `CleanupExpired` is fixed.
 
-## v0.0.1 - 2026-05-27
+## v0.0.1 - 27 May 2026
 
 Initial pre-release, providing a partial implementation of CMP as specified in RFC 9810, which obsoletes RFC 4210, profiled by RFC 9483 (Lightweight CMP Profile), with RFC 4211 (CRMF) and RFC 6712 (CMP over HTTP), split into three packages. Both protocol versions defined by RFC 9810 are supported, so the library interoperates with peers implementing the original RFC 4210 CMPv2 (`cmp2000`) as well as CMPv3 (`cmp2021`).
 
